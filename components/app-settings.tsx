@@ -17,7 +17,17 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "sonner"
-import { ArrowLeft, LogOut, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, ChevronsUpDown, LogOut, Trash2 } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 
 type EmailMapping = {
   adEmail: string
@@ -456,6 +466,9 @@ function AllowedRolesPanel() {
   const [newRole, setNewRole] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [jobTitles, setJobTitles] = useState<string[]>([])
+  const [titlesLoading, setTitlesLoading] = useState(true)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -475,6 +488,26 @@ function AllowedRolesPanel() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Load distinct job titles from HR for the selector
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        const r = await fetch("/api/admin/job-titles")
+        const data = await r.json()
+        if (!cancelled && r.ok) setJobTitles(data.jobTitles ?? [])
+      } catch {
+        // ignore — selector falls back to empty list
+      } finally {
+        if (!cancelled) setTitlesLoading(false)
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const add = async () => {
     const trimmed = newRole.trim()
@@ -518,18 +551,70 @@ function AllowedRolesPanel() {
       <div className="rounded-xl border border-border bg-card p-6">
         <h3 className="font-medium text-foreground">Add an allowed role</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Roles are matched case-insensitively against the user&apos;s{" "}
-          <span className="font-mono text-xs">JOB_TITLE</span> in HR.
+          Pick a job title from HR. Matching is case-insensitive against{" "}
+          <span className="font-mono text-xs">JOB_TITLE</span>.
         </p>
         <div className="mt-4 flex gap-2">
-          <Input
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            placeholder="e.g. Distribution Manager"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") add()
-            }}
-          />
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={pickerOpen}
+                disabled={titlesLoading}
+                className="flex-1 justify-between font-normal"
+              >
+                <span className={cn("truncate", !newRole && "text-muted-foreground")}>
+                  {titlesLoading
+                    ? "Loading job titles..."
+                    : newRole || "Select a job title..."}
+                </span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Search job title..." />
+                <CommandList>
+                  <CommandEmpty>No job title found.</CommandEmpty>
+                  <CommandGroup>
+                    {jobTitles.map((title) => {
+                      const alreadyAllowed = roles.some(
+                        (r) => r.toLowerCase() === title.toLowerCase()
+                      )
+                      return (
+                        <CommandItem
+                          key={title}
+                          value={title}
+                          disabled={alreadyAllowed}
+                          onSelect={() => {
+                            if (alreadyAllowed) return
+                            setNewRole(title)
+                            setPickerOpen(false)
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              newRole.toLowerCase() === title.toLowerCase()
+                                ? "opacity-100"
+                                : "opacity-0"
+                            )}
+                          />
+                          <span className={cn(alreadyAllowed && "text-muted-foreground")}>
+                            {title}
+                          </span>
+                          {alreadyAllowed && (
+                            <span className="ml-auto text-xs text-muted-foreground">added</span>
+                          )}
+                        </CommandItem>
+                      )
+                    })}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           <Button onClick={add} disabled={saving || !newRole.trim()}>
             {saving ? "..." : "Add"}
           </Button>
