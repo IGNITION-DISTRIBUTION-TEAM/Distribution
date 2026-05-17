@@ -73,6 +73,7 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar"
 import {
+  ArrowLeft,
   LogOut,
   Truck,
   Zap,
@@ -4309,7 +4310,7 @@ function StatusBadge({ ok }: { ok: boolean }) {
   )
 }
 
-export function DistributionDashboard(_props: { onBack?: () => void } = {}) {
+export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) {
   const { user, logout } = useAuth()
   const [activeNav, setActiveNav] = useState("dashboard")
 
@@ -4371,6 +4372,17 @@ export function DistributionDashboard(_props: { onBack?: () => void } = {}) {
               <p className="font-medium text-foreground">{user?.name}</p>
               <p className="text-xs text-muted-foreground">{user?.email}</p>
             </div>
+            {onBack && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onBack}
+                className="w-full justify-start text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Departments
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
