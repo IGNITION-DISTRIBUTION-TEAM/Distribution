@@ -6,28 +6,36 @@ import { LoginScreen } from "@/components/login-screen"
 import { DistributionDashboard } from "@/components/distribution-dashboard"
 import { DiallerDashboard } from "@/components/dialler-dashboard"
 import { DepartmentPicker, type DepartmentId } from "@/components/department-picker"
+import { AppSettings } from "@/components/app-settings"
+
+type View = { kind: "picker" } | { kind: "dept"; id: DepartmentId } | { kind: "app-settings" }
 
 function AppContent() {
   const { isAuthenticated } = useAuth()
-  const [activeDept, setActiveDept] = useState<DepartmentId | null>(null)
+  const [view, setView] = useState<View>({ kind: "picker" })
 
   if (!isAuthenticated) {
     return <LoginScreen />
   }
 
-  if (!activeDept) {
-    return <DepartmentPicker onSelect={setActiveDept} />
+  if (view.kind === "app-settings") {
+    return <AppSettings onBack={() => setView({ kind: "picker" })} />
   }
 
-  if (activeDept === "distribution") {
-    return <DistributionDashboard onBack={() => setActiveDept(null)} />
+  if (view.kind === "dept" && view.id === "distribution") {
+    return <DistributionDashboard onBack={() => setView({ kind: "picker" })} />
   }
 
-  if (activeDept === "dialler") {
-    return <DiallerDashboard onBack={() => setActiveDept(null)} />
+  if (view.kind === "dept" && view.id === "dialler") {
+    return <DiallerDashboard onBack={() => setView({ kind: "picker" })} />
   }
 
-  return <DepartmentPicker onSelect={setActiveDept} />
+  return (
+    <DepartmentPicker
+      onSelect={(id) => setView({ kind: "dept", id })}
+      onOpenSettings={() => setView({ kind: "app-settings" })}
+    />
+  )
 }
 
 export default function Page() {

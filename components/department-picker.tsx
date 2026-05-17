@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { LogOut, PhoneCall, Truck } from "lucide-react"
+import { LogOut, PhoneCall, Settings as SettingsIcon, Truck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
 export type DepartmentId = "distribution" | "dialler"
@@ -32,7 +32,13 @@ const DEPARTMENTS: Department[] = [
   },
 ]
 
-export function DepartmentPicker({ onSelect }: { onSelect: (id: DepartmentId) => void }) {
+export function DepartmentPicker({
+  onSelect,
+  onOpenSettings,
+}: {
+  onSelect: (id: DepartmentId) => void
+  onOpenSettings?: () => void
+}) {
   const { user, logout } = useAuth()
 
   return (
@@ -51,6 +57,18 @@ export function DepartmentPicker({ onSelect }: { onSelect: (id: DepartmentId) =>
             <p className="font-medium text-foreground">{user?.name}</p>
             <p className="text-muted-foreground">{user?.email}</p>
           </div>
+          {user?.isSuperAdmin && onOpenSettings && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSettings}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="App settings"
+            >
+              <SettingsIcon className="mr-2 h-4 w-4" />
+              Settings
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
