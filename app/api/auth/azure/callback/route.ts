@@ -46,9 +46,10 @@ export async function GET(request: NextRequest) {
     const response = new NextResponse()
     response.cookies.delete("azure_code_verifier")
 
-    // Exchange code for tokens
-    console.log("[v0] Exchanging code for tokens")
-    const tokens = await exchangeCodeForToken(code, codeVerifier)
+    // Exchange code for tokens — redirect_uri must match the one used at /authorize
+    const redirectUri = `${request.nextUrl.origin}/api/auth/azure/callback`
+    console.log("[v0] Exchanging code for tokens, redirectUri:", redirectUri)
+    const tokens = await exchangeCodeForToken(code, codeVerifier, redirectUri)
     console.log("[v0] Tokens received")
 
     // Extract user info from ID token

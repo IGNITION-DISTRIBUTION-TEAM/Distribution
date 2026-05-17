@@ -3,37 +3,21 @@
  * Handles OAuth 2.0 Authorization Code Flow with PKCE
  */
 
+export function getRedirectUri(): string {
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/api/auth/azure/callback`
+  }
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "")
+  return `${appUrl}/api/auth/azure/callback`
+}
+
 export async function getAzureAuthUrl(): Promise<string> {
   const clientId = process.env.NEXT_PUBLIC_AZURE_CLIENT_ID
-  const appUrlRaw = process.env.NEXT_PUBLIC_APP_URL || ""
-  // Remove all trailing slashes and ensure single forward slash before path
-  const appUrl = appUrlRaw.replace(/\/+$/, "")
-  const redirectUri = appUrl + "/api/auth/azure/callback"
   const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID
+  const redirectUri = getRedirectUri()
 
-  console.log("[v0] getAzureAuthUrl called")
-  console.log("[v0] Environment variables check:")
-  console.log("[v0]   NEXT_PUBLIC_AZURE_CLIENT_ID exists:", !!clientId, "value:", clientId?.substring(0, 10) + "...")
-  console.log("[v0]   NEXT_PUBLIC_AZURE_TENANT_ID exists:", !!tenantId, "value:", tenantId?.substring(0, 10) + "...")
-  console.log("[v0]   NEXT_PUBLIC_APP_URL exists:", !!appUrlRaw, "value:", appUrlRaw)
-  console.log("[v0]   appUrl (after cleanup):", appUrl)
-  console.log("[v0]   redirectUri:", redirectUri)
-
-  if (!clientId) {
-    const msg = "Missing NEXT_PUBLIC_AZURE_CLIENT_ID - Check environment variables"
-    console.error("[v0]", msg)
-    throw new Error(msg)
-  }
-  if (!tenantId) {
-    const msg = "Missing NEXT_PUBLIC_AZURE_TENANT_ID - Check environment variables"
-    console.error("[v0]", msg)
-    throw new Error(msg)
-  }
-  if (!appUrl) {
-    const msg = "Missing NEXT_PUBLIC_APP_URL - Check environment variables"
-    console.error("[v0]", msg)
-    throw new Error(msg)
-  }
+  if (!clientId) throw new Error("Missing NEXT_PUBLIC_AZURE_CLIENT_ID")
+  if (!tenantId) throw new Error("Missing NEXT_PUBLIC_AZURE_TENANT_ID")
 
   const scope = encodeURIComponent("user.read openid profile email")
   const responseType = "code"
@@ -97,7 +81,11 @@ export function generateState(): string {
   return Array.from(randomValues, (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-export async function exchangeCodeForToken(code: string, codeVerifier: string): Promise<{
+export async function exchangeCodeForToken(
+  code: string,
+  codeVerifier: string,
+  redirectUri: string
+): Promise<{
   accessToken: string
   idToken: string
   refreshToken?: string
@@ -105,9 +93,6 @@ export async function exchangeCodeForToken(code: string, codeVerifier: string): 
   const clientId = process.env.NEXT_PUBLIC_AZURE_CLIENT_ID
   const clientSecret = process.env.AZURE_CLIENT_SECRET
   const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID
-  const appUrlRaw = process.env.NEXT_PUBLIC_APP_URL || ""
-  const appUrl = appUrlRaw.replace(/\/+$/, "") // Remove all trailing slashes
-  const redirectUri = appUrl + "/api/auth/azure/callback"
 
   if (!clientId || !clientSecret || !tenantId) {
     throw new Error("Missing Azure AD credentials")
