@@ -54,22 +54,28 @@ export async function checkAccess(adEmailRaw: string): Promise<AccessResult> {
   if (!isValidEmail(employeeEmail)) return { allowed: false, reason: "unmapped" }
   const ee = sqlString(employeeEmail)
 
-  // 3. Job title + active status from HR table?
-  const employees = await executeSnowflakeQuery<{
-    JOB_TITLE: string | null
-    EMPLOYEE_STATUS_DISPLAY: string | null
-  }>(
-    `SELECT JOB_TITLE, EMPLOYEE_STATUS_DISPLAY
+  // 3. Active job title from HR? An employee may have multiple rows
+  // (e.g. a Terminated record alongside an Active one), so we filter
+  // explicitly rather than relying on whichever row LIMIT 1 returns.
+  const activeEmployees = await executeSnowflakeQuery<{ JOB_TITLE: string | null }>(
+    `SELECT JOB_TITLE
      FROM DATAWAREHOUSE.HR_SAGE_DATA.EMPLOYEE_DETAIL
      WHERE LOWER(EMAIL_ADDRESS) = ${ee}
+       AND UPPER(TRIM(EMPLOYEE_STATUS_DISPLAY)) LIKE 'A%'
      LIMIT 1`
   )
-  if (employees.length === 0) return { allowed: false, reason: "no_employee" }
+  if (activeEmployees.length === 0) {
+    // Distinguish "no row at all" from "row exists but inactive".
+    const anyRow = await executeSnowflakeQuery<{ X: number }>(
+      `SELECT 1 AS X
+       FROM DATAWAREHOUSE.HR_SAGE_DATA.EMPLOYEE_DETAIL
+       WHERE LOWER(EMAIL_ADDRESS) = ${ee}
+       LIMIT 1`
+    )
+    return { allowed: false, reason: anyRow.length === 0 ? "no_employee" : "inactive" }
+  }
 
-  const status = (employees[0].EMPLOYEE_STATUS_DISPLAY ?? "").trim().toUpperCase()
-  if (!status.startsWith("A")) return { allowed: false, reason: "inactive" }
-
-  const role = (employees[0].JOB_TITLE ?? "").trim()
+  const role = (activeEmployees[0].JOB_TITLE ?? "").trim()
   if (!role) return { allowed: false, reason: "role_not_allowed", role: "" }
 
   // 4. Role allowed?

@@ -80,7 +80,7 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-8">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-6 py-8">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-foreground">App settings</h1>
           <p className="mt-1 text-sm text-muted-foreground">

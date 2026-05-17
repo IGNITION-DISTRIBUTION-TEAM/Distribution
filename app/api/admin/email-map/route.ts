@@ -26,13 +26,15 @@ export async function GET(request: NextRequest) {
   if (guard instanceof NextResponse) return guard
 
   // Join in JOB_TITLE + status from HR so the UI can show the user's role
-  // without an extra round-trip per row.
+  // without an extra round-trip per row. Restrict to the active record so
+  // duplicate (Active + Terminated) rows don't double-up the list.
   const rows = await executeSnowflakeQuery<Row>(
     `SELECT m.AD_EMAIL, m.EMPLOYEE_EMAIL, m.CREATED_AT, m.CREATED_BY,
             e.JOB_TITLE, e.EMPLOYEE_STATUS_DISPLAY
      FROM ${TABLE} m
      LEFT JOIN DATAWAREHOUSE.HR_SAGE_DATA.EMPLOYEE_DETAIL e
        ON LOWER(e.EMAIL_ADDRESS) = LOWER(m.EMPLOYEE_EMAIL)
+      AND UPPER(TRIM(e.EMPLOYEE_STATUS_DISPLAY)) LIKE 'A%'
      ORDER BY m.AD_EMAIL`
   )
   return NextResponse.json({
