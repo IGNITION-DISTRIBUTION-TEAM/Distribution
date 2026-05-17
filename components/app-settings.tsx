@@ -93,6 +93,7 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
             <TabsTrigger value="map-user">Map user</TabsTrigger>
             <TabsTrigger value="email-map">Email mappings</TabsTrigger>
             <TabsTrigger value="allowed-roles">Allowed roles</TabsTrigger>
+            <TabsTrigger value="super-admins">Super admins</TabsTrigger>
             <TabsTrigger value="sign-in">Sign-in options</TabsTrigger>
           </TabsList>
 
@@ -106,6 +107,10 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
 
           <TabsContent value="allowed-roles" className="mt-4">
             <AllowedRolesPanel />
+          </TabsContent>
+
+          <TabsContent value="super-admins" className="mt-4">
+            <SuperAdminsPanel />
           </TabsContent>
 
           <TabsContent value="sign-in" className="mt-4">
@@ -692,6 +697,204 @@ function AllowedRolesPanel() {
                   </TableCell>
                 </TableRow>
               ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SuperAdminsPanel() {
+  const { user } = useAuth()
+  const [admins, setAdmins] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [adEmail, setAdEmail] = useState("")
+  const [query, setQuery] = useState("")
+  const [results, setResults] = useState<EmployeeSearchResult[]>([])
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/admin/super-admins")
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setAdmins(data.admins ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // Debounced employee search — helps the admin find the right AD email.
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([])
+      return
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/admin/employees?q=${encodeURIComponent(query)}`)
+        const data = await r.json()
+        if (r.ok) setResults(data.employees ?? [])
+      } catch {
+        // ignore
+      }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [query])
+
+  const add = async () => {
+    const email = adEmail.trim().toLowerCase()
+    if (!email) return
+    if (!confirm(`Grant super admin access to ${email}?`)) return
+    setSaving(true)
+    try {
+      const r = await fetch("/api/admin/super-admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adEmail: email }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setAdEmail("")
+      setQuery("")
+      setResults([])
+      await load()
+      toast.success("Super admin added")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async (email: string) => {
+    const isSelf = email === (user?.email ?? "").toLowerCase()
+    const msg = isSelf
+      ? "Remove yourself as super admin? You'll lose access to App settings."
+      : `Remove ${email} as super admin?`
+    if (!confirm(msg)) return
+    try {
+      const r = await fetch(`/api/admin/super-admins?adEmail=${encodeURIComponent(email)}`, {
+        method: "DELETE",
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      await load()
+      toast.success("Super admin removed")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Grant super admin access</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Super admins bypass the role/active gate and can manage these settings. Add sparingly.
+        </p>
+        <div className="mt-4">
+          <Label className="mb-1 block text-sm">Azure AD email</Label>
+          <Input
+            value={adEmail}
+            onChange={(e) => {
+              setAdEmail(e.target.value)
+              setQuery(e.target.value)
+            }}
+            placeholder="firstname.lastname@ignitiongroup.co.za"
+          />
+          {results.length > 0 && (
+            <div className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-background">
+              {results.map((emp) => (
+                <button
+                  type="button"
+                  key={emp.email}
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-accent/40"
+                  onClick={() => {
+                    setAdEmail(emp.email)
+                    setQuery("")
+                    setResults([])
+                  }}
+                >
+                  <div className="text-foreground">{emp.email}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {emp.jobTitle ?? "no title"} · {emp.status ?? "no status"}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={add} disabled={saving || !adEmail.trim()}>
+            {saving ? "Adding..." : "Grant super admin"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="font-medium text-foreground">Current super admins</h3>
+          {error && <p className="mt-2 text-sm text-rose-400">{error}</p>}
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Azure AD email</TableHead>
+                <TableHead className="w-16 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
+                    Loading...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && admins.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
+                    No super admins.
+                  </TableCell>
+                </TableRow>
+              )}
+              {admins.map((email) => {
+                const isSelf = email === (user?.email ?? "").toLowerCase()
+                return (
+                  <TableRow key={email}>
+                    <TableCell className="font-mono text-xs">
+                      {email}
+                      {isSelf && (
+                        <span className="ml-2 rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                          you
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => remove(email)}
+                        className="text-muted-foreground hover:text-rose-300"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </div>
