@@ -17,16 +17,23 @@ type Row = {
   EMPLOYEE_EMAIL: string
   CREATED_AT?: unknown
   CREATED_BY?: string | null
+  JOB_TITLE?: string | null
+  EMPLOYEE_STATUS_DISPLAY?: string | null
 }
 
 export async function GET(request: NextRequest) {
   const guard = await requireSuperAdmin(request)
   if (guard instanceof NextResponse) return guard
 
+  // Join in JOB_TITLE + status from HR so the UI can show the user's role
+  // without an extra round-trip per row.
   const rows = await executeSnowflakeQuery<Row>(
-    `SELECT AD_EMAIL, EMPLOYEE_EMAIL, CREATED_AT, CREATED_BY
-     FROM ${TABLE}
-     ORDER BY AD_EMAIL`
+    `SELECT m.AD_EMAIL, m.EMPLOYEE_EMAIL, m.CREATED_AT, m.CREATED_BY,
+            e.JOB_TITLE, e.EMPLOYEE_STATUS_DISPLAY
+     FROM ${TABLE} m
+     LEFT JOIN DATAWAREHOUSE.HR_SAGE_DATA.EMPLOYEE_DETAIL e
+       ON LOWER(e.EMAIL_ADDRESS) = LOWER(m.EMPLOYEE_EMAIL)
+     ORDER BY m.AD_EMAIL`
   )
   return NextResponse.json({
     mappings: rows.map((r) => ({
@@ -34,6 +41,8 @@ export async function GET(request: NextRequest) {
       employeeEmail: String(r.EMPLOYEE_EMAIL).toLowerCase(),
       createdAt: r.CREATED_AT ?? null,
       createdBy: r.CREATED_BY ?? null,
+      jobTitle: r.JOB_TITLE ?? null,
+      status: r.EMPLOYEE_STATUS_DISPLAY ?? null,
     })),
   })
 }

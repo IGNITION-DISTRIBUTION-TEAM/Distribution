@@ -34,6 +34,8 @@ type EmailMapping = {
   employeeEmail: string
   createdAt: string | null
   createdBy: string | null
+  jobTitle: string | null
+  status: string | null
 }
 
 type EmployeeSearchResult = {
@@ -415,6 +417,8 @@ function EmailMapPanel() {
             <TableRow>
               <TableHead>Azure AD email</TableHead>
               <TableHead>Employee email</TableHead>
+              <TableHead>Role (JOB_TITLE)</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Created by</TableHead>
               <TableHead className="w-16 text-right">Actions</TableHead>
             </TableRow>
@@ -422,37 +426,61 @@ function EmailMapPanel() {
           <TableBody>
             {loading && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!loading && mappings.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
                   No mappings yet.
                 </TableCell>
               </TableRow>
             )}
-            {mappings.map((m) => (
-              <TableRow key={m.adEmail}>
-                <TableCell className="font-mono text-xs">{m.adEmail}</TableCell>
-                <TableCell className="font-mono text-xs">{m.employeeEmail}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {m.createdBy ?? ""}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => remove(m.adEmail)}
-                    className="text-muted-foreground hover:text-rose-300"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {mappings.map((m) => {
+              const active = (m.status ?? "").toUpperCase().startsWith("A")
+              return (
+                <TableRow key={m.adEmail}>
+                  <TableCell className="font-mono text-xs">{m.adEmail}</TableCell>
+                  <TableCell className="font-mono text-xs">{m.employeeEmail}</TableCell>
+                  <TableCell className="text-sm">
+                    {m.jobTitle ?? (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {m.status ? (
+                      <span
+                        className={
+                          "inline-flex items-center rounded-full border px-2 py-0.5 " +
+                          (active
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                            : "border-rose-500/30 bg-rose-500/10 text-rose-300")
+                        }
+                      >
+                        {m.status}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">no HR record</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {m.createdBy ?? ""}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => remove(m.adEmail)}
+                      className="text-muted-foreground hover:text-rose-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </div>
