@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
       user: {
         email: session.email,
         name: session.name,
+        role: session.role ?? null,
+        isSuperAdmin: !!session.isSuperAdmin,
       },
     })
   } catch (error) {

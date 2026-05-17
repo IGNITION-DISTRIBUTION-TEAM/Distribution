@@ -6,6 +6,7 @@ type User = {
   email: string
   name: string
   role: string
+  isSuperAdmin: boolean
 }
 
 type AuthContextType = {
@@ -26,12 +27,6 @@ export function useAuth() {
   return context
 }
 
-function assignRoleFromEmail(email: string): string {
-  if (email.includes("manager")) return "manager"
-  if (email.includes("leader")) return "teamleader"
-  if (email.includes("admin")) return "admin"
-  return "staff"
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -49,7 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser({
               email: data.user.email,
               name: data.user.name,
-              role: assignRoleFromEmail(data.user.email),
+              role: data.user.role ?? "",
+              isSuperAdmin: !!data.user.isSuperAdmin,
             })
           }
         }
@@ -64,13 +60,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = useCallback(async (email: string, _password: string) => {
-    // Mock login - for demo/testing purposes
+    // Mock login - for demo/testing purposes only.
     await new Promise((resolve) => setTimeout(resolve, 1000))
 
     setUser({
       email,
       name: email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
-      role: assignRoleFromEmail(email),
+      role: "",
+      isSuperAdmin: false,
     })
     return true
   }, [])

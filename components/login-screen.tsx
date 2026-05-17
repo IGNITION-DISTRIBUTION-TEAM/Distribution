@@ -20,6 +20,44 @@ export function LoginScreen() {
 
   useEffect(() => {
     setPasswordEnabled(isPasswordSignInEnabled())
+
+    // Surface auth errors from the Azure callback (?auth_error=...&reason=...)
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const authError = params.get("auth_error")
+    const reason = params.get("reason")
+    if (!authError) return
+
+    let msg = "Authentication failed. Please try again."
+    if (authError === "access_denied") {
+      switch (reason) {
+        case "unmapped":
+          msg = "Your account is not mapped to an employee. Contact administrator."
+          break
+        case "no_employee":
+          msg = "No matching employee record was found. Contact administrator."
+          break
+        case "inactive":
+          msg = "Your employee record is not active. Contact administrator."
+          break
+        case "role_not_allowed":
+          msg = "Your role is not authorised to access this app. Contact administrator."
+          break
+        default:
+          msg = "Access denied. Contact administrator."
+      }
+    } else if (authError === "token_exchange_failed") {
+      msg = "Sign-in could not be completed. Please try again."
+    } else if (authError === "missing_verifier" || authError === "missing_code") {
+      msg = "Sign-in session expired. Please try again."
+    }
+    setError(msg)
+
+    // Clean the URL so refresh doesn't keep re-showing the error.
+    const url = new URL(window.location.href)
+    url.searchParams.delete("auth_error")
+    url.searchParams.delete("reason")
+    window.history.replaceState({}, "", url.toString())
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -83,6 +121,12 @@ export function LoginScreen() {
             </p>
           </div>
 
+          {error && (
+            <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
           {passwordEnabled && (
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
@@ -126,12 +170,6 @@ export function LoginScreen() {
                 </button>
               </div>
             </div>
-
-            {error && (
-              <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                {error}
-              </div>
-            )}
 
             <Button
               type="submit"

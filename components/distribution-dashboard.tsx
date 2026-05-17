@@ -55,6 +55,7 @@ import {
 import { toast } from "sonner"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
 import { DailyFilesContent } from "@/components/daily-files"
 import { isPasswordSignInEnabled, setPasswordSignInEnabled } from "@/lib/settings"
 import {
@@ -94,6 +95,7 @@ import {
   Settings as SettingsIcon,
   LayoutDashboard,
   TrendingUp,
+  Trash2,
 } from "lucide-react"
 import { useState, useCallback, useEffect, useMemo } from "react"
 import { cn } from "@/lib/utils"
@@ -4217,6 +4219,9 @@ function DashboardSummary({
 }
 
 function SettingsContent() {
+  const { user } = useAuth()
+  const isAdmin = !!user?.isSuperAdmin
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -4229,6 +4234,8 @@ function SettingsContent() {
       <Tabs defaultValue="sign-in" className="w-full">
         <TabsList>
           <TabsTrigger value="sign-in">Sign-in options</TabsTrigger>
+          {isAdmin && <TabsTrigger value="email-map">Email mappings</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="allowed-roles">Allowed roles</TabsTrigger>}
           <TabsTrigger value="campaign">Campaign settings</TabsTrigger>
         </TabsList>
 
@@ -4236,10 +4243,376 @@ function SettingsContent() {
           <SignInOptionsPanel />
         </TabsContent>
 
+        {isAdmin && (
+          <TabsContent value="email-map" className="mt-4">
+            <EmailMapPanel />
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="allowed-roles" className="mt-4">
+            <AllowedRolesPanel />
+          </TabsContent>
+        )}
+
         <TabsContent value="campaign" className="mt-4">
           <CampaignSettingsPanel />
         </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+type EmailMapping = {
+  adEmail: string
+  employeeEmail: string
+  createdAt: string | null
+  createdBy: string | null
+}
+
+function EmailMapPanel() {
+  const [mappings, setMappings] = useState<EmailMapping[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [adEmail, setAdEmail] = useState("")
+  const [employeeEmail, setEmployeeEmail] = useState("")
+  const [employeeQuery, setEmployeeQuery] = useState("")
+  const [employeeResults, setEmployeeResults] = useState<
+    { email: string; jobTitle: string | null; status: string | null }[]
+  >([])
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/admin/email-map")
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setMappings(data.mappings ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // Debounced employee search
+  useEffect(() => {
+    if (employeeQuery.trim().length < 2) {
+      setEmployeeResults([])
+      return
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/admin/employees?q=${encodeURIComponent(employeeQuery)}`)
+        const data = await r.json()
+        if (r.ok) setEmployeeResults(data.employees ?? [])
+      } catch {
+        // ignore
+      }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [employeeQuery])
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/admin/email-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adEmail: adEmail.trim(), employeeEmail: employeeEmail.trim() }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setAdEmail("")
+      setEmployeeEmail("")
+      setEmployeeQuery("")
+      setEmployeeResults([])
+      await load()
+      toast.success("Mapping saved")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg)
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async (adEmailValue: string) => {
+    if (!confirm(`Remove mapping for ${adEmailValue}?`)) return
+    try {
+      const r = await fetch(`/api/admin/email-map?adEmail=${encodeURIComponent(adEmailValue)}`, {
+        method: "DELETE",
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      await load()
+      toast.success("Mapping removed")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(msg)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Add or update a mapping</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          When someone signs in with Azure AD, the system looks up their employee email here,
+          then checks <span className="font-mono text-xs">EMPLOYEE_DETAIL</span> for their job
+          title and active status.
+        </p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <Label className="mb-1 block text-sm">Azure AD email</Label>
+            <Input
+              value={adEmail}
+              onChange={(e) => setAdEmail(e.target.value)}
+              placeholder="firstname.lastname@ignitiongroup.co.za"
+            />
+          </div>
+          <div>
+            <Label className="mb-1 block text-sm">Employee email (from HR)</Label>
+            <Input
+              value={employeeEmail}
+              onChange={(e) => {
+                setEmployeeEmail(e.target.value)
+                setEmployeeQuery(e.target.value)
+              }}
+              placeholder="search by email..."
+            />
+            {employeeResults.length > 0 && (
+              <div className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-background">
+                {employeeResults.map((emp) => (
+                  <button
+                    type="button"
+                    key={emp.email}
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-accent/40"
+                    onClick={() => {
+                      setEmployeeEmail(emp.email)
+                      setEmployeeQuery("")
+                      setEmployeeResults([])
+                    }}
+                  >
+                    <div className="text-foreground">{emp.email}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {emp.jobTitle ?? "no title"} · {emp.status ?? "no status"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        {error && (
+          <p className="mt-3 text-sm text-rose-400">{error}</p>
+        )}
+        <div className="mt-4 flex justify-end">
+          <Button onClick={save} disabled={saving || !adEmail.trim() || !employeeEmail.trim()}>
+            {saving ? "Saving..." : "Save mapping"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="font-medium text-foreground">Existing mappings</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Azure AD email</TableHead>
+                <TableHead>Employee email</TableHead>
+                <TableHead>Created by</TableHead>
+                <TableHead className="w-16 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                    Loading...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && mappings.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                    No mappings yet.
+                  </TableCell>
+                </TableRow>
+              )}
+              {mappings.map((m) => (
+                <TableRow key={m.adEmail}>
+                  <TableCell className="font-mono text-xs">{m.adEmail}</TableCell>
+                  <TableCell className="font-mono text-xs">{m.employeeEmail}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {m.createdBy ?? ""}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => remove(m.adEmail)}
+                      className="text-muted-foreground hover:text-rose-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AllowedRolesPanel() {
+  const [roles, setRoles] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newRole, setNewRole] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/admin/allowed-roles")
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setRoles(data.roles ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const add = async () => {
+    const trimmed = newRole.trim()
+    if (!trimmed) return
+    setSaving(true)
+    try {
+      const r = await fetch("/api/admin/allowed-roles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: trimmed }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setNewRole("")
+      await load()
+      toast.success("Role added")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async (role: string) => {
+    if (!confirm(`Remove "${role}" from allowed roles?`)) return
+    try {
+      const r = await fetch(`/api/admin/allowed-roles?role=${encodeURIComponent(role)}`, {
+        method: "DELETE",
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      await load()
+      toast.success("Role removed")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(msg)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Add an allowed role</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Roles are matched case-insensitively against the user&apos;s{" "}
+          <span className="font-mono text-xs">JOB_TITLE</span> in HR.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <Input
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value)}
+            placeholder="e.g. Distribution Manager"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add()
+            }}
+          />
+          <Button onClick={add} disabled={saving || !newRole.trim()}>
+            {saving ? "..." : "Add"}
+          </Button>
+        </div>
+        {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="font-medium text-foreground">Allowed roles</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Role</TableHead>
+                <TableHead className="w-16 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
+                    Loading...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && roles.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
+                    No allowed roles yet — nobody (except super admins) can log in.
+                  </TableCell>
+                </TableRow>
+              )}
+              {roles.map((role) => (
+                <TableRow key={role}>
+                  <TableCell>{role}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => remove(role)}
+                      className="text-muted-foreground hover:text-rose-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
     </div>
   )
 }

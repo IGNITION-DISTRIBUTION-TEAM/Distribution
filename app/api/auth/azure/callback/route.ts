@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { exchangeCodeForToken, getUserProfile, extractUserInfoFromToken } from "@/lib/azure-ad"
+import { exchangeCodeForToken, extractUserInfoFromToken } from "@/lib/azure-ad"
+import { checkAccess } from "@/lib/auth-gate"
 
 /**
  * Azure AD OAuth  handler
@@ -56,6 +57,15 @@ export async function GET(request: NextRequest) {
     const userInfo = extractUserInfoFromToken(tokens.idToken)
     console.log("[v0] User info extracted:", userInfo.email)
 
+    // Role/active gate — bounce to login if denied.
+    const access = await checkAccess(userInfo.email)
+    if (!access.allowed) {
+      console.log("[v0] Access denied:", access.reason)
+      return NextResponse.redirect(
+        `${request.nextUrl.origin}/?auth_error=access_denied&reason=${encodeURIComponent(access.reason)}`
+      )
+    }
+
     // Create redirect response
     const redirectResponse = NextResponse.redirect(`${request.nextUrl.origin}`)
 
@@ -66,6 +76,9 @@ export async function GET(request: NextRequest) {
     redirectResponse.cookies.set("azure_session", JSON.stringify({
       email: userInfo.email,
       name: userInfo.name,
+      role: access.role,
+      isSuperAdmin: access.isSuperAdmin,
+      employeeEmail: access.employeeEmail,
       expiresAt: Date.now() + 3600000, // 1 hour
     }), {
       httpOnly: true,
