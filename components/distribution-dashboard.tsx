@@ -54,7 +54,9 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Switch } from "@/components/ui/switch"
 import { DailyFilesContent } from "@/components/daily-files"
+import { isPasswordSignInEnabled, setPasswordSignInEnabled } from "@/lib/settings"
 import {
   SidebarProvider,
   Sidebar,
@@ -4223,15 +4225,59 @@ function SettingsContent() {
         </p>
       </div>
 
-      <Tabs defaultValue="campaign" className="w-full">
+      <Tabs defaultValue="sign-in" className="w-full">
         <TabsList>
+          <TabsTrigger value="sign-in">Sign-in options</TabsTrigger>
           <TabsTrigger value="campaign">Campaign settings</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="sign-in" className="mt-4">
+          <SignInOptionsPanel />
+        </TabsContent>
 
         <TabsContent value="campaign" className="mt-4">
           <CampaignSettingsPanel />
         </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+function SignInOptionsPanel() {
+  const [passwordEnabled, setPasswordEnabledState] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    setPasswordEnabledState(isPasswordSignInEnabled())
+    setHydrated(true)
+  }, [])
+
+  const handleToggle = (next: boolean) => {
+    setPasswordEnabledState(next)
+    setPasswordSignInEnabled(next)
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex-1">
+          <h3 className="font-medium text-foreground">Email &amp; password sign-in</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            When off, only the &ldquo;Sign in with Azure AD&rdquo; button is shown on the login
+            screen. The email/password form is a mock login that accepts any credentials, so
+            leaving it off is recommended.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            This preference is stored in your browser, so it only affects this device.
+          </p>
+        </div>
+        <Switch
+          checked={passwordEnabled}
+          onCheckedChange={handleToggle}
+          disabled={!hydrated}
+          aria-label="Toggle email/password sign-in"
+        />
+      </div>
     </div>
   )
 }

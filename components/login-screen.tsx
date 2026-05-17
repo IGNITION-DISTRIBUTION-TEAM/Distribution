@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
+import { isPasswordSignInEnabled } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +16,11 @@ export function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false)
   const [isAzureLoading, setIsAzureLoading] = useState(false)
   const [error, setError] = useState("")
+  const [passwordEnabled, setPasswordEnabled] = useState(false)
+
+  useEffect(() => {
+    setPasswordEnabled(isPasswordSignInEnabled())
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,6 +83,7 @@ export function LoginScreen() {
             </p>
           </div>
 
+          {passwordEnabled && (
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-sm font-medium text-foreground/80">
@@ -141,23 +148,26 @@ export function LoginScreen() {
               )}
             </Button>
           </form>
+          )}
 
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border" />
+          <div className={passwordEnabled ? "mt-6" : ""}>
+            {passwordEnabled && (
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-card px-3 text-muted-foreground">or continue with</span>
+                </div>
               </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="bg-card px-3 text-muted-foreground">or continue with</span>
-              </div>
-            </div>
+            )}
 
             <Button
               type="button"
               onClick={handleAzureLogin}
               disabled={isAzureLoading}
               variant="outline"
-              className="mt-4 h-11 w-full border-border bg-secondary text-foreground hover:bg-secondary/80"
+              className={(passwordEnabled ? "mt-4 " : "") + "h-11 w-full border-border bg-secondary text-foreground hover:bg-secondary/80"}
             >
               {isAzureLoading ? (
                 <>
