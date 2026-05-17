@@ -92,6 +92,7 @@ import {
   Settings as SettingsIcon,
   LayoutDashboard,
   TrendingUp,
+  Recycle,
 } from "lucide-react"
 import { useState, useCallback, useEffect, useMemo } from "react"
 import { cn } from "@/lib/utils"
@@ -108,6 +109,7 @@ const navItems: NavItem[] = [
   { id: "automation", label: "Automation", icon: <Zap className="h-4 w-4" /> },
   { id: "extend-expired", label: "Extend Expired Leads", icon: <Clock className="h-4 w-4" /> },
   { id: "daily-files", label: "Daily Files", icon: <Files className="h-4 w-4" /> },
+  { id: "recycle", label: "Recycle", icon: <Recycle className="h-4 w-4" /> },
   { id: "forecasting", label: "Forecasting", icon: <TrendingUp className="h-4 w-4" /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon className="h-4 w-4" /> },
 ]
@@ -2368,6 +2370,28 @@ function ForecastingContent() {
   )
 }
 
+function RecycleContent() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold text-foreground">Recycle</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Re-queue previously distributed leads for another pass.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
+        <Recycle className="mx-auto h-8 w-8 text-muted-foreground" />
+        <h3 className="mt-3 font-medium text-foreground">Awaiting requirements</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Tell me the source table, the filters (campaign, age, status, etc.), and what the
+          "recycle" action should do (mark, copy, push to dialler) and I&apos;ll wire it up.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function DashboardContent() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -4272,6 +4296,8 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
         return <ExtendExpiredContent />
       case "daily-files":
         return <DailyFilesContent />
+      case "recycle":
+        return <RecycleContent />
       case "forecasting":
         return <ForecastingContent />
       case "settings":
