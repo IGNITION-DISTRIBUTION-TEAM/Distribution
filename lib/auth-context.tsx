@@ -12,7 +12,6 @@ type User = {
 type AuthContextType = {
   user: User | null
   isAuthenticated: boolean
-  login: (email: string, password: string) => Promise<boolean>
   loginWithAzure: () => void
   logout: () => void
 }
@@ -59,19 +58,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkSession()
   }, [])
 
-  const login = useCallback(async (email: string, _password: string) => {
-    // Mock login - for demo/testing purposes only.
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    setUser({
-      email,
-      name: email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
-      role: "",
-      isSuperAdmin: false,
-    })
-    return true
-  }, [])
-
   const loginWithAzure = useCallback(async () => {
     try {
       console.log("[v0] loginWithAzure called")
@@ -97,7 +83,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
-        login,
         loginWithAzure,
         logout,
       }}

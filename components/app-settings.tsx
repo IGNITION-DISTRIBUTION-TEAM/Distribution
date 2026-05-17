@@ -2,11 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
-import { isPasswordSignInEnabled, setPasswordSignInEnabled } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
   Table,
@@ -94,7 +92,6 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
             <TabsTrigger value="email-map">Email mappings</TabsTrigger>
             <TabsTrigger value="allowed-roles">Allowed roles</TabsTrigger>
             <TabsTrigger value="super-admins">Super admins</TabsTrigger>
-            <TabsTrigger value="sign-in">Sign-in options</TabsTrigger>
           </TabsList>
 
           <TabsContent value="map-user" className="mt-4">
@@ -111,10 +108,6 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
 
           <TabsContent value="super-admins" className="mt-4">
             <SuperAdminsPanel />
-          </TabsContent>
-
-          <TabsContent value="sign-in" className="mt-4">
-            <SignInOptionsPanel />
           </TabsContent>
         </Tabs>
       </main>
@@ -898,45 +891,6 @@ function SuperAdminsPanel() {
             </TableBody>
           </Table>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function SignInOptionsPanel() {
-  const [passwordEnabled, setPasswordEnabledState] = useState(false)
-  const [hydrated, setHydrated] = useState(false)
-
-  useEffect(() => {
-    setPasswordEnabledState(isPasswordSignInEnabled())
-    setHydrated(true)
-  }, [])
-
-  const handleToggle = (next: boolean) => {
-    setPasswordEnabledState(next)
-    setPasswordSignInEnabled(next)
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <div className="flex items-start justify-between gap-6">
-        <div className="flex-1">
-          <h3 className="font-medium text-foreground">Email &amp; password sign-in</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            When off, only the &ldquo;Sign in with Azure AD&rdquo; button is shown on the login
-            screen. The email/password form is a mock login that accepts any credentials, so
-            leaving it off is recommended.
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            This preference is stored in your browser, so it only affects this device.
-          </p>
-        </div>
-        <Switch
-          checked={passwordEnabled}
-          onCheckedChange={handleToggle}
-          disabled={!hydrated}
-          aria-label="Toggle email/password sign-in"
-        />
       </div>
     </div>
   )
