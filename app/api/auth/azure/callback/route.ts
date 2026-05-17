@@ -59,20 +59,20 @@ export async function GET(request: NextRequest) {
     // Create redirect response
     const redirectResponse = NextResponse.redirect(`${request.nextUrl.origin}`)
 
-    // Set secure session cookie with user info
+    // Set secure session cookie with minimal user info.
+    // Tokens are intentionally NOT stored — they push the cookie past the 4KB
+    // browser limit and nothing in the app reads them back.
     console.log("[v0] Setting session cookie")
     redirectResponse.cookies.set("azure_session", JSON.stringify({
       email: userInfo.email,
       name: userInfo.name,
-      accessToken: tokens.accessToken,
-      idToken: tokens.idToken,
-      refreshToken: tokens.refreshToken,
       expiresAt: Date.now() + 3600000, // 1 hour
     }), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 3600, // 1 hour
+      path: "/",
     })
 
     console.log("[v0] Redirecting to home")
