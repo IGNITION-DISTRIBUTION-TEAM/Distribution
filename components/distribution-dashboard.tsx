@@ -4254,13 +4254,110 @@ function SettingsContent() {
 }
 
 function CampaignSettingsPanel() {
+  const [campaignId, setCampaignId] = useState("")
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignsLoading, setCampaignsLoading] = useState(true)
+  const [campaignsError, setCampaignsError] = useState<string | null>(null)
+  const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setCampaignsLoading(true)
+      setCampaignsError(null)
+      try {
+        const res = await fetch("/api/campaigns")
+        const data = await res.json()
+        if (cancelled) return
+        if (!res.ok) {
+          setCampaignsError(data.error || `Failed to load campaigns (${res.status})`)
+          setCampaigns([])
+        } else {
+          setCampaigns(data.campaigns || [])
+        }
+      } catch (err) {
+        if (cancelled) return
+        setCampaignsError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setCampaignsLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const selectedCampaign = campaigns.find((c) => c.id === campaignId)
+
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-      <SettingsIcon className="mx-auto h-8 w-8 text-muted-foreground" />
-      <h3 className="mt-3 font-medium text-foreground">Awaiting the campaign settings table</h3>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Provide the Snowflake table name + columns and I'll wire up CRUD here, the same as Daily
-        Files → Settings.
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="mb-4 flex items-center gap-2">
+        <SettingsIcon className="h-5 w-5 text-muted-foreground" />
+        <h3 className="font-medium text-foreground">Campaign</h3>
+      </div>
+      <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
+      <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={campaignPickerOpen}
+            className="w-full max-w-md justify-between"
+            disabled={campaignsLoading || !!campaignsError}
+          >
+            <span className="truncate">
+              {campaignsLoading
+                ? "Loading campaigns..."
+                : selectedCampaign
+                ? `${selectedCampaign.title}  ·  ${selectedCampaign.id}`
+                : "Select a campaign..."}
+            </span>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+          <Command
+            filter={(value, search) => {
+              return value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
+            }}
+          >
+            <CommandInput placeholder="Search title or ID..." />
+            <CommandList>
+              <CommandEmpty>No campaign found.</CommandEmpty>
+              <CommandGroup>
+                {campaigns.map((c) => (
+                  <CommandItem
+                    key={c.id}
+                    value={`${c.title}  ·  ${c.id}`}
+                    onSelect={() => {
+                      setCampaignId(c.id)
+                      setCampaignPickerOpen(false)
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        "mr-2 h-4 w-4",
+                        campaignId === c.id ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <div className="flex flex-col">
+                      <span>{c.title}</span>
+                      <span className="text-xs text-muted-foreground">ID: {c.id}</span>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {campaignsError && (
+        <p className="mt-2 text-xs text-rose-400">Failed to load campaigns: {campaignsError}</p>
+      )}
+      <p className="mt-3 text-xs text-muted-foreground">
+        Selection isn&apos;t saved yet — per-campaign settings will be wired up once the settings
+        table is defined.
       </p>
     </div>
   )
