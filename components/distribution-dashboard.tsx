@@ -1670,7 +1670,10 @@ function ExtendExpiredContent() {
     [ssExpiryColumn]
   )
 
-  // Idnumbers eligible for extension: in history, in SS expired view, and SS expiry is in the past.
+  // Idnumbers eligible for the extend/upload run. Two cases qualify:
+  //   1. In history AND in the SS expired view AND the SS expiry is in the past — a true extension.
+  //   2. In history but NOT in SS at all — there's nothing to extend, so the run acts as an upload.
+  // A lead that is in SS but still active (not expired) is intentionally excluded.
   const extendableIdnumbers = useMemo(() => {
     if (!results) return []
     return Array.from(
@@ -1679,9 +1682,8 @@ function ExtendExpiredContent() {
           .filter(
             (r) =>
               r.inHistory &&
-              r.inSs &&
               r.idnumber &&
-              expiryStatus(ssExpiryFor(r)) === "expired"
+              (!r.inSs || expiryStatus(ssExpiryFor(r)) === "expired")
           )
           .map((r) => r.idnumber as string)
       )
@@ -2025,7 +2027,7 @@ function ExtendExpiredContent() {
               {hasExtended
                 ? "Extension already run. Click \"Check history\" to look up another batch."
                 : extendableIdnumbers.length > 0
-                ? `${extendableIdnumbers.length} lead${extendableIdnumbers.length === 1 ? "" : "s"} eligible to extend (in history, in SS, expired).`
+                ? `${extendableIdnumbers.length} lead${extendableIdnumbers.length === 1 ? "" : "s"} eligible (in history and either SS-expired, or not in SS — uploaded as new).`
                 : "No eligible leads to extend."}
             </p>
             <Button
