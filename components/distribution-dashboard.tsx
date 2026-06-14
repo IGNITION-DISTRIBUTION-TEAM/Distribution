@@ -401,6 +401,50 @@ async function parseJsonResponse(res: Response): Promise<any> {
   }
 }
 
+const MAX_PREVIEW_SAMPLE_ROWS = 10
+
+/**
+ * Build the file preview entirely in the browser. This previously POSTed the
+ * file to /api/upload/preview, but on Vercel the ~4.5MB serverless request
+ * body limit rejected larger files with a plain-text 413. xlsx parses fine
+ * client-side, so we avoid the upload — and the limit — altogether. (The
+ * "Load to Snowflake" step is not yet implemented, so no other step sends the
+ * full file to the server.)
+ */
+async function buildFilePreview(file: File): Promise<FilePreview> {
+  const lower = file.name.toLowerCase()
+  const isCsv = lower.endsWith(".csv")
+  const isExcel = lower.endsWith(".xlsx") || lower.endsWith(".xls")
+  if (!isCsv && !isExcel) {
+    throw new Error("Only .csv, .xlsx, and .xls files are accepted")
+  }
+
+  const XLSX = await import("xlsx")
+  const workbook = isCsv
+    ? XLSX.read(await file.text(), { type: "string" })
+    : XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true })
+
+  const sheetName = workbook.SheetNames[0]
+  if (!sheetName) throw new Error("File contains no sheets")
+
+  const sheet = workbook.Sheets[sheetName]
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: "",
+    raw: false,
+  })
+  if (rows.length === 0) throw new Error("File contains no data rows")
+
+  const headers = Object.keys(rows[0])
+  const sample = rows.slice(0, MAX_PREVIEW_SAMPLE_ROWS).map((row) =>
+    headers.map((h) => {
+      const v = row[h]
+      return v === null || v === undefined ? "" : String(v)
+    })
+  )
+
+  return { fileName: file.name, sheetName, rowCount: rows.length, headers, sample }
+}
+
 function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [stage, setStage] = useState<"select" | "preview" | "create" | "map">("select")
@@ -433,12 +477,8 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     if (!file) return
     setPreviewLoading(true)
     try {
-      const fd = new FormData()
-      fd.append("file", file)
-      const res = await fetch("/api/upload/preview", { method: "POST", body: fd })
-      const data = await parseJsonResponse(res)
-      if (!res.ok) throw new Error(data.error || `Preview failed (${res.status})`)
-      setPreview(data as FilePreview)
+      const data = await buildFilePreview(file)
+      setPreview(data)
       setStage("preview")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
