@@ -379,6 +379,28 @@ function autoMatchColumn(sourceHeader: string, targets: TargetColumn[]): string 
 
 type CreateColSpec = { sourceHeader: string; name: string; type: string }
 
+/**
+ * Parse a fetch Response expected to be JSON. When an upstream (hosting
+ * platform / reverse proxy) rejects a request before it reaches our route —
+ * most commonly a 413 "Request Entity Too Large" for an oversized upload — the
+ * body is plain text, and a bare res.json() throws an opaque "Unexpected token"
+ * error. This surfaces an actionable message instead.
+ */
+async function parseJsonResponse(res: Response): Promise<any> {
+  const text = await res.text()
+  try {
+    return text ? JSON.parse(text) : {}
+  } catch {
+    const snippet = text.trim().replace(/\s+/g, " ").slice(0, 140)
+    if (res.status === 413 || /request entity too large|too large/i.test(snippet)) {
+      throw new Error(
+        "File is too large for the upload endpoint (HTTP 413). Reduce the file size, or have an admin raise the request body limit."
+      )
+    }
+    throw new Error(`Unexpected ${res.status} response: ${snippet || res.statusText}`)
+  }
+}
+
 function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [stage, setStage] = useState<"select" | "preview" | "create" | "map">("select")
@@ -414,7 +436,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
       const fd = new FormData()
       fd.append("file", file)
       const res = await fetch("/api/upload/preview", { method: "POST", body: fd })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.error || `Preview failed (${res.status})`)
       setPreview(data as FilePreview)
       setStage("preview")
@@ -436,7 +458,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table: targetTable.trim() }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (res.status === 404) {
         // Table doesn't exist — switch to create flow with sensible defaults.
         const seen = new Set<string>()
@@ -496,7 +518,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
           columns: createSpec.map((c) => ({ name: c.name, type: c.type })),
         }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.error || `Create failed (${res.status})`)
       toast.success(`Created ${data.table} with ${data.columns} columns`)
 
@@ -506,7 +528,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table: targetTable.trim() }),
       })
-      const colsData = await colsRes.json()
+      const colsData = await parseJsonResponse(colsRes)
       if (!colsRes.ok) throw new Error(colsData.error || "Failed to fetch new columns")
       const cols = colsData.columns as TargetColumn[]
       setTargetColumns(cols)
