@@ -4,6 +4,8 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Badge } from "@/components/ui/badge"
@@ -4257,12 +4259,42 @@ function SettingsContent() {
   )
 }
 
+type CampaignConfig = {
+  SFTP_HOST?: string | null
+  SFTP_PORT?: number | string | null
+  SFTP_USERNAME?: string | null
+  SFTP_PASSWORD?: string | null
+  SFTP_PRIVATE_KEY?: string | null
+  SFTP_REMOTE_PATH?: string | null
+  SFTP_AUTH_TYPE?: string | null
+  UPLOAD_TARGET_TABLE?: string | null
+  SYNC_PROCEDURE?: string | null
+  IS_ACTIVE?: boolean | null
+}
+
 function CampaignSettingsPanel() {
+  // --- Campaign picker ---
   const [campaignId, setCampaignId] = useState("")
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
+
+  // --- Config form ---
+  const [host, setHost] = useState("")
+  const [port, setPort] = useState("22")
+  const [username, setUsername] = useState("")
+  const [authType, setAuthType] = useState<"password" | "privateKey">("password")
+  const [password, setPassword] = useState("")
+  const [privateKey, setPrivateKey] = useState("")
+  const [remotePath, setRemotePath] = useState("")
+  const [targetTable, setTargetTable] = useState("")
+  const [syncProcedure, setSyncProcedure] = useState("")
+  const [isActive, setIsActive] = useState(true)
+  const [configLoading, setConfigLoading] = useState(false)
+  const [configExists, setConfigExists] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -4294,75 +4326,298 @@ function CampaignSettingsPanel() {
 
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
 
+  const resetForm = useCallback(() => {
+    setHost("")
+    setPort("22")
+    setUsername("")
+    setAuthType("password")
+    setPassword("")
+    setPrivateKey("")
+    setRemotePath("")
+    setTargetTable("")
+    setSyncProcedure("")
+    setIsActive(true)
+    setConfigExists(false)
+  }, [])
+
+  // Load the selected campaign's saved config (if any) into the form.
+  useEffect(() => {
+    if (!campaignId) {
+      resetForm()
+      setLoadError(null)
+      return
+    }
+    let cancelled = false
+    const load = async () => {
+      setConfigLoading(true)
+      setLoadError(null)
+      try {
+        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
+        const data = await res.json()
+        if (cancelled) return
+        if (!res.ok) throw new Error(data.error || `Failed to load config (${res.status})`)
+        const c = data.config as CampaignConfig | null
+        if (c) {
+          setHost(c.SFTP_HOST ?? "")
+          setPort(c.SFTP_PORT != null ? String(c.SFTP_PORT) : "22")
+          setUsername(c.SFTP_USERNAME ?? "")
+          setAuthType(c.SFTP_AUTH_TYPE === "privateKey" ? "privateKey" : "password")
+          setPassword(c.SFTP_PASSWORD ?? "")
+          setPrivateKey(c.SFTP_PRIVATE_KEY ?? "")
+          setRemotePath(c.SFTP_REMOTE_PATH ?? "")
+          setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
+          setSyncProcedure(c.SYNC_PROCEDURE ?? "")
+          setIsActive(c.IS_ACTIVE !== false)
+          setConfigExists(true)
+        } else {
+          resetForm()
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setConfigLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId, resetForm])
+
+  const handleSave = async () => {
+    if (!campaignId) return
+    setSaving(true)
+    try {
+      const res = await fetch("/api/campaign-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaignId,
+          campaignTitle: selectedCampaign?.title ?? null,
+          sftpHost: host,
+          sftpPort: port,
+          sftpUsername: username,
+          sftpAuthType: authType,
+          sftpPassword: password,
+          sftpPrivateKey: privateKey,
+          sftpRemotePath: remotePath,
+          uploadTargetTable: targetTable,
+          syncProcedure,
+          isActive,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`)
+      toast.success("Campaign configuration saved")
+      setConfigExists(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <SettingsIcon className="h-5 w-5 text-muted-foreground" />
-        <h3 className="font-medium text-foreground">Campaign</h3>
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <SettingsIcon className="h-5 w-5 text-muted-foreground" />
+          <h3 className="font-medium text-foreground">Campaign</h3>
+        </div>
+        <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
+        <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              aria-expanded={campaignPickerOpen}
+              className="w-full max-w-md justify-between"
+              disabled={campaignsLoading || !!campaignsError}
+            >
+              <span className="truncate">
+                {campaignsLoading
+                  ? "Loading campaigns..."
+                  : selectedCampaign
+                  ? `${selectedCampaign.title}  ·  ${selectedCampaign.id}`
+                  : "Select a campaign..."}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <Command
+              filter={(value, search) => {
+                return value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
+              }}
+            >
+              <CommandInput placeholder="Search title or ID..." />
+              <CommandList>
+                <CommandEmpty>No campaign found.</CommandEmpty>
+                <CommandGroup>
+                  {campaigns.map((c) => (
+                    <CommandItem
+                      key={c.id}
+                      value={`${c.title}  ·  ${c.id}`}
+                      onSelect={() => {
+                        setCampaignId(c.id)
+                        setCampaignPickerOpen(false)
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          campaignId === c.id ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      <div className="flex flex-col">
+                        <span>{c.title}</span>
+                        <span className="text-xs text-muted-foreground">ID: {c.id}</span>
+                      </div>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {campaignsError && (
+          <p className="mt-2 text-xs text-rose-400">Failed to load campaigns: {campaignsError}</p>
+        )}
       </div>
-      <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
-      <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={campaignPickerOpen}
-            className="w-full max-w-md justify-between"
-            disabled={campaignsLoading || !!campaignsError}
-          >
-            <span className="truncate">
-              {campaignsLoading
-                ? "Loading campaigns..."
-                : selectedCampaign
-                ? `${selectedCampaign.title}  ·  ${selectedCampaign.id}`
-                : "Select a campaign..."}
-            </span>
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          <Command
-            filter={(value, search) => {
-              return value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
-            }}
-          >
-            <CommandInput placeholder="Search title or ID..." />
-            <CommandList>
-              <CommandEmpty>No campaign found.</CommandEmpty>
-              <CommandGroup>
-                {campaigns.map((c) => (
-                  <CommandItem
-                    key={c.id}
-                    value={`${c.title}  ·  ${c.id}`}
-                    onSelect={() => {
-                      setCampaignId(c.id)
-                      setCampaignPickerOpen(false)
-                    }}
-                  >
-                    <Check
-                      className={cn(
-                        "mr-2 h-4 w-4",
-                        campaignId === c.id ? "opacity-100" : "opacity-0"
-                      )}
+
+      {selectedCampaign && (
+        <div className="rounded-xl border border-border bg-card p-6">
+          <div className="mb-1 flex items-center justify-between">
+            <h3 className="font-medium text-foreground">Automation config</h3>
+            {configLoading ? (
+              <span className="text-xs text-muted-foreground">Loading…</span>
+            ) : (
+              <Badge variant="outline" className="text-xs">
+                {configExists ? "Saved" : "Not configured"}
+              </Badge>
+            )}
+          </div>
+          <p className="mb-4 text-xs text-muted-foreground">
+            SFTP source, destination table, and sync procedure for the automated distribution of{" "}
+            <span className="font-medium text-foreground">{selectedCampaign.title}</span>{" "}
+            (campaign {selectedCampaign.id}).
+          </p>
+
+          {loadError && (
+            <p className="mb-3 text-xs text-rose-400">Failed to load config: {loadError}</p>
+          )}
+
+          <div className="flex flex-col gap-5">
+            <div>
+              <h4 className="mb-3 text-sm font-medium text-foreground">SFTP source</h4>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Host</Label>
+                  <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="sftp.example.com" />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Port</Label>
+                  <Input
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="22"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Username</Label>
+                  <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Auth type</Label>
+                  <Select value={authType} onValueChange={(v) => setAuthType(v as "password" | "privateKey")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="password">Password</SelectItem>
+                      <SelectItem value="privateKey">Private key</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {authType === "password" ? (
+                  <div className="sm:col-span-2">
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">Password</Label>
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="off"
                     />
-                    <div className="flex flex-col">
-                      <span>{c.title}</span>
-                      <span className="text-xs text-muted-foreground">ID: {c.id}</span>
-                    </div>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-      {campaignsError && (
-        <p className="mt-2 text-xs text-rose-400">Failed to load campaigns: {campaignsError}</p>
+                  </div>
+                ) : (
+                  <div className="sm:col-span-2">
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">Private key (PEM)</Label>
+                    <Textarea
+                      value={privateKey}
+                      onChange={(e) => setPrivateKey(e.target.value)}
+                      rows={4}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                )}
+                <div className="sm:col-span-2">
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Remote path</Label>
+                  <Input
+                    value={remotePath}
+                    onChange={(e) => setRemotePath(e.target.value)}
+                    placeholder="/incoming/campaign-files"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-amber-400/80">
+                Credentials are stored in plaintext in Snowflake. Restrict access to this table.
+              </p>
+            </div>
+
+            <Separator />
+
+            <div>
+              <h4 className="mb-3 text-sm font-medium text-foreground">Destination &amp; sync</h4>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Upload target table</Label>
+                  <Input
+                    value={targetTable}
+                    onChange={(e) => setTargetTable(e.target.value)}
+                    placeholder="DATABASE.SCHEMA.TABLE"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Sync procedure</Label>
+                  <Input
+                    value={syncProcedure}
+                    onChange={(e) => setSyncProcedure(e.target.value)}
+                    placeholder="DATABASE.SCHEMA.PROC"
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Switch checked={isActive} onCheckedChange={setIsActive} id="config-active" />
+                <Label htmlFor="config-active" className="text-sm text-foreground">
+                  Automation active for this campaign
+                </Label>
+              </div>
+              <Button onClick={handleSave} disabled={saving || configLoading}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save configuration
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
-      <p className="mt-3 text-xs text-muted-foreground">
-        Selection isn&apos;t saved yet — per-campaign settings will be wired up once the settings
-        table is defined.
-      </p>
     </div>
   )
 }
