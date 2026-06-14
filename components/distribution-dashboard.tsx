@@ -581,6 +581,123 @@ function VerifyCountsSection({ campaignId }: { campaignId: string }) {
   )
 }
 
+// Step 4 — run the campaign's "update HLL" proc, CALL proc(campaignId). The proc
+// is the campaign-assigned one, or an override picked from the master list.
+function UpdateHllSection({ campaignId }: { campaignId: string }) {
+  const [procs, setProcs] = useState<HllProc[]>([])
+  const [assignedProc, setAssignedProc] = useState("")
+  const [override, setOverride] = useState("")
+  const [running, setRunning] = useState(false)
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [procsRes, cfgRes] = await Promise.all([
+          fetch("/api/hll-procedures", { cache: "no-store" }),
+          fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" }),
+        ])
+        if (cancelled) return
+        if (procsRes.ok) {
+          const d = await procsRes.json()
+          setProcs((d.rows as HllProc[]) ?? [])
+        }
+        if (cfgRes.ok) {
+          const d = await cfgRes.json()
+          const p = d?.config?.UPDATE_HLL_PROCEDURE
+          if (typeof p === "string") setAssignedProc(p.trim())
+        }
+      } catch {
+        // best-effort
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
+
+  const effectiveProc = override || assignedProc
+
+  const handleRun = async () => {
+    setRunning(true)
+    setDone(false)
+    try {
+      const res = await fetch("/api/leads/update-hll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId, procOverride: override || undefined }),
+      })
+      const data = await parseJsonResponse(res)
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
+      toast.success(`Ran ${data.proc}(${campaignId})`)
+      setDone(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <h3 className="font-medium text-foreground">Update HLL</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Runs the update-HLL procedure for this campaign — <span className="font-mono">CALL
+        proc({campaignId})</span>. Uses the campaign&apos;s assigned procedure, or an override below.
+      </p>
+
+      <div className="mt-4 max-w-md">
+        <Label className="mb-1.5 block text-xs text-muted-foreground">
+          Procedure (override)
+        </Label>
+        <Select
+          value={override || NONE_PROC}
+          onValueChange={(v) => setOverride(v === NONE_PROC ? "" : v)}
+        >
+          <SelectTrigger className="font-mono text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE_PROC}>
+              {assignedProc ? `Use campaign default (${assignedProc})` : "Use campaign default"}
+            </SelectItem>
+            {procs.map((p) => (
+              <SelectItem key={String(p.PROC_INDEX)} value={p.PROC_NAME}>
+                {p.PROC_NAME}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-4">
+        <Label className="mb-1.5 block text-xs text-muted-foreground">Will run</Label>
+        {effectiveProc ? (
+          <code className="block rounded-md border border-border bg-background px-3 py-2 font-mono text-sm">
+            CALL {effectiveProc}({campaignId})
+          </code>
+        ) : (
+          <p className="text-sm text-amber-300">
+            No procedure assigned to this campaign and none selected. Assign one in Settings or pick
+            an override.
+          </p>
+        )}
+      </div>
+
+      <Button className="mt-4" onClick={handleRun} disabled={running || !effectiveProc}>
+        {running ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Database className="mr-2 h-4 w-4" />
+        )}
+        {done ? "Run again" : "Run update HLL"}
+      </Button>
+    </div>
+  )
+}
+
 function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [stage, setStage] = useState<"select" | "preview" | "create" | "map">("select")
@@ -611,7 +728,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
 
   // Non-linear navigation between pipeline steps. Steps are independent — e.g.
   // when the stage table is already loaded, jump straight to "history"/"verify".
-  const [section, setSection] = useState<"upload" | "history" | "verify">("upload")
+  const [section, setSection] = useState<"upload" | "history" | "verify" | "update">("upload")
   const [historyProc, setHistoryProc] = useState("")
 
   // Pre-fill the target stage table from this campaign's saved automation
@@ -1206,10 +1323,11 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   )
   }
 
-  const steps: { id: "upload" | "history" | "verify"; label: string }[] = [
+  const steps: { id: "upload" | "history" | "verify" | "update"; label: string }[] = [
     { id: "upload", label: "1 · Upload to stage" },
     { id: "history", label: "2 · Load into history" },
     { id: "verify", label: "3 · Verify counts" },
+    { id: "update", label: "4 · Update HLL" },
   ]
 
   return (
@@ -1235,6 +1353,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
       {section === "upload" && renderUpload()}
       {section === "history" && <LoadHistorySection campaignId={campaignId} proc={historyProc} />}
       {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
+      {section === "update" && <UpdateHllSection campaignId={campaignId} />}
     </div>
   )
 }
@@ -4655,9 +4774,15 @@ function SettingsContent() {
       </div>
 
       <CampaignSettingsPanel />
+      <HllProceduresPanel />
     </div>
   )
 }
+
+type HllProc = { PROC_INDEX: number | string; PROC_NAME: string; CREATED_AT?: string | null }
+
+// Sentinel for the "no procedure" option in a Radix Select (which can't use "").
+const NONE_PROC = "__none__"
 
 type CampaignConfig = {
   SFTP_HOST?: string | null
@@ -4669,6 +4794,7 @@ type CampaignConfig = {
   SFTP_AUTH_TYPE?: string | null
   UPLOAD_TARGET_TABLE?: string | null
   LOAD_HISTORY_PROCEDURE?: string | null
+  UPDATE_HLL_PROCEDURE?: string | null
   SYNC_PROCEDURE?: string | null
   IS_ACTIVE?: boolean | null
 }
@@ -4691,12 +4817,28 @@ function CampaignSettingsPanel() {
   const [remotePath, setRemotePath] = useState("")
   const [targetTable, setTargetTable] = useState("")
   const [loadHistoryProc, setLoadHistoryProc] = useState("")
+  const [updateHllProc, setUpdateHllProc] = useState("")
   const [syncProcedure, setSyncProcedure] = useState("")
   const [isActive, setIsActive] = useState(true)
   const [configLoading, setConfigLoading] = useState(false)
   const [configExists, setConfigExists] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [hllProcs, setHllProcs] = useState<HllProc[]>([])
+
+  // Available update-HLL procedures, to populate the assignment dropdown.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/hll-procedures", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { rows: [] }))
+      .then((data) => {
+        if (!cancelled) setHllProcs((data.rows as HllProc[]) ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -4738,6 +4880,7 @@ function CampaignSettingsPanel() {
     setRemotePath("")
     setTargetTable("")
     setLoadHistoryProc("")
+    setUpdateHllProc("")
     setSyncProcedure("")
     setIsActive(true)
     setConfigExists(false)
@@ -4770,6 +4913,7 @@ function CampaignSettingsPanel() {
           setRemotePath(c.SFTP_REMOTE_PATH ?? "")
           setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
           setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
+          setUpdateHllProc(c.UPDATE_HLL_PROCEDURE ?? "")
           setSyncProcedure(c.SYNC_PROCEDURE ?? "")
           setIsActive(c.IS_ACTIVE !== false)
           setConfigExists(true)
@@ -4807,6 +4951,7 @@ function CampaignSettingsPanel() {
           sftpRemotePath: remotePath,
           uploadTargetTable: targetTable,
           loadHistoryProcedure: loadHistoryProc,
+          updateHllProcedure: updateHllProc,
           syncProcedure,
           isActive,
         }),
@@ -5006,6 +5151,32 @@ function CampaignSettingsPanel() {
                   />
                 </div>
                 <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">
+                    Update HLL procedure
+                  </Label>
+                  <Select
+                    value={updateHllProc || NONE_PROC}
+                    onValueChange={(v) => setUpdateHllProc(v === NONE_PROC ? "" : v)}
+                  >
+                    <SelectTrigger className="font-mono text-sm">
+                      <SelectValue placeholder="Select a procedure..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE_PROC}>(none)</SelectItem>
+                      {hllProcs.map((p) => (
+                        <SelectItem key={String(p.PROC_INDEX)} value={p.PROC_NAME}>
+                          {p.PROC_NAME}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {hllProcs.length === 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      No procedures yet — add them under &quot;HLL update procedures&quot; below.
+                    </p>
+                  )}
+                </div>
+                <div>
                   <Label className="mb-1.5 block text-xs text-muted-foreground">Sync procedure</Label>
                   <Input
                     value={syncProcedure}
@@ -5034,6 +5205,144 @@ function CampaignSettingsPanel() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// CRUD for the master list of update-HLL procedures (TSK_HLL_UPDATE_PROCEDURES).
+function HllProceduresPanel() {
+  const [rows, setRows] = useState<HllProc[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [newName, setNewName] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [deleting, setDeleting] = useState<string | number | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/hll-procedures", { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Failed to load procedures (${res.status})`)
+      setRows(data.rows as HllProc[])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const handleAdd = async () => {
+    const name = newName.trim()
+    if (!name) return
+    setAdding(true)
+    try {
+      const nextIndex =
+        rows && rows.length > 0 ? Math.max(...rows.map((r) => Number(r.PROC_INDEX))) + 1 : 1
+      const res = await fetch("/api/hll-procedures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ procIndex: nextIndex, procName: name }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`)
+      toast.success("Procedure added")
+      setNewName("")
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const handleDelete = async (idx: string | number) => {
+    setDeleting(idx)
+    try {
+      const res = await fetch(`/api/hll-procedures/${idx}`, { method: "DELETE" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Delete failed (${res.status})`)
+      toast.success("Procedure removed")
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <h3 className="font-medium text-foreground">HLL update procedures</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Procedures available for step 4 (<span className="font-mono">CALL proc(campaignid)</span>),
+        stored in <span className="font-mono">TSK_HLL_UPDATE_PROCEDURES</span>. Assign one to a
+        campaign above, or override it in step 4.
+      </p>
+
+      <div className="mt-4 flex gap-2">
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="DATABASE.SCHEMA.PROC"
+          className="max-w-md font-mono text-sm"
+        />
+        <Button onClick={handleAdd} disabled={adding || !newName.trim()}>
+          {adding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Add
+        </Button>
+      </div>
+      {error && <p className="mt-2 text-xs text-rose-400">{error}</p>}
+
+      <div className="mt-4 overflow-hidden rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-20">Index</TableHead>
+              <TableHead>Procedure</TableHead>
+              <TableHead className="w-24" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
+                  Loading…
+                </TableCell>
+              </TableRow>
+            ) : rows && rows.length > 0 ? (
+              rows.map((r) => (
+                <TableRow key={String(r.PROC_INDEX)}>
+                  <TableCell className="font-mono text-sm">{String(r.PROC_INDEX)}</TableCell>
+                  <TableCell className="font-mono text-sm">{r.PROC_NAME}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(r.PROC_INDEX)}
+                      disabled={deleting === r.PROC_INDEX}
+                      className="text-muted-foreground hover:text-rose-300"
+                    >
+                      Remove
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
+                  No procedures yet.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }

@@ -34,6 +34,7 @@ export type CampaignConfigInput = {
   sftpAuthType?: string
   uploadTargetTable?: string
   loadHistoryProcedure?: string
+  updateHllProcedure?: string
   syncProcedure?: string
   isActive?: boolean
 }
@@ -76,6 +77,13 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     return { error: 'loadHistoryProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
   }
 
+  const updateHllProcedure = body.updateHllProcedure
+    ? String(body.updateHllProcedure).trim()
+    : ""
+  if (updateHllProcedure && !QUALIFIED_IDENT.test(updateHllProcedure)) {
+    return { error: 'updateHllProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+  }
+
   const syncProcedure = body.syncProcedure ? String(body.syncProcedure).trim() : ""
   if (syncProcedure && !QUALIFIED_IDENT.test(syncProcedure)) {
     return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
@@ -95,6 +103,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sftpAuthType,
     uploadTargetTable,
     loadHistoryProcedure,
+    updateHllProcedure,
     syncProcedure,
     isActive: body.isActive === undefined ? true : !!body.isActive,
   }
@@ -153,6 +162,7 @@ export async function POST(request: NextRequest) {
     ["SFTP_AUTH_TYPE", sqlStr(authType)],
     ["UPLOAD_TARGET_TABLE", sqlStr(parsed.uploadTargetTable)],
     ["LOAD_HISTORY_PROCEDURE", sqlStr(parsed.loadHistoryProcedure)],
+    ["UPDATE_HLL_PROCEDURE", sqlStr(parsed.updateHllProcedure)],
     ["SYNC_PROCEDURE", sqlStr(parsed.syncProcedure)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
