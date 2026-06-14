@@ -411,7 +411,7 @@ const MAX_PREVIEW_SAMPLE_ROWS = 10
  * "Load to Snowflake" step is not yet implemented, so no other step sends the
  * full file to the server.)
  */
-async function buildFilePreview(file: File): Promise<FilePreview> {
+async function buildFilePreview(file: File): Promise<{ preview: FilePreview; allRows: string[][] }> {
   const lower = file.name.toLowerCase()
   const isCsv = lower.endsWith(".csv")
   const isExcel = lower.endsWith(".xlsx") || lower.endsWith(".xls")
@@ -435,14 +435,14 @@ async function buildFilePreview(file: File): Promise<FilePreview> {
   if (rows.length === 0) throw new Error("File contains no data rows")
 
   const headers = Object.keys(rows[0])
-  const sample = rows.slice(0, MAX_PREVIEW_SAMPLE_ROWS).map((row) =>
-    headers.map((h) => {
-      const v = row[h]
-      return v === null || v === undefined ? "" : String(v)
-    })
-  )
+  const toCell = (v: unknown) => (v === null || v === undefined ? "" : String(v))
+  const allRows = rows.map((row) => headers.map((h) => toCell(row[h])))
+  const sample = allRows.slice(0, MAX_PREVIEW_SAMPLE_ROWS)
 
-  return { fileName: file.name, sheetName, rowCount: rows.length, headers, sample }
+  return {
+    preview: { fileName: file.name, sheetName, rowCount: rows.length, headers, sample },
+    allRows,
+  }
 }
 
 function FileSourcePanel({ campaignId }: { campaignId: string }) {
@@ -465,6 +465,13 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [createSpec, setCreateSpec] = useState<CreateColSpec[]>([])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+
+  // Load state (full parsed rows kept client-side; batched to /api/upload/load)
+  const [allRows, setAllRows] = useState<string[][]>([])
+  const [loadOpen, setLoadOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [loadedRows, setLoadedRows] = useState(0)
+  const [loadDone, setLoadDone] = useState(false)
 
   // Pre-fill the target stage table from this campaign's saved automation
   // config (Settings → Campaign → UPLOAD_TARGET_TABLE). Best-effort: if the
@@ -504,8 +511,11 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     if (!file) return
     setPreviewLoading(true)
     try {
-      const data = await buildFilePreview(file)
-      setPreview(data)
+      const { preview: built, allRows: rows } = await buildFilePreview(file)
+      setPreview(built)
+      setAllRows(rows)
+      setLoadDone(false)
+      setLoadedRows(0)
       setStage("preview")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -610,11 +620,76 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     }
   }
 
+  // Load the mapped rows into the target table: TRUNCATE on the first batch,
+  // then INSERT in chunks of 1000 (kept under Vercel's request body limit).
+  const handleLoad = async () => {
+    if (!preview || allRows.length === 0 || !targetTable.trim()) return
+
+    const mapped = preview.headers
+      .map((h, i) => ({ index: i, target: mapping[h] }))
+      .filter((m): m is { index: number; target: string } => !!m.target && m.target !== SKIP_VALUE)
+    if (mapped.length === 0) {
+      toast.error("Map at least one column before loading")
+      return
+    }
+    const columns = mapped.map((m) => m.target)
+    const sourceIdx = mapped.map((m) => m.index)
+    const hasCampaignCol = (targetColumns ?? []).some((c) => c.COLUMN_NAME === "CAMPAIGNID")
+    const injectCampaignId = hasCampaignCol && !columns.includes("CAMPAIGNID")
+
+    setLoading(true)
+    setLoadedRows(0)
+    setLoadDone(false)
+    const BATCH = 1000
+    try {
+      let loaded = 0
+      for (let i = 0; i < allRows.length; i += BATCH) {
+        const slice = allRows.slice(i, i + BATCH)
+        const rowsPayload = slice.map((row) =>
+          sourceIdx.map((idx) => {
+            const v = row[idx]
+            return v === "" || v === undefined ? null : v
+          })
+        )
+        const res = await fetch("/api/upload/load", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: targetTable.trim(),
+            columns,
+            rows: rowsPayload,
+            campaignId,
+            injectCampaignId,
+            truncate: i === 0,
+          }),
+        })
+        const data = await parseJsonResponse(res)
+        if (!res.ok) {
+          throw new Error(
+            `${data.error || `Load failed (${res.status})`} — ${loaded} of ${allRows.length} rows loaded before the failure.`
+          )
+        }
+        loaded += slice.length
+        setLoadedRows(loaded)
+      }
+      setLoadDone(true)
+      setLoadOpen(false)
+      toast.success(`Loaded ${loaded} row${loaded === 1 ? "" : "s"} into ${targetTable.trim()}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleReset = () => {
     setFile(null)
     setPreview(null)
     setTargetColumns(null)
     setMapping({})
+    setAllRows([])
+    setLoadDone(false)
+    setLoadedRows(0)
     setStage("select")
   }
 
@@ -924,14 +999,60 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Button variant="ghost" onClick={() => setStage("preview")}>
+        <Button variant="ghost" onClick={() => setStage("preview")} disabled={loading}>
           Back
         </Button>
-        <Button disabled>
-          <Database className="mr-2 h-4 w-4" />
-          Load to Snowflake (coming soon)
+        <Button
+          onClick={() => setLoadOpen(true)}
+          disabled={loading || loadDone || mappedTargets.size === 0 || unmappedRequired.length > 0}
+        >
+          {loading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Database className="mr-2 h-4 w-4" />
+          )}
+          {loadDone
+            ? `Loaded ${loadedRows} rows`
+            : loading
+            ? `Loading… ${loadedRows}/${preview.rowCount}`
+            : `Load ${preview.rowCount} rows to Snowflake`}
         </Button>
       </div>
+
+      <AlertDialog open={loadOpen} onOpenChange={(open) => !loading && setLoadOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Truncate &amp; load {preview.rowCount} rows?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>This will run against Snowflake:</p>
+                <ol className="ml-5 list-decimal space-y-1">
+                  <li>
+                    <span className="font-mono">TRUNCATE TABLE {targetTable.trim()}</span>
+                  </li>
+                  <li>
+                    <span className="font-mono">INSERT</span> the {preview.rowCount} mapped rows in
+                    batches of 1000.
+                  </li>
+                </ol>
+                <p className="pt-1">
+                  The truncate is destructive and cannot be undone. If a batch fails midway, the
+                  table is left truncated and partially loaded.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLoad} disabled={loading}>
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Truncate &amp; load
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
