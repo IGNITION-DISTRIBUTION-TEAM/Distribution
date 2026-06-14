@@ -445,6 +445,142 @@ async function buildFilePreview(file: File): Promise<{ preview: FilePreview; all
   }
 }
 
+// Step 2 — run the campaign's "Load into history" procedure (stage → HLL).
+function LoadHistorySection({ campaignId, proc }: { campaignId: string; proc: string }) {
+  const [running, setRunning] = useState(false)
+  const [done, setDone] = useState(false)
+
+  const handleRun = async () => {
+    setRunning(true)
+    setDone(false)
+    try {
+      const res = await fetch("/api/leads/load-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId }),
+      })
+      const data = await parseJsonResponse(res)
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
+      toast.success("Load into history procedure completed")
+      setDone(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <h3 className="font-medium text-foreground">Load into history</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Runs the campaign&apos;s configured procedure to load the stage table into the history (HLL)
+        table.
+      </p>
+      <div className="mt-4">
+        <Label className="mb-1.5 block text-xs text-muted-foreground">Procedure to run</Label>
+        {proc ? (
+          <code className="block rounded-md border border-border bg-background px-3 py-2 font-mono text-sm">
+            CALL {proc}()
+          </code>
+        ) : (
+          <p className="text-sm text-amber-300">
+            No &quot;Load into history procedure&quot; is configured for this campaign. Set it in
+            Settings → Campaign.
+          </p>
+        )}
+      </div>
+      <Button className="mt-4" onClick={handleRun} disabled={running || !proc}>
+        {running ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Database className="mr-2 h-4 w-4" />
+        )}
+        {done ? "Run again" : "Run load into history"}
+      </Button>
+    </div>
+  )
+}
+
+type CountCheckResult = {
+  stageTable: string
+  stageCount: number
+  hllCount: number
+  match: boolean
+}
+
+// Step 3 — compare the stage table row count to the HLL count for this campaign today.
+function VerifyCountsSection({ campaignId }: { campaignId: string }) {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<CountCheckResult | null>(null)
+
+  const handleCheck = async () => {
+    setLoading(true)
+    setResult(null)
+    try {
+      const res = await fetch("/api/leads/count-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId }),
+      })
+      const data = await parseJsonResponse(res)
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
+      setResult(data as CountCheckResult)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <h3 className="font-medium text-foreground">Verify counts</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Compares the stage table row count against the HLL (main) table for this campaign loaded
+        today.
+      </p>
+      <Button className="mt-4" onClick={handleCheck} disabled={loading}>
+        {loading ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Search className="mr-2 h-4 w-4" />
+        )}
+        Check counts
+      </Button>
+
+      {result && (
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <SummaryCard label="Stage rows" value={result.stageCount} accent="primary" />
+          <SummaryCard label="HLL rows (today)" value={result.hllCount} accent="primary" />
+          <div className="rounded-lg border border-border bg-background/40 p-4">
+            <p className="text-xs text-muted-foreground">Match</p>
+            <div className="mt-2">
+              {result.match ? (
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                >
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                  Counts match
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="border-rose-500/30 bg-rose-500/10 text-rose-300"
+                >
+                  <XCircle className="mr-1 h-3 w-3" />
+                  Mismatch
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [stage, setStage] = useState<"select" | "preview" | "create" | "map">("select")
@@ -473,6 +609,11 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [loadedRows, setLoadedRows] = useState(0)
   const [loadDone, setLoadDone] = useState(false)
 
+  // Non-linear navigation between pipeline steps. Steps are independent — e.g.
+  // when the stage table is already loaded, jump straight to "history"/"verify".
+  const [section, setSection] = useState<"upload" | "history" | "verify">("upload")
+  const [historyProc, setHistoryProc] = useState("")
+
   // Pre-fill the target stage table from this campaign's saved automation
   // config (Settings → Campaign → UPLOAD_TARGET_TABLE). Best-effort: if the
   // config table or value is missing, the field stays blank and editable.
@@ -484,10 +625,15 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
         if (!res.ok) return
         const data = await res.json()
+        if (cancelled) return
         const configured = data?.config?.UPLOAD_TARGET_TABLE
-        if (!cancelled && typeof configured === "string" && configured.trim()) {
+        if (typeof configured === "string" && configured.trim()) {
           setTargetTable(configured.trim())
           setTargetFromConfig(true)
+        }
+        const proc = data?.config?.LOAD_HISTORY_PROCEDURE
+        if (typeof proc === "string" && proc.trim()) {
+          setHistoryProc(proc.trim())
         }
       } catch {
         // best-effort prefill — ignore network/config errors
@@ -693,6 +839,9 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     setStage("select")
   }
 
+  // The file-upload sub-flow (select → preview → create → map → load). Rendered
+  // as the "upload" step of the pipeline; other steps don't need a file.
+  const renderUpload = () => {
   // ---- STAGE: select file
   if (stage === "select" || !preview) {
     return (
@@ -1053,6 +1202,39 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+  }
+
+  const steps: { id: "upload" | "history" | "verify"; label: string }[] = [
+    { id: "upload", label: "1 · Upload to stage" },
+    { id: "history", label: "2 · Load into history" },
+    { id: "verify", label: "3 · Verify counts" },
+  ]
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap gap-2">
+        {steps.map((s) => (
+          <Button
+            key={s.id}
+            type="button"
+            variant={section === s.id ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSection(s.id)}
+            disabled={loading}
+          >
+            {s.label}
+          </Button>
+        ))}
+      </div>
+      <p className="-mt-2 text-xs text-muted-foreground">
+        Steps are independent — if the stage table is already loaded, skip straight to step 2 or 3.
+      </p>
+
+      {section === "upload" && renderUpload()}
+      {section === "history" && <LoadHistorySection campaignId={campaignId} proc={historyProc} />}
+      {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
     </div>
   )
 }
