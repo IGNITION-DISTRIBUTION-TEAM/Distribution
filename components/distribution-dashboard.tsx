@@ -459,11 +459,38 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [targetLoading, setTargetLoading] = useState(false)
   const [targetError, setTargetError] = useState<string | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
+  const [targetFromConfig, setTargetFromConfig] = useState(false)
 
   // Create-table state
   const [createSpec, setCreateSpec] = useState<CreateColSpec[]>([])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+
+  // Pre-fill the target stage table from this campaign's saved automation
+  // config (Settings → Campaign → UPLOAD_TARGET_TABLE). Best-effort: if the
+  // config table or value is missing, the field stays blank and editable.
+  useEffect(() => {
+    if (!campaignId) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
+        if (!res.ok) return
+        const data = await res.json()
+        const configured = data?.config?.UPLOAD_TARGET_TABLE
+        if (!cancelled && typeof configured === "string" && configured.trim()) {
+          setTargetTable(configured.trim())
+          setTargetFromConfig(true)
+        }
+      } catch {
+        // best-effort prefill — ignore network/config errors
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -671,10 +698,18 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
           <input
             id="target-table"
             value={targetTable}
-            onChange={(e) => setTargetTable(e.target.value)}
+            onChange={(e) => {
+              setTargetTable(e.target.value)
+              setTargetFromConfig(false)
+            }}
             placeholder="DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_LEAD_STAGE"
             className="w-full max-w-xl rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
           />
+          {targetFromConfig && !targetError && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Pre-filled from this campaign&apos;s settings. Edit to override.
+            </p>
+          )}
           {targetError && (
             <p className="mt-2 text-xs text-rose-400">{targetError}</p>
           )}
