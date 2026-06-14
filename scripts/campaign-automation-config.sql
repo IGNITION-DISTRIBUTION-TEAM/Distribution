@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_AUTOMAT
   -- Destination for the uploaded file data
   UPLOAD_TARGET_TABLE VARCHAR,                        -- fully-qualified DATABASE.SCHEMA.NAME
 
-  -- Downstream sync
-  SYNC_PROCEDURE      VARCHAR,                        -- fully-qualified DATABASE.SCHEMA.PROC to CALL
+  -- Procedures
+  LOAD_HISTORY_PROCEDURE VARCHAR,                     -- proc that loads the stage table into the HLL/history table
+  SYNC_PROCEDURE      VARCHAR,                        -- fully-qualified DATABASE.SCHEMA.PROC for the downstream sync
 
   IS_ACTIVE           BOOLEAN         DEFAULT TRUE,    -- automation runs for this campaign?
 
@@ -43,3 +44,7 @@ CREATE TABLE IF NOT EXISTS DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_AUTOMAT
 
   CONSTRAINT PK_TSK_CAMPAIGN_AUTOMATION_CONFIG PRIMARY KEY (CAMPAIGNID)
 );
+
+-- For tables created before LOAD_HISTORY_PROCEDURE existed, add it idempotently.
+ALTER TABLE DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_AUTOMATION_CONFIG
+  ADD COLUMN IF NOT EXISTS LOAD_HISTORY_PROCEDURE VARCHAR;

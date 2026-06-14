@@ -4486,6 +4486,7 @@ type CampaignConfig = {
   SFTP_REMOTE_PATH?: string | null
   SFTP_AUTH_TYPE?: string | null
   UPLOAD_TARGET_TABLE?: string | null
+  LOAD_HISTORY_PROCEDURE?: string | null
   SYNC_PROCEDURE?: string | null
   IS_ACTIVE?: boolean | null
 }
@@ -4507,6 +4508,7 @@ function CampaignSettingsPanel() {
   const [privateKey, setPrivateKey] = useState("")
   const [remotePath, setRemotePath] = useState("")
   const [targetTable, setTargetTable] = useState("")
+  const [loadHistoryProc, setLoadHistoryProc] = useState("")
   const [syncProcedure, setSyncProcedure] = useState("")
   const [isActive, setIsActive] = useState(true)
   const [configLoading, setConfigLoading] = useState(false)
@@ -4553,6 +4555,7 @@ function CampaignSettingsPanel() {
     setPrivateKey("")
     setRemotePath("")
     setTargetTable("")
+    setLoadHistoryProc("")
     setSyncProcedure("")
     setIsActive(true)
     setConfigExists(false)
@@ -4584,6 +4587,7 @@ function CampaignSettingsPanel() {
           setPrivateKey(c.SFTP_PRIVATE_KEY ?? "")
           setRemotePath(c.SFTP_REMOTE_PATH ?? "")
           setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
+          setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
           setSyncProcedure(c.SYNC_PROCEDURE ?? "")
           setIsActive(c.IS_ACTIVE !== false)
           setConfigExists(true)
@@ -4620,6 +4624,7 @@ function CampaignSettingsPanel() {
           sftpPrivateKey: privateKey,
           sftpRemotePath: remotePath,
           uploadTargetTable: targetTable,
+          loadHistoryProcedure: loadHistoryProc,
           syncProcedure,
           isActive,
         }),
@@ -4804,6 +4809,17 @@ function CampaignSettingsPanel() {
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
                     placeholder="DATABASE.SCHEMA.TABLE"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">
+                    Load into history procedure
+                  </Label>
+                  <Input
+                    value={loadHistoryProc}
+                    onChange={(e) => setLoadHistoryProc(e.target.value)}
+                    placeholder="DATABASE.SCHEMA.PROC"
                     className="font-mono text-sm"
                   />
                 </div>

@@ -33,6 +33,7 @@ export type CampaignConfigInput = {
   sftpRemotePath?: string
   sftpAuthType?: string
   uploadTargetTable?: string
+  loadHistoryProcedure?: string
   syncProcedure?: string
   isActive?: boolean
 }
@@ -68,6 +69,13 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     return { error: 'uploadTargetTable must be "DATABASE.SCHEMA.NAME" (A-Z, 0-9, _ only)' }
   }
 
+  const loadHistoryProcedure = body.loadHistoryProcedure
+    ? String(body.loadHistoryProcedure).trim()
+    : ""
+  if (loadHistoryProcedure && !QUALIFIED_IDENT.test(loadHistoryProcedure)) {
+    return { error: 'loadHistoryProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+  }
+
   const syncProcedure = body.syncProcedure ? String(body.syncProcedure).trim() : ""
   if (syncProcedure && !QUALIFIED_IDENT.test(syncProcedure)) {
     return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
@@ -86,6 +94,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sftpRemotePath: str(body.sftpRemotePath),
     sftpAuthType,
     uploadTargetTable,
+    loadHistoryProcedure,
     syncProcedure,
     isActive: body.isActive === undefined ? true : !!body.isActive,
   }
@@ -143,6 +152,7 @@ export async function POST(request: NextRequest) {
     ["SFTP_REMOTE_PATH", sqlStr(parsed.sftpRemotePath)],
     ["SFTP_AUTH_TYPE", sqlStr(authType)],
     ["UPLOAD_TARGET_TABLE", sqlStr(parsed.uploadTargetTable)],
+    ["LOAD_HISTORY_PROCEDURE", sqlStr(parsed.loadHistoryProcedure)],
     ["SYNC_PROCEDURE", sqlStr(parsed.syncProcedure)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
