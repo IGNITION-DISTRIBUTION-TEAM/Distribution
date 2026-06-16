@@ -1987,7 +1987,7 @@ function DiallerViewsPanel() {
             <AlertDialogTitle>Delete this view?</AlertDialogTitle>
             <AlertDialogDescription>
               This will remove view <span className="font-mono">{deleteTarget?.TABLE_INDEX}</span> (
-              <span className="font-mono">{deleteTarget?.TABLE_NAME}</span>) from the table. This
+              <span className="font-mono break-all">{deleteTarget?.TABLE_NAME}</span>) from the table. This
               cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
