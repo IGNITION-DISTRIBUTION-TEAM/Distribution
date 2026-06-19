@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { LogOut, PhoneCall, Settings as SettingsIcon, Truck } from "lucide-react"
+import { LogOut, PhoneCall, Settings as SettingsIcon, Target, Truck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -29,6 +29,13 @@ const DEPARTMENTS: Department[] = [
     label: "Dialler",
     description: "Dialler operations and reporting.",
     icon: PhoneCall,
+    enabled: true,
+  },
+  {
+    id: "spot",
+    label: "Spot",
+    description: "Spot operations and reporting.",
+    icon: Target,
     enabled: true,
   },
 ]
