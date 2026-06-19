@@ -227,6 +227,15 @@ function UserDepartmentsPanel() {
     }
   }
 
+  // Hide users who already have the selected department, so the dropdown only
+  // offers users who'd actually gain access. Switching department re-filters.
+  const grantedForDept = new Set(
+    grants
+      .filter((g) => g.department.toLowerCase() === department.toLowerCase())
+      .map((g) => g.adEmail.toLowerCase())
+  )
+  const availableUsers = users.filter((u) => !grantedForDept.has(u.adEmail.toLowerCase()))
+
   return (
     <div className="rounded-xl border border-border bg-card p-6">
       <h3 className="font-medium text-foreground">Department access</h3>
@@ -239,12 +248,16 @@ function UserDepartmentsPanel() {
       <div className="mt-4 flex flex-wrap items-end gap-2">
         <div className="flex-1 min-w-[240px]">
           <Label className="mb-1.5 block text-xs text-muted-foreground">AD email</Label>
-          <Select value={email} onValueChange={setEmail} disabled={users.length === 0}>
+          <Select
+            value={availableUsers.some((u) => u.adEmail === email) ? email : ""}
+            onValueChange={setEmail}
+            disabled={availableUsers.length === 0}
+          >
             <SelectTrigger className="font-mono text-sm">
               <SelectValue placeholder="Select a user..." />
             </SelectTrigger>
             <SelectContent>
-              {users.map((u) => (
+              {availableUsers.map((u) => (
                 <SelectItem key={u.adEmail} value={u.adEmail}>
                   <span className="font-mono">{u.adEmail}</span>
                   {u.jobTitle ? (
@@ -254,11 +267,15 @@ function UserDepartmentsPanel() {
               ))}
             </SelectContent>
           </Select>
-          {users.length === 0 && (
+          {users.length === 0 ? (
             <p className="mt-1 text-xs text-muted-foreground">
               No mapped users found — add them under &quot;Email mappings&quot;.
             </p>
-          )}
+          ) : availableUsers.length === 0 ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              All mapped users already have this department.
+            </p>
+          ) : null}
         </div>
         <div className="min-w-[180px]">
           <Label className="mb-1.5 block text-xs text-muted-foreground">Department</Label>
