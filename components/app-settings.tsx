@@ -129,6 +129,7 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
 }
 
 type DeptGrant = { adEmail: string; department: string }
+type MappedUser = { adEmail: string; jobTitle: string | null; status: string | null }
 
 function UserDepartmentsPanel() {
   const [grants, setGrants] = useState<DeptGrant[]>([])
@@ -138,6 +139,34 @@ function UserDepartmentsPanel() {
   const [department, setDepartment] = useState<string>(DEPARTMENT_IDS[0])
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [users, setUsers] = useState<MappedUser[]>([])
+  const [userPickerOpen, setUserPickerOpen] = useState(false)
+
+  // Mapped (allowed) users to choose from, instead of typing an AD email.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/admin/email-map", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { mappings: [] }))
+      .then((data) => {
+        if (cancelled) return
+        const mapped = (data.mappings ?? []) as {
+          adEmail: string
+          jobTitle: string | null
+          status: string | null
+        }[]
+        setUsers(
+          mapped.map((m) => ({
+            adEmail: m.adEmail,
+            jobTitle: m.jobTitle ?? null,
+            status: m.status ?? null,
+          }))
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -211,12 +240,58 @@ function UserDepartmentsPanel() {
       <div className="mt-4 flex flex-wrap items-end gap-2">
         <div className="flex-1 min-w-[240px]">
           <Label className="mb-1.5 block text-xs text-muted-foreground">AD email</Label>
-          <Input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="user@ignitiongroup.co.za"
-            type="email"
-          />
+          <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={userPickerOpen}
+                className="w-full justify-between font-mono text-sm font-normal"
+              >
+                <span className="truncate">{email || "Select a user..."}</span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Search mapped users..." />
+                <CommandList>
+                  <CommandEmpty>No mapped users found.</CommandEmpty>
+                  <CommandGroup>
+                    {users.map((u) => (
+                      <CommandItem
+                        key={u.adEmail}
+                        value={`${u.adEmail} ${u.jobTitle ?? ""}`}
+                        onSelect={() => {
+                          setEmail(u.adEmail)
+                          setUserPickerOpen(false)
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            email === u.adEmail ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <div className="flex flex-col">
+                          <span className="font-mono text-sm">{u.adEmail}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {u.jobTitle ?? "—"}
+                            {u.status ? ` · ${u.status}` : ""}
+                          </span>
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+          {users.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              No mapped users found — add them under &quot;Email mappings&quot;.
+            </p>
+          )}
         </div>
         <div className="min-w-[180px]">
           <Label className="mb-1.5 block text-xs text-muted-foreground">Department</Label>
