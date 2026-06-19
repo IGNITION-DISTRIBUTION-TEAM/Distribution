@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { exchangeCodeForToken, extractUserInfoFromToken } from "@/lib/azure-ad"
-import { checkAccess } from "@/lib/auth-gate"
+import { checkAccess, getUserDepartments } from "@/lib/auth-gate"
+import { DEPARTMENT_IDS } from "@/lib/departments"
 
 /**
  * Azure AD OAuth  handler
@@ -66,6 +67,21 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Departments this user may see. Super admins see all. For everyone else we
+    // read explicit grants — but if the grants table is unavailable we fail open
+    // (show all) rather than lock the user out before it's provisioned.
+    let departments: string[]
+    if (access.isSuperAdmin) {
+      departments = [...DEPARTMENT_IDS]
+    } else {
+      try {
+        departments = await getUserDepartments(userInfo.email)
+      } catch (deptErr) {
+        console.error("[v0] Department grant lookup failed, failing open:", deptErr)
+        departments = [...DEPARTMENT_IDS]
+      }
+    }
+
     // Create redirect response
     const redirectResponse = NextResponse.redirect(`${request.nextUrl.origin}`)
 
@@ -79,6 +95,7 @@ export async function GET(request: NextRequest) {
       role: access.role,
       isSuperAdmin: access.isSuperAdmin,
       employeeEmail: access.employeeEmail,
+      departments,
       expiresAt: Date.now() + 3600000, // 1 hour
     }), {
       httpOnly: true,

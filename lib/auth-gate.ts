@@ -88,6 +88,22 @@ export async function checkAccess(adEmailRaw: string): Promise<AccessResult> {
   return { allowed: true, role, isSuperAdmin: false, employeeEmail }
 }
 
+/**
+ * Read the departments an AD-authenticated user has been granted. Returns
+ * lowercase department ids. Super admins are handled by the caller (they see
+ * all). Throws if the grants table is unavailable — the caller decides how to
+ * handle that (we fail open to avoid locking everyone out before provisioning).
+ */
+export async function getUserDepartments(adEmailRaw: string): Promise<string[]> {
+  const adEmail = adEmailRaw.trim().toLowerCase()
+  if (!isValidEmail(adEmail)) return []
+  const e = sqlString(adEmail)
+  const rows = await executeSnowflakeQuery<{ DEPARTMENT: string }>(
+    `SELECT DEPARTMENT FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.APP_USER_DEPARTMENTS WHERE LOWER(AD_EMAIL) = ${e}`
+  )
+  return rows.map((r) => String(r.DEPARTMENT).trim().toLowerCase()).filter(Boolean)
+}
+
 export async function isSuperAdmin(adEmailRaw: string): Promise<boolean> {
   const adEmail = adEmailRaw.trim().toLowerCase()
   if (!isValidEmail(adEmail)) return false

@@ -7,6 +7,7 @@ type User = {
   name: string
   role: string
   isSuperAdmin: boolean
+  departments: string[]
 }
 
 type AuthContextType = {
@@ -45,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               name: data.user.name,
               role: data.user.role ?? "",
               isSuperAdmin: !!data.user.isSuperAdmin,
+              departments: Array.isArray(data.user.departments) ? data.user.departments : [],
             })
           }
         }

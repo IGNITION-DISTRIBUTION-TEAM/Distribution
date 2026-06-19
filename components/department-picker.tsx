@@ -4,8 +4,9 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { LogOut, PhoneCall, Settings as SettingsIcon, Truck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import type { DepartmentId } from "@/lib/departments"
 
-export type DepartmentId = "distribution" | "dialler"
+export type { DepartmentId }
 
 type Department = {
   id: DepartmentId
@@ -40,6 +41,11 @@ export function DepartmentPicker({
   onOpenSettings?: () => void
 }) {
   const { user, logout } = useAuth()
+
+  // Super admins see every department; everyone else only their granted ones.
+  const visibleDepartments = user?.isSuperAdmin
+    ? DEPARTMENTS
+    : DEPARTMENTS.filter((d) => (user?.departments ?? []).includes(d.id))
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -89,8 +95,14 @@ export function DepartmentPicker({
           </p>
         </div>
 
+        {visibleDepartments.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+            You don&apos;t have access to any departments yet. Contact an administrator.
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {DEPARTMENTS.map((dept) => {
+          {visibleDepartments.map((dept) => {
             const Icon = dept.icon
             const interactive = dept.enabled
             return (

@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
         name: session.name,
         role: session.role ?? null,
         isSuperAdmin: !!session.isSuperAdmin,
+        departments: Array.isArray(session.departments) ? session.departments : [],
       },
     })
   } catch (error) {

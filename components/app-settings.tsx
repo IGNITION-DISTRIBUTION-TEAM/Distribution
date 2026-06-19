@@ -25,6 +25,14 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { DEPARTMENT_IDS, DEPARTMENT_LABELS } from "@/lib/departments"
 import { cn } from "@/lib/utils"
 
 type EmailMapping = {
@@ -91,6 +99,7 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
             <TabsTrigger value="map-user">Map user</TabsTrigger>
             <TabsTrigger value="email-map">Email mappings</TabsTrigger>
             <TabsTrigger value="allowed-roles">Allowed roles</TabsTrigger>
+            <TabsTrigger value="department-access">Department access</TabsTrigger>
             <TabsTrigger value="super-admins">Super admins</TabsTrigger>
           </TabsList>
 
@@ -106,11 +115,181 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
             <AllowedRolesPanel />
           </TabsContent>
 
+          <TabsContent value="department-access" className="mt-4">
+            <UserDepartmentsPanel />
+          </TabsContent>
+
           <TabsContent value="super-admins" className="mt-4">
             <SuperAdminsPanel />
           </TabsContent>
         </Tabs>
       </main>
+    </div>
+  )
+}
+
+type DeptGrant = { adEmail: string; department: string }
+
+function UserDepartmentsPanel() {
+  const [grants, setGrants] = useState<DeptGrant[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState("")
+  const [department, setDepartment] = useState<string>(DEPARTMENT_IDS[0])
+  const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/admin/user-departments", { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Failed to load grants (${res.status})`)
+      setGrants(data.grants as DeptGrant[])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const handleAdd = async () => {
+    const adEmail = email.trim().toLowerCase()
+    if (!adEmail) return
+    setSaving(true)
+    try {
+      const res = await fetch("/api/admin/user-departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adEmail, department }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`)
+      toast.success("Department access granted")
+      setEmail("")
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async (g: DeptGrant) => {
+    const key = `${g.adEmail}|${g.department}`
+    setRemoving(key)
+    try {
+      const res = await fetch(
+        `/api/admin/user-departments?adEmail=${encodeURIComponent(g.adEmail)}&department=${encodeURIComponent(g.department)}`,
+        { method: "DELETE" }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Remove failed (${res.status})`)
+      toast.success("Access removed")
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRemoving(null)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <h3 className="font-medium text-foreground">Department access</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Grant a user access to a department by their login (AD) email. A user sees only the
+        departments granted here. Super admins always see all departments. Changes take effect at
+        the user&apos;s next login.
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-end gap-2">
+        <div className="flex-1 min-w-[240px]">
+          <Label className="mb-1.5 block text-xs text-muted-foreground">AD email</Label>
+          <Input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="user@ignitiongroup.co.za"
+            type="email"
+          />
+        </div>
+        <div className="min-w-[180px]">
+          <Label className="mb-1.5 block text-xs text-muted-foreground">Department</Label>
+          <Select value={department} onValueChange={setDepartment}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DEPARTMENT_IDS.map((id) => (
+                <SelectItem key={id} value={id}>
+                  {DEPARTMENT_LABELS[id]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button onClick={handleAdd} disabled={saving || !email.trim()}>
+          Grant access
+        </Button>
+      </div>
+
+      {error && <p className="mt-2 text-xs text-rose-400">{error}</p>}
+
+      <div className="mt-4 overflow-hidden rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>AD email</TableHead>
+              <TableHead>Department</TableHead>
+              <TableHead className="w-24" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
+                  Loading…
+                </TableCell>
+              </TableRow>
+            ) : grants.length > 0 ? (
+              grants.map((g) => {
+                const key = `${g.adEmail}|${g.department}`
+                return (
+                  <TableRow key={key}>
+                    <TableCell className="font-mono text-sm">{g.adEmail}</TableCell>
+                    <TableCell className="text-sm">
+                      {DEPARTMENT_LABELS[g.department as keyof typeof DEPARTMENT_LABELS] ??
+                        g.department}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemove(g)}
+                        disabled={removing === key}
+                        className="text-muted-foreground hover:text-rose-300"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            ) : (
+              <TableRow>
+                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
+                  No grants yet.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
