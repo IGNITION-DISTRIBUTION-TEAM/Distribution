@@ -183,8 +183,11 @@ export async function POST(request: NextRequest) {
       { database: DATABASE, schema: SCHEMA }
     )
 
-    // 2) MERGE the rows in batches.
-    const onClause = keyColumns.map((c) => `t.${q(c)} = s.${q(c)}`).join(" AND ")
+    // 2) MERGE the rows in batches. Source values are already trimmed by the
+    // parser; TRIM the target key columns too, since the existing (Hevo-loaded)
+    // data has trailing spaces — without this, dirty keys would miss the match
+    // and insert duplicates instead of updating.
+    const onClause = keyColumns.map((c) => `TRIM(t.${q(c)}) = s.${q(c)}`).join(" AND ")
     const insertCols = columns.map(q).join(", ")
     const insertVals = columns.map((c) => `s.${q(c)}`).join(", ")
     const updateSet = nonKeyColumns.map((c) => `t.${q(c)} = s.${q(c)}`).join(", ")
