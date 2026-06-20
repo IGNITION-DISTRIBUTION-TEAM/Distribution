@@ -24,6 +24,46 @@ function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, "0")
+}
+
+function formatDDMMYYYY(year: number, month: number, day: number): string {
+  return `${pad2(day)}-${pad2(month)}-${year}`
+}
+
+// Normalize a DATE cell to DD-MM-YYYY.
+// - Excel stores dates as numeric serials (we read raw values); converted here
+//   deterministically in UTC to avoid timezone drift from Date parsing.
+// - CSV / text cells arrive as strings. Day-first is assumed for ambiguous
+//   D-M-Y vs M-D-Y input, matching the required DD-MM-YYYY output (ZA convention).
+// Unrecognized values are returned trimmed and unchanged so the upload proceeds.
+function normalizeDate(value: unknown): string {
+  if (typeof value === "number" && isFinite(value)) {
+    // 25569 = days between the Excel 1900 epoch (1899-12-30) and the Unix epoch.
+    const ms = Math.round((value - 25569) * 86400000)
+    const d = new Date(ms)
+    if (!isNaN(d.getTime())) {
+      return formatDDMMYYYY(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate())
+    }
+  }
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return formatDDMMYYYY(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate())
+  }
+  const s = String(value ?? "").trim()
+  if (!s) return ""
+  // YYYY-MM-DD / YYYY/MM/DD (optionally followed by a time component)
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T].*)?$/)
+  if (m) return formatDDMMYYYY(+m[1], +m[2], +m[3])
+  // D-M-YYYY / D/M/YYYY (day-first)
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T].*)?$/)
+  if (m) return formatDDMMYYYY(+m[3], +m[2], +m[1])
+  // D-M-YY / D/M/YY (day-first, assume 20YY)
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2})(?:[ T].*)?$/)
+  if (m) return formatDDMMYYYY(2000 + +m[3], +m[2], +m[1])
+  return s
+}
+
 // Turn an arbitrary header into a safe, unquoted Snowflake identifier.
 function toColumnName(header: string): string {
   let name = header
@@ -117,9 +157,13 @@ export async function POST(request: NextRequest) {
     const workbook = XLSX.read(buffer, { type: "buffer" })
     const sheetName = workbook.SheetNames[0]
     if (!sheetName) throw new Error("File has no sheets")
+    // raw: true so date cells come through as Excel serials (not display text),
+    // letting normalizeDate convert them deterministically to DD-MM-YYYY. Numeric
+    // cells (e.g. INCOME) become clean numeric strings, which is also safer for
+    // any downstream numeric casting than locale-formatted text.
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
       header: 1,
-      raw: false,
+      raw: true,
       defval: "",
       blankrows: false,
     })
@@ -140,10 +184,16 @@ export async function POST(request: NextRequest) {
       return n === 1 ? base : `${base}_${n}`
     })
 
+    // Columns that hold dates (sanitized name "DATE") are normalized to
+    // DD-MM-YYYY; everything else is stringified and trimmed.
+    const isDateCol = columns.map((c) => c === "DATE")
+
     dataRows = []
     for (let r = 1; r < aoa.length; r++) {
       const row = aoa[r] as unknown[]
-      const values = keptIdx.map((i) => String(row[i] ?? "").trim())
+      const values = keptIdx.map((i, j) =>
+        isDateCol[j] ? normalizeDate(row[i]) : String(row[i] ?? "").trim()
+      )
       if (values.every((v) => v === "")) continue
       dataRows.push(values)
     }
