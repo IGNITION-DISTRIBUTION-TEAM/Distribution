@@ -10,7 +10,12 @@ const DATABASE = "SPOT_DW"
 const SCHEMA = "SPOT_SFTP"
 const TABLE = "ARPU_DASHBOARD_FEES"
 const FQ_TABLE = `${DATABASE}.${SCHEMA}.${TABLE}`
-const HISTORY_TABLE = `${DATABASE}.${SCHEMA}.ARPU_DASHBOARD_FEES_UPLOADS`
+
+// The upload audit/history table lives in a separate schema from the Hevo-managed
+// data table above.
+const HISTORY_DATABASE = "DATAWAREHOUSE"
+const HISTORY_SCHEMA = "LEADS_DISTRIBUTION"
+const HISTORY_TABLE = `${HISTORY_DATABASE}.${HISTORY_SCHEMA}.ARPU_DASHBOARD_FEES_UPLOADS`
 
 // Raw header name(s) from the ARPU file that uniquely identify a row. The MERGE
 // updates matching rows (INCOME) and inserts new ones on these. Verified unique
@@ -82,7 +87,7 @@ async function ensureHistoryTable(): Promise<void> {
       `FILE_NAME VARCHAR, ROWS_PARSED NUMBER, ROWS_MERGED NUMBER, ` +
       `INSERTED NUMBER, UPDATED NUMBER, UPLOADED_BY VARCHAR, ` +
       `UPLOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP())`,
-    { database: DATABASE, schema: SCHEMA }
+    { database: HISTORY_DATABASE, schema: HISTORY_SCHEMA }
   )
 }
 
@@ -97,7 +102,7 @@ export async function GET(request: NextRequest) {
       `SELECT FILE_NAME, ROWS_PARSED, ROWS_MERGED, INSERTED, UPDATED, UPLOADED_BY, ` +
         `TO_VARCHAR(UPLOADED_AT, 'YYYY-MM-DD HH24:MI:SS') AS UPLOADED_AT ` +
         `FROM ${HISTORY_TABLE} ORDER BY UPLOADED_AT DESC LIMIT 10`,
-      { database: DATABASE, schema: SCHEMA }
+      { database: HISTORY_DATABASE, schema: HISTORY_SCHEMA }
     )
     const uploads = rows.map((r) => ({
       fileName: String(r[0] ?? ""),
@@ -285,7 +290,7 @@ export async function POST(request: NextRequest) {
           `(FILE_NAME, ROWS_PARSED, ROWS_MERGED, INSERTED, UPDATED, UPLOADED_BY) ` +
           `VALUES (${sqlString(file.name)}, ${dataRows.length}, ${inserted + updated}, ` +
           `${inserted}, ${updated}, ${sqlString(guard.email)})`,
-        { database: DATABASE, schema: SCHEMA }
+        { database: HISTORY_DATABASE, schema: HISTORY_SCHEMA }
       )
     } catch (histErr) {
       console.error("[ARPU upload] could not record history:", histErr)
