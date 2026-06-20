@@ -18,3 +18,10 @@ GRANT CREATE TABLE ON SCHEMA SPOT_DW.SPOT_SFTP    TO ROLE SVC_VERCEL_APP_ROLE;
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON TABLE SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES
   TO ROLE SVC_VERCEL_APP_ROLE;
+
+-- The app also writes an upload audit row per load and reads the last 10 for
+-- the "Last 10 files loaded" panel. It creates this table on first use; grant
+-- DML only if it pre-exists and isn't owned by the app role:
+GRANT SELECT, INSERT
+  ON TABLE SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES_UPLOADS
+  TO ROLE SVC_VERCEL_APP_ROLE;

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -29,6 +29,7 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  History,
 } from "lucide-react"
 
 const ARPU_TABLE = "SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES"
@@ -46,15 +47,44 @@ type UploadResult = {
   table?: string
 }
 
+type UploadHistoryRow = {
+  fileName: string
+  rowsParsed: number
+  rowsMerged: number
+  inserted: number
+  updated: number
+  uploadedBy: string
+  uploadedAt: string
+}
+
 function ArpuFileContent() {
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<UploadResult | null>(null)
+  const [history, setHistory] = useState<UploadHistoryRow[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const accept = ".xlsx,.xls,.csv"
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    try {
+      const res = await fetch("/api/spot/arpu-upload", { method: "GET" })
+      const data = await res.json()
+      if (res.ok && Array.isArray(data.uploads)) setHistory(data.uploads)
+    } catch {
+      // Non-fatal: the panel just stays empty.
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadHistory()
+  }, [loadHistory])
 
   const pickFile = useCallback((f: File | null) => {
     setError(null)
@@ -100,12 +130,13 @@ function ArpuFileContent() {
       })
       setFile(null)
       if (inputRef.current) inputRef.current.value = ""
+      loadHistory()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
-  }, [file])
+  }, [file, loadHistory])
 
   return (
     <div className="flex flex-col gap-6">
@@ -212,6 +243,53 @@ function ArpuFileContent() {
           </ul>
         </div>
       )}
+
+      <div className="mt-2">
+        <div className="mb-3 flex items-center gap-2">
+          <History className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold text-foreground">Last 10 files loaded</h3>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                <th className="px-3 py-2 font-medium">File</th>
+                <th className="px-3 py-2 font-medium">Rows merged</th>
+                <th className="px-3 py-2 font-medium">Inserted</th>
+                <th className="px-3 py-2 font-medium">Updated</th>
+                <th className="px-3 py-2 font-medium">Uploaded by</th>
+                <th className="px-3 py-2 font-medium">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                    <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                  </td>
+                </tr>
+              ) : history.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                    No files loaded yet.
+                  </td>
+                </tr>
+              ) : (
+                history.map((h, i) => (
+                  <tr key={i} className="border-b border-border last:border-0">
+                    <td className="px-3 py-2 text-foreground">{h.fileName}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.rowsMerged}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.inserted}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.updated}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedBy}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedAt}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }

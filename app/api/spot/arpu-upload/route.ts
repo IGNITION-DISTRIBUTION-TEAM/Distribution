@@ -10,6 +10,7 @@ const DATABASE = "SPOT_DW"
 const SCHEMA = "SPOT_SFTP"
 const TABLE = "ARPU_DASHBOARD_FEES"
 const FQ_TABLE = `${DATABASE}.${SCHEMA}.${TABLE}`
+const HISTORY_TABLE = `${DATABASE}.${SCHEMA}.ARPU_DASHBOARD_FEES_UPLOADS`
 
 // Raw header name(s) from the ARPU file that uniquely identify a row. The MERGE
 // updates matching rows and inserts new ones on these. !! Set these to the real
@@ -33,6 +34,48 @@ function toColumnName(header: string): string {
   if (!name) name = "COL"
   if (/^[0-9]/.test(name)) name = `C_${name}`
   return name
+}
+
+async function ensureHistoryTable(): Promise<void> {
+  await executeSnowflakeQueryWithMeta(
+    `CREATE TABLE IF NOT EXISTS ${HISTORY_TABLE} (` +
+      `FILE_NAME VARCHAR, ROWS_PARSED NUMBER, ROWS_MERGED NUMBER, ` +
+      `INSERTED NUMBER, UPDATED NUMBER, UPLOADED_BY VARCHAR, ` +
+      `UPLOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP())`,
+    { database: DATABASE, schema: SCHEMA }
+  )
+}
+
+// Return the 10 most recent uploads for the history panel.
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "spot")
+  if (guard instanceof NextResponse) return guard
+
+  try {
+    await ensureHistoryTable()
+    const { rows } = await executeSnowflakeQueryWithMeta(
+      `SELECT FILE_NAME, ROWS_PARSED, ROWS_MERGED, INSERTED, UPDATED, UPLOADED_BY, ` +
+        `TO_VARCHAR(UPLOADED_AT, 'YYYY-MM-DD HH24:MI:SS') AS UPLOADED_AT ` +
+        `FROM ${HISTORY_TABLE} ORDER BY UPLOADED_AT DESC LIMIT 10`,
+      { database: DATABASE, schema: SCHEMA }
+    )
+    const uploads = rows.map((r) => ({
+      fileName: String(r[0] ?? ""),
+      rowsParsed: Number(r[1] ?? 0),
+      rowsMerged: Number(r[2] ?? 0),
+      inserted: Number(r[3] ?? 0),
+      updated: Number(r[4] ?? 0),
+      uploadedBy: String(r[5] ?? ""),
+      uploadedAt: String(r[6] ?? ""),
+    }))
+    return NextResponse.json({ uploads })
+  } catch (err) {
+    console.error("[ARPU upload] history error:", err)
+    return NextResponse.json(
+      { error: `Could not load history: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    )
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -166,6 +209,20 @@ export async function POST(request: NextRequest) {
       const counts = (rows[0] ?? []) as unknown[]
       inserted += Number(counts[0] ?? 0) || 0
       updated += Number(counts[1] ?? 0) || 0
+    }
+
+    // Record the upload in the history table (best-effort).
+    try {
+      await ensureHistoryTable()
+      await executeSnowflakeQueryWithMeta(
+        `INSERT INTO ${HISTORY_TABLE} ` +
+          `(FILE_NAME, ROWS_PARSED, ROWS_MERGED, INSERTED, UPDATED, UPLOADED_BY) ` +
+          `VALUES (${sqlString(file.name)}, ${dataRows.length}, ${inserted + updated}, ` +
+          `${inserted}, ${updated}, ${sqlString(guard.email)})`,
+        { database: DATABASE, schema: SCHEMA }
+      )
+    } catch (histErr) {
+      console.error("[ARPU upload] could not record history:", histErr)
     }
 
     return NextResponse.json({
