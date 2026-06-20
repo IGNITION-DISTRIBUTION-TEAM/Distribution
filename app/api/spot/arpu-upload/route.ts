@@ -13,9 +13,9 @@ const FQ_TABLE = `${DATABASE}.${SCHEMA}.${TABLE}`
 const HISTORY_TABLE = `${DATABASE}.${SCHEMA}.ARPU_DASHBOARD_FEES_UPLOADS`
 
 // Raw header name(s) from the ARPU file that uniquely identify a row. The MERGE
-// updates matching rows and inserts new ones on these. !! Set these to the real
-// column header(s) before relying on the upload. !!
-const KEY_HEADERS: string[] = []
+// updates matching rows (INCOME) and inserts new ones on these. Verified unique
+// across the sample file (DATE + TRANSACTION).
+const KEY_HEADERS: string[] = ["DATE", "TRANSACTION"]
 
 const MAX_BYTES = 50 * 1024 * 1024
 const BATCH_SIZE = 500
@@ -174,17 +174,20 @@ export async function POST(request: NextRequest) {
 
   try {
     // 1) Ensure the table exists (all columns VARCHAR, derived from headers).
-    const colDefs = columns.map((c) => `${c} VARCHAR`).join(", ")
+    // Sanitized names are uppercase [A-Z0-9_] only, so quoting them is safe and
+    // guards against reserved words (e.g. DATE) while preserving the name.
+    const q = (c: string) => `"${c}"`
+    const colDefs = columns.map((c) => `${q(c)} VARCHAR`).join(", ")
     await executeSnowflakeQueryWithMeta(
       `CREATE TABLE IF NOT EXISTS ${FQ_TABLE} (${colDefs})`,
       { database: DATABASE, schema: SCHEMA }
     )
 
     // 2) MERGE the rows in batches.
-    const onClause = keyColumns.map((c) => `t.${c} = s.${c}`).join(" AND ")
-    const insertCols = columns.join(", ")
-    const insertVals = columns.map((c) => `s.${c}`).join(", ")
-    const updateSet = nonKeyColumns.map((c) => `t.${c} = s.${c}`).join(", ")
+    const onClause = keyColumns.map((c) => `t.${q(c)} = s.${q(c)}`).join(" AND ")
+    const insertCols = columns.map(q).join(", ")
+    const insertVals = columns.map((c) => `s.${q(c)}`).join(", ")
+    const updateSet = nonKeyColumns.map((c) => `t.${q(c)} = s.${q(c)}`).join(", ")
 
     let inserted = 0
     let updated = 0
