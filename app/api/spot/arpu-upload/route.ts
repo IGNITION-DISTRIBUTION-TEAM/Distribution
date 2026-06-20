@@ -188,8 +188,18 @@ export async function POST(request: NextRequest) {
     // data has trailing spaces — without this, dirty keys would miss the match
     // and insert duplicates instead of updating.
     const onClause = keyColumns.map((c) => `TRIM(t.${q(c)}) = s.${q(c)}`).join(" AND ")
-    const insertCols = columns.map(q).join(", ")
-    const insertVals = columns.map((c) => `s.${q(c)}`).join(", ")
+    // Source columns come straight from the file (used for the VALUES alias).
+    const sourceCols = columns.map(q).join(", ")
+    // The Hevo-managed target has __HEVO_ID TEXT NOT NULL with no default, so the
+    // insert path must supply it. Synthesize a deterministic id from the natural
+    // key (TRIMmed, matching the ON clause) so re-inserting the same logical row
+    // reuses the same id instead of creating duplicates. The 'xls-' prefix marks
+    // it as app-generated and avoids clashing with Hevo's own id scheme.
+    const HEVO_ID_COL = "__HEVO_ID"
+    const hevoIdExpr =
+      `'xls-' || MD5(${keyColumns.map((c) => `COALESCE(TRIM(s.${q(c)}), '')`).join(" || '|' || ")})`
+    const insertCols = [...columns.map(q), q(HEVO_ID_COL)].join(", ")
+    const insertVals = [...columns.map((c) => `s.${q(c)}`), hevoIdExpr].join(", ")
     const updateSet = nonKeyColumns.map((c) => `t.${q(c)} = s.${q(c)}`).join(", ")
 
     let inserted = 0
@@ -202,7 +212,7 @@ export async function POST(request: NextRequest) {
 
       const merge =
         `MERGE INTO ${FQ_TABLE} t ` +
-        `USING (SELECT * FROM VALUES ${valuesSql} AS v(${insertCols})) s ` +
+        `USING (SELECT * FROM VALUES ${valuesSql} AS v(${sourceCols})) s ` +
         `ON ${onClause} ` +
         (updateSet ? `WHEN MATCHED THEN UPDATE SET ${updateSet} ` : "") +
         `WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${insertVals})`
