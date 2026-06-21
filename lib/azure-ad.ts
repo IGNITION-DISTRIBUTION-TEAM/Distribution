@@ -11,6 +11,31 @@ export function getRedirectUri(): string {
   return `${appUrl}/api/auth/azure/callback`
 }
 
+/**
+ * Azure AD single sign-out URL. Redirecting the browser here ends the
+ * Microsoft session (not just our local cookie), so the next login prompts
+ * for credentials instead of silently re-authenticating via SSO.
+ *
+ * NOTE: post_logout_redirect_uri must be registered as a "Front-channel logout
+ * URL" / redirect URI in the Azure AD app registration, otherwise Azure shows
+ * its generic sign-out page and does not redirect back.
+ */
+export function getAzureLogoutUrl(): string {
+  const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID
+  if (!tenantId) throw new Error("Missing NEXT_PUBLIC_AZURE_TENANT_ID")
+
+  const origin =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "")
+  const postLogoutRedirectUri = `${origin}/`
+
+  return (
+    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/logout?` +
+    `post_logout_redirect_uri=${encodeURIComponent(postLogoutRedirectUri)}`
+  )
+}
+
 export async function getAzureAuthUrl(): Promise<string> {
   const clientId = process.env.NEXT_PUBLIC_AZURE_CLIENT_ID
   const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID

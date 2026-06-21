@@ -74,10 +74,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     setUser(null)
-    // Clear session cookie
-    fetch("/api/auth/logout", { method: "POST" }).catch(console.error)
+    // Clear our local session cookie first, then redirect to Azure AD's
+    // single sign-out so the Microsoft session is ended too (otherwise the
+    // next login silently re-authenticates via SSO).
+    try {
+      await fetch("/api/auth/logout", { method: "POST" })
+    } catch (error) {
+      console.error("Failed to clear session:", error)
+    }
+    try {
+      const { getAzureLogoutUrl } = await import("@/lib/azure-ad")
+      window.location.href = getAzureLogoutUrl()
+    } catch (error) {
+      console.error("Failed to build Azure logout URL:", error)
+      // Fall back to a local redirect so the user still leaves the app.
+      window.location.href = "/"
+    }
   }, [])
 
   return (
