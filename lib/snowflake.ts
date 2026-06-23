@@ -223,7 +223,14 @@ export async function executeSnowflakeQueryWithMeta(
 ): Promise<{ columns: SnowflakeColumn[]; rows: unknown[][] }> {
   const config = getSnowflakeConfig()
   const jwt = generateSnowflakeJWT(config)
-  const url = `https://${config.account}.snowflakecomputing.com/api/v2/statements`
+  const statementsUrl = `https://${config.account}.snowflakecomputing.com/api/v2/statements`
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${jwt}`,
+    Accept: "application/json",
+    "User-Agent": "DataPlatform/1.0",
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+  }
 
   const body = {
     statement: sql,
@@ -233,15 +240,9 @@ export async function executeSnowflakeQueryWithMeta(
     role: config.role || "ACCOUNTADMIN",
   }
 
-  const response = await fetch(url, {
+  const response = await fetch(statementsUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
-      Accept: "application/json",
-      "User-Agent": "DataPlatform/1.0",
-      "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
-    },
+    headers,
     body: JSON.stringify(body),
   })
 
@@ -251,8 +252,10 @@ export async function executeSnowflakeQueryWithMeta(
   }
 
   const parsed = JSON.parse(text) as {
+    statementHandle?: string
     resultSetMetaData?: {
       rowType?: { name: string; type: string; scale?: number; precision?: number }[]
+      partitionInfo?: { rowCount?: number }[]
     }
     data?: unknown[][]
   }
@@ -263,7 +266,34 @@ export async function executeSnowflakeQueryWithMeta(
     scale: c.scale,
     precision: c.precision,
   }))
-  const rows = parsed.data ?? []
+
+  // The SQL API splits large result sets into partitions. `data` holds only the
+  // first partition (index 0); any others are listed in partitionInfo and must
+  // be fetched separately, or the result is silently truncated.
+  const rows: unknown[][] = parsed.data ? [...parsed.data] : []
+
+  const partitions = parsed.resultSetMetaData?.partitionInfo ?? []
+  const handle = parsed.statementHandle
+  if (handle && partitions.length > 1) {
+    for (let p = 1; p < partitions.length; p++) {
+      const partitionUrl =
+        `${statementsUrl}/${encodeURIComponent(handle)}?partition=${p}`
+      const partResponse = await fetch(partitionUrl, { method: "GET", headers })
+      const partText = await partResponse.text()
+      if (!partResponse.ok) {
+        throw new Error(
+          `Snowflake partition ${p} fetch failed (${partResponse.status}): ${partText}`
+        )
+      }
+      const partParsed = JSON.parse(partText) as { data?: unknown[][] }
+      if (partParsed.data) {
+        // Append element-by-element: spreading a very large partition into
+        // push(...) can exceed the JS argument-count limit.
+        for (const r of partParsed.data) rows.push(r)
+      }
+    }
+  }
+
   return { columns, rows }
 }
 
