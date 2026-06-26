@@ -1993,6 +1993,7 @@ type LookupResult = {
   cellnumber: string | null
   historyCreatedOn: string | null
   historyExpiry: string | null
+  historyEstatus: string | null
   inSs: boolean
   ssRow: Record<string, unknown> | null
   note?: string
@@ -2458,6 +2459,7 @@ function ExtendExpiredContent() {
                   <TableHead>{lookupKind === "idnumber" ? "Cell Number" : "ID Number"}</TableHead>
                   <TableHead>Distributed on</TableHead>
                   <TableHead>History expiry</TableHead>
+                  <TableHead>ESTATUS</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>SS expired</TableHead>
                   {ssExpiryColumn && <TableHead>SS {ssExpiryColumn.toLowerCase()}</TableHead>}
@@ -2487,6 +2489,27 @@ function ExtendExpiredContent() {
                         formatSnowflakeDate(r.historyExpiry)
                       ) : (
                         <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {!r.inHistory ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : r.historyEstatus == null ? (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                        >
+                          <CheckCircle2 className="mr-1 h-3 w-3" />
+                          NULL
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/30 bg-amber-500/10 text-amber-200"
+                        >
+                          <AlertCircle className="mr-1 h-3 w-3" />
+                          {String(r.historyEstatus)}
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell>

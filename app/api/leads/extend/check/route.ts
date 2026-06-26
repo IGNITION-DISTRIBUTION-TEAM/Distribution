@@ -20,6 +20,7 @@ type HistoryRow = {
   CELLNUMBER: string | null
   CREATEDONDATE: string | null
   LEADEXPIRY: string | null
+  ESTATUS: string | null
 }
 
 const HISTORY_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
 
   const inList = cleaned.map((v) => `'${v}'`).join(",")
   const sql = `
-    SELECT idnumber, cellnumber, createdondate, leadexpiry
+    SELECT idnumber, cellnumber, createdondate, leadexpiry, estatus
     FROM ${HISTORY_TABLE}
     WHERE campaignid = ${Number(campaignId)}
       AND ${lookupKind} IN (${inList})
@@ -142,6 +143,8 @@ export async function POST(request: Request) {
         cellnumber: hit?.CELLNUMBER ?? null,
         historyCreatedOn: hit?.CREATEDONDATE ?? null,
         historyExpiry: hit?.LEADEXPIRY ?? null,
+        // ESTATUS gates upload: NULL = eligible to upload, any value = blocked.
+        historyEstatus: hit?.ESTATUS ?? null,
         inSs: !!ssRow,
         ssRow: ssRow ?? null,
       }
