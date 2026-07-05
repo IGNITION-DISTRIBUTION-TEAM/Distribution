@@ -3,9 +3,9 @@
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { LoginScreen } from "@/components/login-screen"
-import { DepartmentPicker } from "@/components/department-picker"
+import { AppSettings } from "@/components/app-settings"
 
-export default function Page() {
+export default function SettingsPage() {
   const { isAuthenticated } = useAuth()
   const router = useRouter()
 
@@ -13,10 +13,5 @@ export default function Page() {
     return <LoginScreen />
   }
 
-  return (
-    <DepartmentPicker
-      onSelect={(id) => router.push(`/departments/${id}`)}
-      onOpenSettings={() => router.push("/settings")}
-    />
-  )
+  return <AppSettings onBack={() => router.push("/")} />
 }
