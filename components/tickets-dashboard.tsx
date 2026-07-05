@@ -40,6 +40,7 @@ import {
   ListTodo,
   Loader2,
   LogOut,
+  Paperclip,
   Plus,
   RefreshCw,
   Settings2,
@@ -342,6 +343,29 @@ function TicketDetailDialog({
               <p className="mt-0.5 whitespace-pre-wrap break-words text-foreground">{value}</p>
             </div>
           ))}
+          {ticket.attachments.length > 0 && (
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Attachments
+              </p>
+              <ul className="mt-1 flex flex-col gap-1">
+                {ticket.attachments.map((a) => (
+                  <li key={a.pathname}>
+                    <a
+                      href={`/api/tickets/attachments?path=${encodeURIComponent(a.pathname)}`}
+                      className="inline-flex items-center gap-1.5 text-primary underline-offset-2 hover:underline"
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                      {a.name}
+                      <span className="text-xs text-muted-foreground">
+                        ({(a.size / 1024).toFixed(0)} KB)
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               SLA due

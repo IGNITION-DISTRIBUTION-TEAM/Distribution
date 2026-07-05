@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
+import { put } from "@vercel/blob"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { readSessionIdentity, requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   TICKETS_TABLE,
   TICKET_STATUSES,
   OPEN_STATUSES,
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
+  ATTACHMENT_EXTENSIONS,
+  type TicketAttachment,
   type TicketRow,
 } from "@/lib/tickets-shared"
 import {
@@ -58,9 +63,21 @@ export async function GET(request: NextRequest) {
 
     const tickets: TicketRow[] = rows.map((r) => {
       let fields: Record<string, string> = {}
+      let attachments: TicketAttachment[] = []
       try {
         const parsed = JSON.parse(String(r.FIELDS ?? "{}"))
         if (parsed && typeof parsed === "object") {
+          if (Array.isArray(parsed._attachments)) {
+            attachments = (parsed._attachments as unknown[])
+              .filter((a): a is Record<string, unknown> => !!a && typeof a === "object")
+              .map((a) => ({
+                name: String(a.name ?? "attachment"),
+                size: Number(a.size ?? 0),
+                pathname: String(a.pathname ?? ""),
+              }))
+              .filter((a) => a.pathname)
+            delete parsed._attachments
+          }
           fields = Object.fromEntries(
             Object.entries(parsed).map(([k, v]) => [k, String(v ?? "")])
           )
@@ -78,6 +95,7 @@ export async function GET(request: NextRequest) {
         overdue: Number(r.OVERDUE ?? 0) === 1,
         assignedTo: r.ASSIGNED_TO == null ? null : String(r.ASSIGNED_TO),
         fields,
+        attachments,
         createdByName: r.CREATED_BY_NAME == null ? null : String(r.CREATED_BY_NAME),
         createdByEmail: r.CREATED_BY_EMAIL == null ? null : String(r.CREATED_BY_EMAIL),
         createdAt: r.CREATED_AT == null ? null : String(r.CREATED_AT),
@@ -111,19 +129,53 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // JSON for plain submissions; multipart (payload JSON + files) when the
+  // form carries attachments.
   let body: {
     answers?: Record<string, unknown>
     requestor?: { name?: unknown; email?: unknown }
     website?: unknown
   }
+  let files: File[] = []
   try {
-    body = await request.json()
+    if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+      const form = await request.formData()
+      body = JSON.parse(String(form.get("payload") ?? ""))
+      files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0)
+    } else {
+      body = await request.json()
+    }
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
   }
   const rawAnswers = body.answers
   if (!rawAnswers || typeof rawAnswers !== "object") {
     return NextResponse.json({ error: "answers object is required" }, { status: 400 })
+  }
+
+  if (files.length > MAX_ATTACHMENTS) {
+    return NextResponse.json({ error: `Max ${MAX_ATTACHMENTS} attachments` }, { status: 400 })
+  }
+  for (const f of files) {
+    if (f.size > MAX_ATTACHMENT_BYTES) {
+      return NextResponse.json(
+        { error: `"${f.name}" is too large (max ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)}MB per file)` },
+        { status: 400 }
+      )
+    }
+    const ext = f.name.split(".").pop()?.toLowerCase() ?? ""
+    if (!ATTACHMENT_EXTENSIONS.includes(ext)) {
+      return NextResponse.json(
+        { error: `"${f.name}" has an unsupported type. Allowed: ${ATTACHMENT_EXTENSIONS.join(", ")}` },
+        { status: 400 }
+      )
+    }
+  }
+  if (files.length > 0 && !process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json(
+      { error: "Attachments are not configured yet (missing blob storage token) — submit without files or contact the tickets team." },
+      { status: 503 }
+    )
   }
 
   // Honeypot: the form includes a hidden "website" input humans never see.
@@ -200,6 +252,21 @@ export async function POST(request: NextRequest) {
     const urgency = answers.urgency ?? null
     const slaHours = urgency != null ? config.slaHoursByUrgency[urgency] : undefined
 
+    // Upload attachments to Vercel Blob (private). Only after the answers
+    // validated, so rejected submissions never leave orphan files.
+    const attachments: TicketAttachment[] = []
+    for (const f of files) {
+      const safeName = f.name.replace(/[^\w.\-]+/g, "_").slice(-80)
+      const blob = await put(`tickets/${ticketRef}/${safeName}`, f, {
+        access: "private",
+        addRandomSuffix: true,
+        contentType: f.type || undefined,
+      })
+      attachments.push({ name: f.name.slice(-120), size: f.size, pathname: blob.pathname })
+    }
+    const fieldsJson: Record<string, unknown> = { ...answers }
+    if (attachments.length > 0) fieldsJson._attachments = attachments
+
     const slaExpr =
       typeof slaHours === "number" && Number.isFinite(slaHours) && slaHours > 0
         ? `DATEADD('minute', ${Math.round(slaHours * 60)}, CURRENT_TIMESTAMP())`
@@ -212,7 +279,7 @@ export async function POST(request: NextRequest) {
         `SELECT ${sqlString(ticketId)}, ${sqlString(ticketRef)}, 'Received', ` +
         `${requestType ? sqlString(requestType) : "NULL"}, ` +
         `${urgency ? sqlString(urgency) : "NULL"}, ${slaExpr}, NULL, ` +
-        `${sqlString(JSON.stringify(answers))}, ${sqlString(requestorName)}, ` +
+        `${sqlString(JSON.stringify(fieldsJson))}, ${sqlString(requestorName)}, ` +
         `${sqlString(requestorEmail)}`,
       SF_OPTS
     )

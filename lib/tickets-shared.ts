@@ -114,6 +114,18 @@ export const DEFAULT_FORM_CONFIG: TicketFormConfig = {
   },
 }
 
+// Attachments live in Vercel Blob (private). Only the blob pathname is stored
+// with the ticket; downloads go through the authenticated attachments route.
+export type TicketAttachment = { name: string; size: number; pathname: string }
+
+// Per-file limits for the PUBLIC capture endpoint. 4MB keeps the whole
+// multipart request under the platform's request-body ceiling.
+export const MAX_ATTACHMENTS = 3
+export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+export const ATTACHMENT_EXTENSIONS = [
+  "png", "jpg", "jpeg", "gif", "webp", "pdf", "csv", "xls", "xlsx", "doc", "docx", "txt",
+]
+
 export type TicketRow = {
   ticketId: string
   ticketRef: string
@@ -124,6 +136,7 @@ export type TicketRow = {
   overdue: boolean
   assignedTo: string | null
   fields: Record<string, string>
+  attachments: TicketAttachment[]
   createdByName: string | null
   createdByEmail: string | null
   createdAt: string | null
