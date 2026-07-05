@@ -83,3 +83,20 @@ export function sessionName(cookieValue: string | undefined): string {
     return ""
   }
 }
+
+// Best-effort per-key rate limiter for the public capture endpoint. In-memory,
+// so on serverless it only bounds bursts within a warm instance — it is a
+// speed bump, not real abuse protection.
+const rateBuckets = new Map<string, number[]>()
+
+export function rateLimitOk(key: string, limit = 5, windowMs = 60_000): boolean {
+  const now = Date.now()
+  const recent = (rateBuckets.get(key) ?? []).filter((t) => now - t < windowMs)
+  if (recent.length >= limit) {
+    rateBuckets.set(key, recent)
+    return false
+  }
+  recent.push(now)
+  rateBuckets.set(key, recent)
+  return true
+}

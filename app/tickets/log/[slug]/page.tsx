@@ -2,31 +2,20 @@
 
 import { use, useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
-import { LoginScreen } from "@/components/login-screen"
 import { TicketForm } from "@/components/ticket-form"
 import { Loader2 } from "lucide-react"
 import type { TicketDepartment } from "@/lib/tickets-shared"
 
-// Per-department ticket capture link: /tickets/log/<slug>. Any signed-in user
-// can log a ticket here; the department is fixed by the link. Viewing and
-// managing tickets stays inside the Tickets department dashboard.
+// Per-department ticket capture link: /tickets/log/<slug>. PUBLIC by design —
+// the whole company uses these links without signing in. If the visitor does
+// happen to have a session (e.g. the tickets team), their verified identity is
+// used automatically; otherwise the form asks for name and email.
 export default function TicketCapturePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
   const { user, isAuthenticated } = useAuth()
   const [department, setDepartment] = useState<TicketDepartment | null | undefined>(undefined)
 
-  // If the visitor isn't signed in yet, remember this page so the Azure AD
-  // callback can bring them back here instead of the department picker.
   useEffect(() => {
-    if (!isAuthenticated && typeof document !== "undefined") {
-      document.cookie = `post_login_redirect=${encodeURIComponent(
-        `/tickets/log/${slug}`
-      )}; path=/; max-age=600; samesite=lax`
-    }
-  }, [isAuthenticated, slug])
-
-  useEffect(() => {
-    if (!isAuthenticated) return
     fetch("/api/tickets/departments")
       .then(async (res) => {
         const data = await res.json()
@@ -34,11 +23,7 @@ export default function TicketCapturePage({ params }: { params: Promise<{ slug: 
         setDepartment(list.find((d) => d.slug === slug) ?? null)
       })
       .catch(() => setDepartment(null))
-  }, [isAuthenticated, slug])
-
-  if (!isAuthenticated) {
-    return <LoginScreen />
-  }
+  }, [slug])
 
   return (
     <div className="min-h-screen bg-background">
@@ -51,10 +36,12 @@ export default function TicketCapturePage({ params }: { params: Promise<{ slug: 
           />
           <span className="text-sm font-medium text-muted-foreground">Log a ticket</span>
         </div>
-        <div className="text-right text-xs">
-          <p className="font-medium text-foreground">{user?.name}</p>
-          <p className="text-muted-foreground">{user?.email}</p>
-        </div>
+        {isAuthenticated && (
+          <div className="text-right text-xs">
+            <p className="font-medium text-foreground">{user?.name}</p>
+            <p className="text-muted-foreground">{user?.email}</p>
+          </div>
+        )}
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-6 py-10">
@@ -77,11 +64,13 @@ export default function TicketCapturePage({ params }: { params: Promise<{ slug: 
             <div className="mb-6">
               <h1 className="text-2xl font-semibold text-foreground">{department.name}</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Submit a request for the {department.name} department. Your name and email are
-                attached automatically.
+                Submit a request for the {department.name} department.
+                {isAuthenticated
+                  ? " Your name and email are attached automatically."
+                  : " Fill in your name and email so the team can follow up."}
               </p>
             </div>
-            <TicketForm lockedDepartment={department.name} />
+            <TicketForm lockedDepartment={department.name} collectIdentity={!isAuthenticated} />
           </>
         )}
       </main>

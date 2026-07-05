@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
-import { requireAuthenticated, requireSuperAdmin } from "@/lib/admin-guard"
+import { requireSuperAdmin } from "@/lib/admin-guard"
 import {
   TICKETS_DEPARTMENTS_TABLE,
   DEPT_SLUG_RE,
@@ -10,12 +10,9 @@ import { SF_OPTS, ensureTicketTables, getActiveDepartments, sqlString } from "@/
 
 export const dynamic = "force-dynamic"
 
-// GET /api/tickets/departments — active departments. Any signed-in user (the
-// capture page needs this before the requester has any department grants).
-export async function GET(request: NextRequest) {
-  const guard = await requireAuthenticated(request)
-  if (guard instanceof NextResponse) return guard
-
+// GET /api/tickets/departments — active departments. PUBLIC: the capture
+// pages resolve their department from this without any login.
+export async function GET(_request: NextRequest) {
   try {
     await ensureTicketTables()
     const departments = await getActiveDepartments()

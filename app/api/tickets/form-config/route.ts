@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
-import { requireAuthenticated, requireSuperAdmin } from "@/lib/admin-guard"
+import { requireSuperAdmin } from "@/lib/admin-guard"
 import { TICKETS_CONFIG_TABLE, validateFormConfig, type TicketFormConfig } from "@/lib/tickets-shared"
 import { SF_OPTS, ensureTicketTables, getFormConfig, sqlString } from "@/lib/tickets-server"
 
 export const dynamic = "force-dynamic"
 
-// GET /api/tickets/form-config — current form definition. Any signed-in user
-// (the department capture pages render the form before any grant exists).
-export async function GET(request: NextRequest) {
-  const guard = await requireAuthenticated(request)
-  if (guard instanceof NextResponse) return guard
-
+// GET /api/tickets/form-config — current form definition. PUBLIC: the
+// department capture links render this form without any login.
+export async function GET(_request: NextRequest) {
   try {
     await ensureTicketTables()
     const config = await getFormConfig()

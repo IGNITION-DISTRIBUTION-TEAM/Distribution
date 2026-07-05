@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
-import { requireAuthenticated, requireDepartmentAccess } from "@/lib/admin-guard"
+import { readSessionIdentity, requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   TICKETS_TABLE,
   TICKET_STATUSES,
@@ -13,8 +13,8 @@ import {
   ensureTicketTables,
   getActiveDepartments,
   getFormConfig,
+  rateLimitOk,
   sqlString,
-  sessionName,
 } from "@/lib/tickets-server"
 
 export const dynamic = "force-dynamic"
@@ -94,14 +94,28 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/tickets — create a ticket from { answers: Record<string,string> }.
-// Any signed-in user may log a ticket (departments capture via their links);
-// viewing/managing tickets stays behind the "tickets" department grant.
-export async function POST(request: NextRequest) {
-  const guard = await requireAuthenticated(request)
-  if (guard instanceof NextResponse) return guard
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
-  let body: { answers?: Record<string, unknown> }
+// POST /api/tickets — create a ticket from { answers: Record<string,string> }.
+// PUBLIC by design: the whole company logs tickets via department capture
+// links without signing in. Identity comes from the session when one exists,
+// otherwise from typed (unverified) requestor name/email. Viewing/managing
+// tickets stays behind the "tickets" department grant.
+export async function POST(request: NextRequest) {
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
+  if (!rateLimitOk(`tickets:${ip}`, 5, 60_000)) {
+    return NextResponse.json(
+      { error: "Too many tickets from this connection — wait a minute and try again." },
+      { status: 429 }
+    )
+  }
+
+  let body: {
+    answers?: Record<string, unknown>
+    requestor?: { name?: unknown; email?: unknown }
+    website?: unknown
+  }
   try {
     body = await request.json()
   } catch {
@@ -110,6 +124,30 @@ export async function POST(request: NextRequest) {
   const rawAnswers = body.answers
   if (!rawAnswers || typeof rawAnswers !== "object") {
     return NextResponse.json({ error: "answers object is required" }, { status: 400 })
+  }
+
+  // Honeypot: the form includes a hidden "website" input humans never see.
+  // Bots that fill it get a plausible success response and nothing is stored.
+  if (typeof body.website === "string" && body.website.trim() !== "") {
+    return NextResponse.json({ success: true, ticketRef: newTicketRef(), ticketId: "" })
+  }
+
+  // Identity: verified session if present, else typed requestor details.
+  const session = readSessionIdentity(request)
+  let requestorName: string
+  let requestorEmail: string
+  if (session) {
+    requestorName = session.name
+    requestorEmail = session.email
+  } else {
+    requestorName = String(body.requestor?.name ?? "").trim().slice(0, 120)
+    requestorEmail = String(body.requestor?.email ?? "").trim().toLowerCase().slice(0, 320)
+    if (!requestorName) {
+      return NextResponse.json({ error: "Your name is required" }, { status: 400 })
+    }
+    if (!EMAIL_RE.test(requestorEmail)) {
+      return NextResponse.json({ error: "A valid email address is required" }, { status: 400 })
+    }
   }
 
   try {
@@ -161,7 +199,6 @@ export async function POST(request: NextRequest) {
     const requestType = answers.requestType ?? null
     const urgency = answers.urgency ?? null
     const slaHours = urgency != null ? config.slaHoursByUrgency[urgency] : undefined
-    const name = sessionName(request.cookies.get("azure_session")?.value)
 
     const slaExpr =
       typeof slaHours === "number" && Number.isFinite(slaHours) && slaHours > 0
@@ -175,7 +212,8 @@ export async function POST(request: NextRequest) {
         `SELECT ${sqlString(ticketId)}, ${sqlString(ticketRef)}, 'Received', ` +
         `${requestType ? sqlString(requestType) : "NULL"}, ` +
         `${urgency ? sqlString(urgency) : "NULL"}, ${slaExpr}, NULL, ` +
-        `${sqlString(JSON.stringify(answers))}, ${sqlString(name)}, ${sqlString(guard.email)}`,
+        `${sqlString(JSON.stringify(answers))}, ${sqlString(requestorName)}, ` +
+        `${sqlString(requestorEmail)}`,
       SF_OPTS
     )
 

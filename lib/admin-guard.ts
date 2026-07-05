@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from "next/server"
 import { isSuperAdmin, getUserDepartments, checkAccess } from "@/lib/auth-gate"
 
+// Best-effort identity from the session cookie, or null when absent/expired.
+// No DB verification — use only for informational identity on endpoints that
+// are public anyway (e.g. anonymous ticket capture), never for authorization.
+export function readSessionIdentity(
+  request: NextRequest
+): { email: string; name: string } | null {
+  const cookie = request.cookies.get("azure_session")?.value
+  if (!cookie) return null
+  try {
+    const session = JSON.parse(cookie) as { email?: string; name?: string; expiresAt?: number }
+    if (session.expiresAt && session.expiresAt < Date.now()) return null
+    const email = (session.email ?? "").trim().toLowerCase()
+    if (!email) return null
+    return { email, name: typeof session.name === "string" ? session.name : "" }
+  } catch {
+    return null
+  }
+}
+
 // Confirm the caller has a valid session and passes the role/active gate, with
 // no department requirement. Used for org-wide endpoints (e.g. logging a
 // ticket). Returns the caller's AD email or a NextResponse.

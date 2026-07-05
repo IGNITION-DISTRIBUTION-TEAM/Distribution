@@ -14,11 +14,22 @@ const textareaCls =
 // department list exists, the "department" field becomes a dropdown of those
 // departments — or a fixed value when `lockedDepartment` is set (used by the
 // per-department capture links at /tickets/log/<slug>).
-export function TicketForm({ lockedDepartment }: { lockedDepartment?: string }) {
+// `collectIdentity` adds "Your name" / "Your email" inputs for anonymous
+// (not-signed-in) visitors — the capture links are public.
+export function TicketForm({
+  lockedDepartment,
+  collectIdentity,
+}: {
+  lockedDepartment?: string
+  collectIdentity?: boolean
+}) {
   const [config, setConfig] = useState<TicketFormConfig | null>(null)
   const [departments, setDepartments] = useState<TicketDepartment[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [requestorName, setRequestorName] = useState("")
+  const [requestorEmail, setRequestorEmail] = useState("")
+  const [honeypot, setHoneypot] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [createdRef, setCreatedRef] = useState<string | null>(null)
@@ -49,6 +60,10 @@ export function TicketForm({ lockedDepartment }: { lockedDepartment?: string }) 
 
   const submit = useCallback(async () => {
     if (!config) return
+    if (collectIdentity && (!requestorName.trim() || !requestorEmail.trim())) {
+      setSubmitError("Please fill in your name and email so we can follow up.")
+      return
+    }
     setSubmitting(true)
     setSubmitError(null)
     setCreatedRef(null)
@@ -58,7 +73,13 @@ export function TicketForm({ lockedDepartment }: { lockedDepartment?: string }) 
       const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: payload }),
+        body: JSON.stringify({
+          answers: payload,
+          ...(collectIdentity
+            ? { requestor: { name: requestorName.trim(), email: requestorEmail.trim() } }
+            : {}),
+          website: honeypot,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Submit failed (${res.status})`)
@@ -69,7 +90,7 @@ export function TicketForm({ lockedDepartment }: { lockedDepartment?: string }) 
     } finally {
       setSubmitting(false)
     }
-  }, [answers, config, lockedDepartment])
+  }, [answers, config, lockedDepartment, collectIdentity, requestorName, requestorEmail, honeypot])
 
   if (loadError) {
     return (
@@ -103,6 +124,46 @@ export function TicketForm({ lockedDepartment }: { lockedDepartment?: string }) 
       )}
 
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
+        {collectIdentity && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-foreground">
+                Your name<span className="ml-1 text-rose-400">*</span>
+              </label>
+              <input
+                className={inputCls}
+                value={requestorName}
+                autoComplete="name"
+                onChange={(e) => setRequestorName(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-foreground">
+                Your email<span className="ml-1 text-rose-400">*</span>
+              </label>
+              <input
+                type="email"
+                className={inputCls}
+                value={requestorEmail}
+                autoComplete="email"
+                onChange={(e) => setRequestorEmail(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Honeypot — hidden from humans; bots that fill it are silently dropped. */}
+        <input
+          type="text"
+          name="website"
+          value={honeypot}
+          onChange={(e) => setHoneypot(e.target.value)}
+          className="hidden"
+          tabIndex={-1}
+          autoComplete="off"
+          aria-hidden="true"
+        />
+
         {fields.map((field) => {
           const isDept = field.key === "department"
           return (
