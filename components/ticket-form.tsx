@@ -55,8 +55,32 @@ export function TicketForm({
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
   }, [])
 
+  // Date needed is derived from the chosen urgency (same hours that drive the
+  // SLA due time), so users don't type it by hand.
+  const autoDateFor = (urgency: string): string | null => {
+    const hours = config?.slaHoursByUrgency?.[urgency]
+    if (typeof hours !== "number" || !Number.isFinite(hours) || hours <= 0) return null
+    const d = new Date(Date.now() + hours * 3_600_000)
+    const pad = (n: number) => String(n).padStart(2, "0")
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+
+  const dateIsAuto =
+    !!config &&
+    Object.keys(config.slaHoursByUrgency ?? {}).length > 0 &&
+    config.fields.some((f) => f.key === "urgency" && f.active) &&
+    config.fields.some((f) => f.key === "dateNeeded" && f.active)
+
   const setAnswer = (key: string, value: string) =>
-    setAnswers((prev) => ({ ...prev, [key]: value }))
+    setAnswers((prev) => {
+      const next = { ...prev, [key]: value }
+      if (key === "urgency" && dateIsAuto) {
+        const auto = autoDateFor(value)
+        if (auto) next.dateNeeded = auto
+        else delete next.dateNeeded
+      }
+      return next
+    })
 
   const submit = useCallback(async () => {
     if (!config) return
@@ -166,13 +190,27 @@ export function TicketForm({
 
         {fields.map((field) => {
           const isDept = field.key === "department"
+          const isAutoDate = field.key === "dateNeeded" && dateIsAuto
           return (
             <div key={field.key} className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-foreground">
                 {field.label}
                 {field.required && <span className="ml-1 text-rose-400">*</span>}
+                {isAutoDate && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    (calculated from urgency)
+                  </span>
+                )}
               </label>
-              {isDept && lockedDepartment ? (
+              {isAutoDate ? (
+                <input
+                  type="date"
+                  className={inputCls}
+                  value={answers[field.key] ?? ""}
+                  disabled
+                  placeholder="Select an urgency first"
+                />
+              ) : isDept && lockedDepartment ? (
                 <input className={inputCls} value={lockedDepartment} disabled />
               ) : isDept && departments.length > 0 ? (
                 <select
