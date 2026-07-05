@@ -15,7 +15,8 @@ export async function GET(request: NextRequest) {
 
   try {
     await ensureTicketTables()
-    const [totalsRows, byStatus, byUrgency, byType, byDepartment, byWeek] = await Promise.all([
+    const [totalsRows, byStatus, byUrgency, byType, byDepartment, byWeek, seriesRows] =
+      await Promise.all([
       executeSnowflakeQuery<Record<string, unknown>>(
         `SELECT COUNT(*) AS TOTAL,
                 SUM(CASE WHEN STATUS IN (${openList}) THEN 1 ELSE 0 END) AS OPEN_COUNT,
@@ -55,6 +56,16 @@ export async function GET(request: NextRequest) {
          GROUP BY 1 ORDER BY 1 DESC`,
         SF_OPTS
       ),
+      // Daily counts per department, last 30 days — feeds the trend chart.
+      executeSnowflakeQuery<Record<string, unknown>>(
+        `SELECT TO_VARCHAR(DATE_TRUNC('day', CREATED_AT), 'YYYY-MM-DD') AS DAY,
+                COALESCE(TRY_PARSE_JSON(FIELDS):department::string, '(none)') AS DEPT,
+                COUNT(*) AS CNT
+         FROM ${TICKETS_TABLE}
+         WHERE CREATED_AT >= DATEADD('day', -29, DATE_TRUNC('day', CURRENT_TIMESTAMP()))
+         GROUP BY 1, 2 ORDER BY 1`,
+        SF_OPTS
+      ),
     ])
 
     const toPairs = (rows: Record<string, unknown>[]) =>
@@ -73,6 +84,11 @@ export async function GET(request: NextRequest) {
       byType: toPairs(byType),
       byDepartment: toPairs(byDepartment),
       byWeek: toPairs(byWeek),
+      series: seriesRows.map((r) => ({
+        day: String(r.DAY ?? ""),
+        dept: String(r.DEPT ?? ""),
+        count: Number(r.CNT ?? 0),
+      })),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

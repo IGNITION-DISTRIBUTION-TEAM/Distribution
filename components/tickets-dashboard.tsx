@@ -46,6 +46,16 @@ import {
   Ticket as TicketIcon,
   Trash2,
 } from "lucide-react"
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
 import { TicketForm } from "@/components/ticket-form"
 import {
   TICKET_STATUSES,
@@ -552,6 +562,144 @@ type ReportData = {
   byType: { label: string; count: number }[]
   byDepartment: { label: string; count: number }[]
   byWeek: { label: string; count: number }[]
+  series: { day: string; dept: string; count: number }[]
+}
+
+// Categorical series palette (dark steps), validated against the app's card
+// surface (#15181e): lightness band, chroma floor, CVD separation, contrast.
+// Fixed slot order — never cycled or reassigned when series come and go.
+const SERIES_COLORS = [
+  "#3987e5",
+  "#199e70",
+  "#c98500",
+  "#008300",
+  "#9085e9",
+  "#e66767",
+  "#d55181",
+  "#d95926",
+]
+const MAX_SERIES = SERIES_COLORS.length
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+function shortDay(iso: string): string {
+  const [, m, d] = iso.split("-")
+  const mi = Number(m) - 1
+  return `${Number(d)} ${MONTHS_SHORT[mi] ?? m}`
+}
+
+function TicketsTimeChart({ series }: { series: ReportData["series"] }) {
+  // Departments ordered by 30-day volume; beyond the palette, fold into "Other".
+  const totals = new Map<string, number>()
+  for (const r of series) totals.set(r.dept, (totals.get(r.dept) ?? 0) + r.count)
+  const ranked = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])
+  const kept = ranked.slice(0, ranked.length > MAX_SERIES ? MAX_SERIES - 1 : MAX_SERIES).map(([d]) => d)
+  const hasOther = ranked.length > kept.length
+  const seriesNames = hasOther ? [...kept, "Other"] : kept
+
+  // Zero-filled day rows for the last 30 days so lines are continuous.
+  const byDay = new Map<string, Record<string, number>>()
+  const today = new Date()
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i)
+    const pad = (n: number) => String(n).padStart(2, "0")
+    const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    byDay.set(iso, Object.fromEntries(seriesNames.map((s) => [s, 0])))
+  }
+  for (const r of series) {
+    const row = byDay.get(r.day)
+    if (!row) continue
+    const key = kept.includes(r.dept) ? r.dept : "Other"
+    if (key in row) row[key] += r.count
+  }
+  const data = Array.from(byDay.entries()).map(([day, counts]) => ({ day, ...counts }))
+  const total = ranked.reduce((s, [, n]) => s + n, 0)
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold text-foreground">Tickets over time</h3>
+        <p className="text-xs text-muted-foreground">Daily tickets by department, last 30 days</p>
+      </div>
+      {total === 0 ? (
+        <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+          No tickets logged in the last 30 days.
+        </p>
+      ) : (
+        <div className="px-2 pb-2 pt-4">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
+              <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+              <XAxis
+                dataKey="day"
+                tickFormatter={shortDay}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                axisLine={{ stroke: "hsl(var(--border))" }}
+                tickLine={false}
+                minTickGap={28}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <RechartsTooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  const rows = [...payload].sort((a, b) => Number(b.value ?? 0) - Number(a.value ?? 0))
+                  return (
+                    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
+                      <p className="mb-1 font-medium text-foreground">{shortDay(String(label))}</p>
+                      {rows.map((p) => (
+                        <div key={String(p.dataKey)} className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-2 w-2 rounded-[2px]"
+                            style={{ background: String(p.color) }}
+                          />
+                          <span className="text-muted-foreground">{String(p.dataKey)}</span>
+                          <span className="ml-auto pl-3 font-mono text-foreground">
+                            {Number(p.value ?? 0)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }}
+              />
+              <Legend
+                content={() => (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
+                    {seriesNames.map((name, i) => (
+                      <span key={name} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span
+                          className="inline-block h-2 w-2 rounded-[2px]"
+                          style={{ background: SERIES_COLORS[i] }}
+                        />
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              />
+              {seriesNames.map((name, i) => (
+                <Line
+                  key={name}
+                  type="monotone"
+                  dataKey={name}
+                  stroke={SERIES_COLORS[i]}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function CountTable({ title, rows }: { title: string; rows: { label: string; count: number }[] }) {
@@ -639,6 +787,8 @@ function ReportingContent() {
           </div>
         ))}
       </div>
+
+      <TicketsTimeChart series={data.series ?? []} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <CountTable title="By status" rows={data.byStatus} />
