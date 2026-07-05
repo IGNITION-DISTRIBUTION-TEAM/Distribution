@@ -33,8 +33,10 @@ import {
   ArrowLeft,
   ArrowUp,
   BarChart3,
+  Building2,
   CheckCircle2,
   ClipboardList,
+  Link as LinkIcon,
   ListTodo,
   Loader2,
   LogOut,
@@ -44,10 +46,12 @@ import {
   Ticket as TicketIcon,
   Trash2,
 } from "lucide-react"
+import { TicketForm } from "@/components/ticket-form"
 import {
   TICKET_STATUSES,
   FIELD_KEY_RE,
   validateFormConfig,
+  type TicketDepartment,
   type TicketField,
   type TicketFieldType,
   type TicketFormConfig,
@@ -88,59 +92,6 @@ function ErrorBox({ message }: { message: string }) {
 /* ------------------------------- Log a ticket ------------------------------ */
 
 function LogTicketContent() {
-  const [config, setConfig] = useState<TicketFormConfig | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [createdRef, setCreatedRef] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch("/api/tickets/form-config")
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || "Could not load the ticket form")
-        setConfig(data.config)
-      })
-      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
-  }, [])
-
-  const setAnswer = (key: string, value: string) =>
-    setAnswers((prev) => ({ ...prev, [key]: value }))
-
-  const submit = useCallback(async () => {
-    if (!config) return
-    setSubmitting(true)
-    setSubmitError(null)
-    setCreatedRef(null)
-    try {
-      const res = await fetch("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Submit failed (${res.status})`)
-      setCreatedRef(data.ticketRef)
-      setAnswers({})
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSubmitting(false)
-    }
-  }, [answers, config])
-
-  if (loadError) return <ErrorBox message={loadError} />
-  if (!config) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
-      </div>
-    )
-  }
-
-  const fields = config.fields.filter((f) => f.active)
-
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
@@ -149,80 +100,172 @@ function LogTicketContent() {
           Submit a request to the tickets team. Your name and email are attached automatically.
         </p>
       </div>
+      <TicketForm />
+    </div>
+  )
+}
 
-      {createdRef && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm">
-          <div className="flex items-center gap-2 text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span className="font-medium">
-              Ticket <span className="font-mono">{createdRef}</span> logged
-            </span>
-          </div>
-        </div>
-      )}
+/* ------------------------------- Departments ------------------------------- */
 
-      <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
-        {fields.map((field) => (
-          <div key={field.key} className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-foreground">
-              {field.label}
-              {field.required && <span className="ml-1 text-rose-400">*</span>}
-            </label>
-            {field.type === "textarea" ? (
-              <textarea
-                className={textareaCls}
-                value={answers[field.key] ?? ""}
-                onChange={(e) => setAnswer(field.key, e.target.value)}
-              />
-            ) : field.type === "select" ? (
-              <select
-                className={inputCls}
-                value={answers[field.key] ?? ""}
-                onChange={(e) => setAnswer(field.key, e.target.value)}
-              >
-                <option value="">Select…</option>
-                {(field.options ?? []).map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
-            ) : field.type === "yesno" ? (
-              <select
-                className={inputCls}
-                value={answers[field.key] ?? ""}
-                onChange={(e) => setAnswer(field.key, e.target.value)}
-              >
-                <option value="">Select…</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-              </select>
+function DepartmentsContent() {
+  const [departments, setDepartments] = useState<TicketDepartment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [newName, setNewName] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch("/api/tickets/departments")
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Load failed (${res.status})`)
+      setDepartments(data.departments ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const add = async () => {
+    if (!newName.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/tickets/departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`)
+      setNewName("")
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async (slug: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/tickets/departments?slug=${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Remove failed (${res.status})`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const captureUrl = (slug: string) =>
+    `${typeof window !== "undefined" ? window.location.origin : ""}/tickets/log/${slug}`
+
+  const copy = async (slug: string) => {
+    try {
+      await navigator.clipboard.writeText(captureUrl(slug))
+      setCopiedSlug(slug)
+      setTimeout(() => setCopiedSlug((s) => (s === slug ? null : s)), 2000)
+    } catch {
+      setError("Could not copy — select the link text and copy it manually.")
+    }
+  }
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold text-foreground">Departments</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Business departments that log tickets. Each gets its own capture link — share it with
+          that team; anyone signed in can use it (no department grant needed). Removing a
+          department disables its link; existing tickets are kept.
+        </p>
+      </div>
+
+      {error && <ErrorBox message={error} />}
+
+      <div className="flex items-center gap-2">
+        <input
+          className={`${inputCls} max-w-xs`}
+          placeholder="Department name, e.g. Ignition CX"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+        />
+        <Button onClick={add} disabled={busy || !newName.trim()}>
+          <Plus className="mr-2 h-4 w-4" /> Add
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <th className="px-3 py-2 font-medium">Department</th>
+              <th className="px-3 py-2 font-medium">Capture link</th>
+              <th className="px-3 py-2 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                </td>
+              </tr>
+            ) : departments.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+                  No departments yet. Add one above — its capture link appears here.
+                </td>
+              </tr>
             ) : (
-              <input
-                type={field.type === "date" ? "date" : "text"}
-                className={inputCls}
-                value={answers[field.key] ?? ""}
-                onChange={(e) => setAnswer(field.key, e.target.value)}
-              />
+              departments.map((d) => (
+                <tr key={d.slug} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2 font-medium text-foreground">{d.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                    {captureUrl(d.slug)}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <Button variant="ghost" size="sm" onClick={() => copy(d.slug)}>
+                      {copiedSlug === d.slug ? (
+                        <>
+                          <CheckCircle2 className="mr-1 h-4 w-4 text-emerald-300" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="mr-1 h-4 w-4" /> Copy link
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => remove(d.slug)}
+                      disabled={busy}
+                      className="text-rose-300 hover:text-rose-200"
+                    >
+                      <Trash2 className="mr-1 h-4 w-4" /> Remove
+                    </Button>
+                  </td>
+                </tr>
+              ))
             )}
-          </div>
-        ))}
-
-        {submitError && <ErrorBox message={submitError} />}
-
-        <div>
-          <Button onClick={submit} disabled={submitting}>
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting…
-              </>
-            ) : (
-              <>
-                <Plus className="mr-2 h-4 w-4" /> Submit ticket
-              </>
-            )}
-          </Button>
-        </div>
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -507,6 +550,7 @@ type ReportData = {
   byStatus: { label: string; count: number }[]
   byUrgency: { label: string; count: number }[]
   byType: { label: string; count: number }[]
+  byDepartment: { label: string; count: number }[]
   byWeek: { label: string; count: number }[]
 }
 
@@ -600,6 +644,7 @@ function ReportingContent() {
         <CountTable title="By status" rows={data.byStatus} />
         <CountTable title="By urgency" rows={data.byUrgency} />
         <CountTable title="By request type" rows={data.byType} />
+        <CountTable title="By department" rows={data.byDepartment} />
         <CountTable title="Created per week (last 8 weeks, week starting)" rows={data.byWeek} />
       </div>
     </div>
@@ -890,7 +935,10 @@ export function TicketsDashboard({ onBack }: { onBack?: () => void }) {
     { id: "tickets", label: "All tickets", icon: <ListTodo className="h-4 w-4" /> },
     { id: "reporting", label: "Reporting", icon: <BarChart3 className="h-4 w-4" /> },
     ...(user?.isSuperAdmin
-      ? [{ id: "customize", label: "Customize form", icon: <Settings2 className="h-4 w-4" /> }]
+      ? [
+          { id: "departments", label: "Departments", icon: <Building2 className="h-4 w-4" /> },
+          { id: "customize", label: "Customize form", icon: <Settings2 className="h-4 w-4" /> },
+        ]
       : []),
   ]
 
@@ -900,6 +948,8 @@ export function TicketsDashboard({ onBack }: { onBack?: () => void }) {
         return <TicketsListContent />
       case "reporting":
         return <ReportingContent />
+      case "departments":
+        return user?.isSuperAdmin ? <DepartmentsContent /> : <LogTicketContent />
       case "customize":
         return user?.isSuperAdmin ? <CustomizeFormContent /> : <LogTicketContent />
       default:

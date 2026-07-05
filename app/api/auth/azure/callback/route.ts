@@ -82,8 +82,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Create redirect response
-    const redirectResponse = NextResponse.redirect(`${request.nextUrl.origin}`)
+    // Create redirect response. If a page stashed a return path before login
+    // (e.g. a department ticket-capture link), go back there instead of the
+    // picker. Same-origin relative paths only — never a full URL.
+    let target = `${request.nextUrl.origin}`
+    const returnPath = request.cookies.get("post_login_redirect")?.value
+    if (returnPath) {
+      try {
+        const decoded = decodeURIComponent(returnPath)
+        if (/^\/[a-zA-Z0-9\-_/]*$/.test(decoded)) target = `${request.nextUrl.origin}${decoded}`
+      } catch {
+        // Malformed cookie — fall back to the picker.
+      }
+    }
+    const redirectResponse = NextResponse.redirect(target)
+    redirectResponse.cookies.delete("post_login_redirect")
 
     // Set secure session cookie with minimal user info.
     // Tokens are intentionally NOT stored — they push the cookie past the 4KB

@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
 
   try {
     await ensureTicketTables()
-    const [totalsRows, byStatus, byUrgency, byType, byWeek] = await Promise.all([
+    const [totalsRows, byStatus, byUrgency, byType, byDepartment, byWeek] = await Promise.all([
       executeSnowflakeQuery<Record<string, unknown>>(
         `SELECT COUNT(*) AS TOTAL,
                 SUM(CASE WHEN STATUS IN (${openList}) THEN 1 ELSE 0 END) AS OPEN_COUNT,
@@ -38,6 +38,13 @@ export async function GET(request: NextRequest) {
       executeSnowflakeQuery<Record<string, unknown>>(
         `SELECT COALESCE(REQUEST_TYPE, '(none)') AS LABEL, COUNT(*) AS CNT FROM ${TICKETS_TABLE}
          GROUP BY REQUEST_TYPE ORDER BY CNT DESC`,
+        SF_OPTS
+      ),
+      executeSnowflakeQuery<Record<string, unknown>>(
+        // Department lives in the answers JSON (FIELDS), not a column.
+        `SELECT COALESCE(TRY_PARSE_JSON(FIELDS):department::string, '(none)') AS LABEL,
+                COUNT(*) AS CNT
+         FROM ${TICKETS_TABLE} GROUP BY 1 ORDER BY CNT DESC`,
         SF_OPTS
       ),
       executeSnowflakeQuery<Record<string, unknown>>(
@@ -64,6 +71,7 @@ export async function GET(request: NextRequest) {
       byStatus: toPairs(byStatus),
       byUrgency: toPairs(byUrgency),
       byType: toPairs(byType),
+      byDepartment: toPairs(byDepartment),
       byWeek: toPairs(byWeek),
     })
   } catch (error) {

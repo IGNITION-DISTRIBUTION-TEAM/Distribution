@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
-import { requireDepartmentAccess } from "@/lib/admin-guard"
+import { requireAuthenticated, requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   TICKETS_TABLE,
   TICKET_STATUSES,
   OPEN_STATUSES,
   type TicketRow,
 } from "@/lib/tickets-shared"
-import { SF_OPTS, ensureTicketTables, getFormConfig, sqlString, sessionName } from "@/lib/tickets-server"
+import {
+  SF_OPTS,
+  ensureTicketTables,
+  getActiveDepartments,
+  getFormConfig,
+  sqlString,
+  sessionName,
+} from "@/lib/tickets-server"
 
 export const dynamic = "force-dynamic"
 
@@ -88,8 +95,10 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/tickets — create a ticket from { answers: Record<string,string> }.
+// Any signed-in user may log a ticket (departments capture via their links);
+// viewing/managing tickets stays behind the "tickets" department grant.
 export async function POST(request: NextRequest) {
-  const guard = await requireDepartmentAccess(request, "tickets")
+  const guard = await requireAuthenticated(request)
   if (guard instanceof NextResponse) return guard
 
   let body: { answers?: Record<string, unknown> }
@@ -107,6 +116,8 @@ export async function POST(request: NextRequest) {
     await ensureTicketTables()
     const config = await getFormConfig()
     const activeFields = config.fields.filter((f) => f.active)
+    const managedDepartments = await getActiveDepartments()
+    const managedNames = new Set(managedDepartments.map((d) => d.name))
 
     // Validate against the live form config; drop unknown keys.
     const answers: Record<string, string> = {}
@@ -123,7 +134,17 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-      if (field.type === "select" && field.options && !field.options.includes(value)) {
+      // When a managed department list exists, the "department" answer comes
+      // from that list (capture links / dropdown) rather than the field's own
+      // config, so accept managed names regardless of the field's type.
+      const isManagedDept = field.key === "department" && managedNames.size > 0
+      if (isManagedDept && !managedNames.has(value)) {
+        return NextResponse.json(
+          { error: `"${field.label}" must be one of the registered departments` },
+          { status: 400 }
+        )
+      }
+      if (!isManagedDept && field.type === "select" && field.options && !field.options.includes(value)) {
         return NextResponse.json(
           { error: `"${field.label}" must be one of the listed options` },
           { status: 400 }

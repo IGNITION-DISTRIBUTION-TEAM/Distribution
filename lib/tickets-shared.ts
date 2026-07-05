@@ -6,6 +6,22 @@ export const TICKETS_DB = "DATAWAREHOUSE"
 export const TICKETS_SCHEMA = "LEADS_DISTRIBUTION"
 export const TICKETS_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS`
 export const TICKETS_CONFIG_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS_FORM_CONFIG`
+export const TICKETS_DEPARTMENTS_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS_DEPARTMENTS`
+
+// A requesting business department (managed in the Tickets dashboard). Each
+// gets its own capture link at /tickets/log/<slug>.
+export type TicketDepartment = { name: string; slug: string }
+
+export const DEPT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+export function slugifyDepartment(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+}
 
 export const TICKET_STATUSES = [
   "Received",

@@ -1,5 +1,35 @@
 import { NextRequest, NextResponse } from "next/server"
-import { isSuperAdmin, getUserDepartments } from "@/lib/auth-gate"
+import { isSuperAdmin, getUserDepartments, checkAccess } from "@/lib/auth-gate"
+
+// Confirm the caller has a valid session and passes the role/active gate, with
+// no department requirement. Used for org-wide endpoints (e.g. logging a
+// ticket). Returns the caller's AD email or a NextResponse.
+export async function requireAuthenticated(
+  request: NextRequest
+): Promise<{ email: string } | NextResponse> {
+  const cookie = request.cookies.get("azure_session")?.value
+  if (!cookie) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+
+  let session: { email?: string; expiresAt?: number }
+  try {
+    session = JSON.parse(cookie)
+  } catch {
+    return NextResponse.json({ error: "Invalid session" }, { status: 401 })
+  }
+
+  if (session.expiresAt && session.expiresAt < Date.now()) {
+    return NextResponse.json({ error: "Session expired" }, { status: 401 })
+  }
+
+  const email = (session.email ?? "").trim().toLowerCase()
+  if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+
+  // Re-verify against the DB gate rather than trusting the cookie alone.
+  const access = await checkAccess(email)
+  if (!access.allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  return { email }
+}
 
 // Read the session cookie and confirm the caller is a super admin. Returns
 // the caller's AD email on success, or a NextResponse to short-circuit the

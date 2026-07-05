@@ -31,6 +31,17 @@ CREATE TABLE IF NOT EXISTS DATAWAREHOUSE.LEADS_DISTRIBUTION.TICKETS_FORM_CONFIG 
   UPDATED_AT   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+-- Requesting business departments (managed on the Tickets > Departments page).
+-- Each active row gets a capture link at /tickets/log/<slug>. "Removing" a
+-- department sets ACTIVE = FALSE (soft delete) so its tickets keep context.
+CREATE TABLE IF NOT EXISTS DATAWAREHOUSE.LEADS_DISTRIBUTION.TICKETS_DEPARTMENTS (
+  NAME        VARCHAR,
+  SLUG        VARCHAR,
+  ACTIVE      BOOLEAN,
+  CREATED_BY  VARCHAR,
+  CREATED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 -- Only needed when the tables are owned by the role running this script rather
 -- than the app role. Replace SVC_VERCEL_APP_ROLE if the app uses another role.
 GRANT SELECT, INSERT, UPDATE
@@ -39,4 +50,8 @@ GRANT SELECT, INSERT, UPDATE
 
 GRANT SELECT, INSERT
   ON TABLE DATAWAREHOUSE.LEADS_DISTRIBUTION.TICKETS_FORM_CONFIG
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT SELECT, INSERT, UPDATE
+  ON TABLE DATAWAREHOUSE.LEADS_DISTRIBUTION.TICKETS_DEPARTMENTS
   TO ROLE SVC_VERCEL_APP_ROLE;

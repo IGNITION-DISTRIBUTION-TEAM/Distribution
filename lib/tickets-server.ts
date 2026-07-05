@@ -4,8 +4,10 @@ import {
   TICKETS_SCHEMA,
   TICKETS_TABLE,
   TICKETS_CONFIG_TABLE,
+  TICKETS_DEPARTMENTS_TABLE,
   DEFAULT_FORM_CONFIG,
   validateFormConfig,
+  type TicketDepartment,
   type TicketFormConfig,
 } from "@/lib/tickets-shared"
 
@@ -32,6 +34,23 @@ export async function ensureTicketTables(): Promise<void> {
       `UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP())`,
     SF_OPTS
   )
+  await executeSnowflakeQueryWithMeta(
+    `CREATE TABLE IF NOT EXISTS ${TICKETS_DEPARTMENTS_TABLE} (` +
+      `NAME VARCHAR, SLUG VARCHAR, ACTIVE BOOLEAN, ` +
+      `CREATED_BY VARCHAR, CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP())`,
+    SF_OPTS
+  )
+}
+
+// Active requesting departments, alphabetically.
+export async function getActiveDepartments(): Promise<TicketDepartment[]> {
+  const { rows } = await executeSnowflakeQueryWithMeta(
+    `SELECT NAME, SLUG FROM ${TICKETS_DEPARTMENTS_TABLE} WHERE ACTIVE = TRUE ORDER BY NAME`,
+    SF_OPTS
+  )
+  return rows
+    .map((r) => ({ name: String(r[0] ?? ""), slug: String(r[1] ?? "") }))
+    .filter((d) => d.name && d.slug)
 }
 
 // Latest saved form config, falling back to the built-in default when the

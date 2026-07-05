@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
-import { requireDepartmentAccess, requireSuperAdmin } from "@/lib/admin-guard"
+import { requireAuthenticated, requireSuperAdmin } from "@/lib/admin-guard"
 import { TICKETS_CONFIG_TABLE, validateFormConfig, type TicketFormConfig } from "@/lib/tickets-shared"
 import { SF_OPTS, ensureTicketTables, getFormConfig, sqlString } from "@/lib/tickets-server"
 
 export const dynamic = "force-dynamic"
 
-// GET /api/tickets/form-config — current form definition (any tickets user).
+// GET /api/tickets/form-config — current form definition. Any signed-in user
+// (the department capture pages render the form before any grant exists).
 export async function GET(request: NextRequest) {
-  const guard = await requireDepartmentAccess(request, "tickets")
+  const guard = await requireAuthenticated(request)
   if (guard instanceof NextResponse) return guard
 
   try {
