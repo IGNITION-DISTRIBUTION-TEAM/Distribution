@@ -4332,11 +4332,28 @@ function ScoreDateHeatgrid({
   const [filterOpen, setFilterOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string> | null>(null)
   const [mode, setMode] = useState<"count" | "percent">("count")
+  // Date sub-range within the queried data ("" = unbounded). ISO strings, so
+  // plain string comparison is a correct date comparison.
+  const [fromDate, setFromDate] = useState("")
+  const [toDate, setToDate] = useState("")
 
-  // Reset filter to "all" whenever the list of groups changes (e.g. new query).
+  // Reset filters whenever the underlying data changes (e.g. new query).
   useEffect(() => {
     setSelected(null)
+    setFromDate("")
+    setToDate("")
   }, [allScoreGroups.join("|")])
+
+  // Bounds of the data, for the date pickers.
+  const dateBounds = useMemo(() => {
+    let min = ""
+    let max = ""
+    for (const r of data) {
+      if (!min || r.date < min) min = r.date
+      if (!max || r.date > max) max = r.date
+    }
+    return { min, max }
+  }, [data])
 
   const isAllSelected = selected === null
   const activeSet = selected ?? new Set(allScoreGroups)
@@ -4350,8 +4367,14 @@ function ScoreDateHeatgrid({
     })
 
   const filteredRows = useMemo(
-    () => data.filter((r) => activeSet.has(r.scoreGroup)),
-    [data, activeSet]
+    () =>
+      data.filter(
+        (r) =>
+          activeSet.has(r.scoreGroup) &&
+          (!fromDate || r.date >= fromDate) &&
+          (!toDate || r.date <= toDate)
+      ),
+    [data, activeSet, fromDate, toDate]
   )
 
   // Score groups shown — keep numeric order, restrict to selected.
@@ -4455,7 +4478,40 @@ function ScoreDateHeatgrid({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span>From</span>
+            <input
+              type="date"
+              value={fromDate}
+              min={dateBounds.min}
+              max={toDate || dateBounds.max}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            />
+            <span>to</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || dateBounds.min}
+              max={dateBounds.max}
+              onChange={(e) => setToDate(e.target.value)}
+              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            />
+            {(fromDate || toDate) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFromDate("")
+                  setToDate("")
+                }}
+                className="rounded px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                aria-label="Clear date filter"
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
+            )}
+          </div>
           <div className="inline-flex rounded-md border border-border bg-background/40 p-0.5">
             <button
               type="button"
