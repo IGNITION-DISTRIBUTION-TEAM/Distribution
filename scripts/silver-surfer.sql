@@ -20,6 +20,14 @@ GRANT SELECT, DELETE, TRUNCATE
   ON TABLE DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.TEMP_UPLOAD
   TO ROLE SVC_VERCEL_APP_ROLE;
 
+-- SP_SYNC_BATCH_COUNTS_TODAY recreates TEMP_UPLOAD (CREATE OR REPLACE), which
+-- wipes per-table grants on every run. Future grants keep the app role's
+-- access across recreations. Run as the schema owner or a MANAGE GRANTS role.
+-- (Narrower alternative: change the proc to CREATE OR REPLACE ... COPY GRANTS.)
+GRANT SELECT, DELETE, TRUNCATE
+  ON FUTURE TABLES IN SCHEMA DATAWAREHOUSE.DISTRIBUTION_AUTOMATION
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
 -- USAGE on the procedure allows CALLing it (grant must match the signature).
 GRANT USAGE
   ON PROCEDURE DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_SYNC_BATCH_COUNTS_TODAY()
