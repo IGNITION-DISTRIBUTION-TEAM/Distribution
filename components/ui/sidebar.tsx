@@ -330,7 +330,10 @@ const SidebarInset = React.forwardRef<
     <main
       ref={ref}
       className={cn(
-        'relative flex min-h-svh flex-1 flex-col bg-background',
+        // min-w-0: without it this flex item's min-width tracks its content,
+        // so any wide table/chart stretches the whole pane past the viewport
+        // instead of scrolling inside its own overflow container.
+        'relative flex min-h-svh min-w-0 flex-1 flex-col bg-background',
         'peer-data-[variant=inset]:min-h-[calc(100svh-theme(spacing.4))] md:peer-data-[variant=inset]:m-2 md:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow',
         className,
       )}
