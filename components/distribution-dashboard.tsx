@@ -4329,34 +4329,29 @@ function ScoreDateHeatgrid({
     return Array.from(set).sort((a, b) => scoreGroupSortKey(a) - scoreGroupSortKey(b))
   }, [data])
 
+  // All dates present in the data (the window picked by the main filter),
+  // sorted — the date filter lets users drop specific days within it.
+  const allDates = useMemo(() => {
+    const set = new Set(data.map((r) => r.date))
+    return Array.from(set).sort()
+  }, [data])
+
   const [filterOpen, setFilterOpen] = useState(false)
+  const [dateFilterOpen, setDateFilterOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string> | null>(null)
+  const [selectedDates, setSelectedDates] = useState<Set<string> | null>(null)
   const [mode, setMode] = useState<"count" | "percent">("count")
-  // Date sub-range within the queried data ("" = unbounded). ISO strings, so
-  // plain string comparison is a correct date comparison.
-  const [fromDate, setFromDate] = useState("")
-  const [toDate, setToDate] = useState("")
 
   // Reset filters whenever the underlying data changes (e.g. new query).
   useEffect(() => {
     setSelected(null)
-    setFromDate("")
-    setToDate("")
-  }, [allScoreGroups.join("|")])
-
-  // Bounds of the data, for the date pickers.
-  const dateBounds = useMemo(() => {
-    let min = ""
-    let max = ""
-    for (const r of data) {
-      if (!min || r.date < min) min = r.date
-      if (!max || r.date > max) max = r.date
-    }
-    return { min, max }
-  }, [data])
+    setSelectedDates(null)
+  }, [allScoreGroups.join("|"), allDates.join("|")])
 
   const isAllSelected = selected === null
   const activeSet = selected ?? new Set(allScoreGroups)
+  const isAllDatesSelected = selectedDates === null
+  const activeDateSet = selectedDates ?? new Set(allDates)
 
   const toggle = (sg: string) =>
     setSelected((prev) => {
@@ -4366,15 +4361,17 @@ function ScoreDateHeatgrid({
       return next
     })
 
+  const toggleDate = (d: string) =>
+    setSelectedDates((prev) => {
+      const next = new Set(prev ?? allDates)
+      if (next.has(d)) next.delete(d)
+      else next.add(d)
+      return next
+    })
+
   const filteredRows = useMemo(
-    () =>
-      data.filter(
-        (r) =>
-          activeSet.has(r.scoreGroup) &&
-          (!fromDate || r.date >= fromDate) &&
-          (!toDate || r.date <= toDate)
-      ),
-    [data, activeSet, fromDate, toDate]
+    () => data.filter((r) => activeSet.has(r.scoreGroup) && activeDateSet.has(r.date)),
+    [data, activeSet, activeDateSet]
   )
 
   // Score groups shown — keep numeric order, restrict to selected.
@@ -4479,39 +4476,49 @@ function ScoreDateHeatgrid({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>From</span>
-            <input
-              type="date"
-              value={fromDate}
-              min={dateBounds.min}
-              max={toDate || dateBounds.max}
-              onChange={(e) => setFromDate(e.target.value)}
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-            />
-            <span>to</span>
-            <input
-              type="date"
-              value={toDate}
-              min={fromDate || dateBounds.min}
-              max={dateBounds.max}
-              onChange={(e) => setToDate(e.target.value)}
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-            />
-            {(fromDate || toDate) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setFromDate("")
-                  setToDate("")
-                }}
-                className="rounded px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-                aria-label="Clear date filter"
-              >
-                <XCircle className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+          <Popover open={dateFilterOpen} onOpenChange={setDateFilterOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm">
+                Filter dates{" "}
+                {!isAllDatesSelected && (
+                  <span className="ml-1 rounded-full bg-primary/20 px-1.5 text-xs text-primary">
+                    {activeDateSet.size}/{allDates.length}
+                  </span>
+                )}
+                <ChevronsUpDown className="ml-2 h-3 w-3 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-0" align="end">
+              <Command>
+                <CommandInput placeholder="Search dates..." />
+                <CommandList>
+                  <CommandEmpty>No match.</CommandEmpty>
+                  <CommandGroup>
+                    <CommandItem value="__all__" onSelect={() => setSelectedDates(null)}>
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          isAllDatesSelected ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      (Select all)
+                    </CommandItem>
+                    {allDates.map((d) => {
+                      const checked = activeDateSet.has(d)
+                      return (
+                        <CommandItem key={d} value={d} onSelect={() => toggleDate(d)}>
+                          <Check
+                            className={cn("mr-2 h-4 w-4", checked ? "opacity-100" : "opacity-0")}
+                          />
+                          <span className="font-mono text-sm">{d}</span>
+                        </CommandItem>
+                      )
+                    })}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           <div className="inline-flex rounded-md border border-border bg-background/40 p-0.5">
             <button
               type="button"
