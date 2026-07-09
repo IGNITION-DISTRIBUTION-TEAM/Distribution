@@ -110,13 +110,51 @@ function ChartTooltip({
   )
 }
 
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+// Matches the chart cards on the Distribution dashboard.
+function ChartCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="border-b border-border px-4 py-3">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="mb-2">
+        <h3 className="font-medium text-foreground">{title}</h3>
+        {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
       </div>
-      <div className="px-2 pb-2 pt-4">{children}</div>
+      {children}
+    </div>
+  )
+}
+
+// Same tile as the Distribution dashboard's CompactStat.
+function StatTile({
+  label,
+  value,
+  accent,
+}: {
+  label: string
+  value: string | number
+  accent?: "primary" | "success" | "danger" | "muted"
+}) {
+  const cls =
+    accent === "success"
+      ? "text-emerald-300"
+      : accent === "danger"
+        ? "text-rose-300"
+        : accent === "primary"
+          ? "text-primary"
+          : accent === "muted"
+            ? "text-muted-foreground"
+            : "text-foreground"
+  return (
+    <div className="rounded-md border border-border bg-card px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-0.5 text-base font-semibold ${cls}`}>{value}</p>
     </div>
   )
 }
@@ -209,15 +247,7 @@ function DashboardSection() {
       ? metrics.reduce((a, m) => a + m.successRate * m.totalBatches, 0) / totalBatches
       : 0
 
-  const stats: [string, string][] = [
-    ["Configurations", configs.length.toLocaleString()],
-    ["Active", configs.filter((c) => c.isActive).length.toLocaleString()],
-    ["Running now", configs.reduce((a, c) => a + c.runningCount, 0).toLocaleString()],
-    ["Batches (14d)", totalBatches.toLocaleString()],
-    ["Success rate (14d)", `${successRate.toFixed(1)}%`],
-    ["Records processed (14d)", processed.toLocaleString()],
-    ["Failed records (14d)", failed.toLocaleString()],
-  ]
+  const running = configs.reduce((a, c) => a + c.runningCount, 0)
 
   const chartData = metrics.map((m) => ({
     date: m.date.slice(5),
@@ -244,13 +274,18 @@ function DashboardSection() {
 
       {error && <ErrorBox message={error} />}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-lg border border-border bg-card px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
-          </div>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <StatTile label="Configurations" value={configs.length.toLocaleString()} />
+        <StatTile
+          label="Active"
+          value={configs.filter((c) => c.isActive).length.toLocaleString()}
+          accent="success"
+        />
+        <StatTile label="Running now" value={running.toLocaleString()} accent={running > 0 ? "primary" : "muted"} />
+        <StatTile label="Batches (14d)" value={totalBatches.toLocaleString()} />
+        <StatTile label="Success rate (14d)" value={`${successRate.toFixed(1)}%`} accent="success" />
+        <StatTile label="Records (14d)" value={processed.toLocaleString()} />
+        <StatTile label="Failed (14d)" value={failed.toLocaleString()} accent={failed > 0 ? "danger" : "muted"} />
       </div>
 
       {chartData.length === 0 ? (
@@ -259,7 +294,7 @@ function DashboardSection() {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <ChartCard title="Records per day">
+          <ChartCard title="Records per day" subtitle="Processed vs failed · last 14 days">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -8 }}>
                 <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -273,7 +308,7 @@ function DashboardSection() {
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
-            <div className="flex gap-4 px-4 pb-2 text-xs text-muted-foreground">
+            <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_BLUE }} /> Processed
               </span>
@@ -283,7 +318,7 @@ function DashboardSection() {
             </div>
           </ChartCard>
 
-          <ChartCard title="Success rate per day">
+          <ChartCard title="Success rate per day" subtitle="Completed batches as % of all batches">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
                 <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -1907,18 +1942,15 @@ function MonHistory() {
       </div>
       {error && <ErrorBox message={error} />}
       {summary && (
-        <div className="grid gap-4 sm:grid-cols-4">
-          {[
-            ["Total batches", summary.totalBatches.toLocaleString()],
-            ["Success rate", `${summary.successRate.toFixed(1)}%`],
-            ["Total records", summary.totalRecords.toLocaleString()],
-            ["Failed records", summary.failedRecords.toLocaleString()],
-          ].map(([l, v]) => (
-            <div key={l} className="rounded-lg border border-border bg-card px-4 py-3">
-              <p className="text-xs text-muted-foreground">{l}</p>
-              <p className="mt-1 text-2xl font-semibold text-foreground">{v}</p>
-            </div>
-          ))}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatTile label="Total batches" value={summary.totalBatches.toLocaleString()} />
+          <StatTile label="Success rate" value={`${summary.successRate.toFixed(1)}%`} accent="success" />
+          <StatTile label="Total records" value={summary.totalRecords.toLocaleString()} />
+          <StatTile
+            label="Failed records"
+            value={summary.failedRecords.toLocaleString()}
+            accent={summary.failedRecords > 0 ? "danger" : "muted"}
+          />
         </div>
       )}
       {records.length === 0 ? (
@@ -2207,7 +2239,7 @@ function MonMetrics() {
                   <Bar dataKey="Failed" stackId="v" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
-              <div className="flex gap-4 px-4 pb-2 text-xs text-muted-foreground">
+              <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_BLUE }} /> Processed
                 </span>
