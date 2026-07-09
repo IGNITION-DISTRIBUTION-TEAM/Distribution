@@ -1213,10 +1213,12 @@ function AssignmentsSection() {
         jsonFetch("/api/engaige/configs"),
         jsonFetch("/api/engaige/assignments"),
       ])
-      const active = (c.configs as EngaigeConfig[]).filter((x) => x.isActive)
-      setConfigs(active)
+      // All configs, including inactive — those can be reactivated and
+      // scheduled from here ahead of activation.
+      const all = c.configs as EngaigeConfig[]
+      setConfigs(all)
       setAssignments(a.assignments ?? [])
-      if (active[0] && !form.configId) setForm((f) => ({ ...f, configId: active[0].configId }))
+      if (all[0] && !form.configId) setForm((f) => ({ ...f, configId: all[0].configId }))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1224,6 +1226,23 @@ function AssignmentsSection() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const toggleConfigActive = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await jsonFetch(`/api/engaige/configs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle" }),
+      })
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     load()
@@ -1377,7 +1396,7 @@ function AssignmentsSection() {
 
       {configs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-          No active configurations.
+          No configurations yet.
         </div>
       ) : (
         <>
@@ -1394,6 +1413,7 @@ function AssignmentsSection() {
                     {configs.map((c) => (
                       <option key={c.configId} value={c.configId}>
                         {c.configName}
+                        {c.isActive ? "" : " (inactive)"}
                       </option>
                     ))}
                   </select>
@@ -1501,7 +1521,27 @@ function AssignmentsSection() {
             const list = byConfig.get(c.configId) ?? []
             return (
               <div key={c.configId} className="rounded-xl border border-border bg-card p-5">
-                <h3 className="mb-2 font-medium text-foreground">{c.configName}</h3>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 font-medium text-foreground">
+                    <span>{c.isActive ? "🟢" : "🔴"}</span>
+                    {c.configName}
+                    {!c.isActive && (
+                      <Badge variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-300">
+                        Config inactive
+                      </Badge>
+                    )}
+                  </h3>
+                  {!c.isActive && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => toggleConfigActive(c.configId)}
+                    >
+                      Activate configuration
+                    </Button>
+                  )}
+                </div>
                 {list.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {statusFilter === "all" ? "No assignments." : `No ${statusFilter} assignments.`}
@@ -1675,8 +1715,9 @@ function ScheduleEditorSection() {
   const [days, setDays] = useState<Record<DayKey, boolean>>(daysForScheduleType("Daily"))
 
   useEffect(() => {
+    // All configs — schedules can be prepared on inactive ones too.
     jsonFetch("/api/engaige/configs")
-      .then((d) => setConfigs((d.configs as EngaigeConfig[]).filter((c) => c.isActive)))
+      .then((d) => setConfigs(d.configs as EngaigeConfig[]))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [])
@@ -1749,6 +1790,7 @@ function ScheduleEditorSection() {
                     onChange={() => toggleConfig(c.configId)}
                   />
                   {c.configName}
+                  {!c.isActive && <span className="text-xs text-muted-foreground">(inactive)</span>}
                 </label>
               ))}
             </div>
