@@ -38,6 +38,17 @@ import {
   Trash2,
 } from "lucide-react"
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
+import {
   ENDPOINT_OPTIONS,
   TEMPLATE_TYPES,
   TEMPLATE_SECTIONS,
@@ -58,6 +69,55 @@ import {
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
+
+// Chart colours: dark steps validated for contrast + CVD separation against the
+// app's card surface (see the score-group heatmap). blue=success/processed,
+// red=failed, aqua=duration.
+const C_BLUE = "#3987e5"
+const C_RED = "#e66767"
+const C_AQUA = "#199e70"
+
+const axisTick = { fill: "hsl(var(--muted-foreground))", fontSize: 11 }
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  suffix,
+}: {
+  active?: boolean
+  payload?: { dataKey?: string | number; value?: number | string; color?: string }[]
+  label?: string | number
+  suffix?: string
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
+      <p className="mb-1 font-medium text-foreground">{String(label)}</p>
+      {payload.map((p) => (
+        <div key={String(p.dataKey)} className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: String(p.color) }} />
+          <span className="text-muted-foreground">{String(p.dataKey)}</span>
+          <span className="ml-auto pl-3 font-mono text-foreground">
+            {typeof p.value === "number" ? p.value.toLocaleString() : String(p.value)}
+            {suffix ?? ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      </div>
+      <div className="px-2 pb-2 pt-4">{children}</div>
+    </div>
+  )
+}
 
 const STATUS_ICON: Record<string, string> = {
   COMPLETED: "✅",
@@ -1425,47 +1485,152 @@ function MonHistory() {
   )
 }
 
+type ScheduleGridRow = {
+  configName: string
+  taskWindow: string
+  monday: boolean
+  tuesday: boolean
+  wednesday: boolean
+  thursday: boolean
+  friday: boolean
+  saturday: boolean
+  sunday: boolean
+}
+
+const HEAT_DAYS: { key: keyof ScheduleGridRow; label: string }[] = [
+  { key: "monday", label: "Mon" },
+  { key: "tuesday", label: "Tue" },
+  { key: "wednesday", label: "Wed" },
+  { key: "thursday", label: "Thu" },
+  { key: "friday", label: "Fri" },
+  { key: "saturday", label: "Sat" },
+  { key: "sunday", label: "Sun" },
+]
+
 function MonSchedule() {
   const [summary, setSummary] = useState<{ configName: string; schedules: string }[]>([])
+  const [grid, setGrid] = useState<ScheduleGridRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     jsonFetch("/api/engaige/monitoring?view=schedule")
-      .then((d) => setSummary(d.summary ?? []))
+      .then((d) => {
+        setSummary(d.summary ?? [])
+        setGrid(d.grid ?? [])
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [])
+
+  // Distinct sorted time windows present, and config counts per (time, day).
+  const { times, counts, maxCount, namesAt } = useMemo(() => {
+    const timeSet = new Set<string>()
+    const cnt = new Map<string, number>()
+    const names = new Map<string, string[]>()
+    for (const r of grid) {
+      timeSet.add(r.taskWindow)
+      for (const d of HEAT_DAYS) {
+        if (!r[d.key]) continue
+        const k = `${r.taskWindow}|${d.key}`
+        cnt.set(k, (cnt.get(k) ?? 0) + 1)
+        const arr = names.get(k) ?? []
+        arr.push(r.configName)
+        names.set(k, arr)
+      }
+    }
+    const t = Array.from(timeSet).sort()
+    return { times: t, counts: cnt, maxCount: Math.max(0, ...cnt.values()), namesAt: names }
+  }, [grid])
+
+  const cellColor = (n: number) => {
+    if (n === 0) return "rgba(255,255,255,0.02)"
+    const t = maxCount <= 1 ? 1 : n / maxCount
+    // Single-hue blue ramp, light→dark by intensity.
+    return `hsl(213 75% ${58 - t * 26}%)`
+  }
 
   if (loading) return <Spinner label="Loading schedule…" />
   if (error) return <ErrorBox message={error} />
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-            <th className="px-4 py-2 font-medium">Configuration</th>
-            <th className="px-4 py-2 font-medium">Scheduled runs</th>
-          </tr>
-        </thead>
-        <tbody>
-          {summary.length === 0 ? (
-            <tr>
-              <td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">
-                No active configurations.
-              </td>
+    <div className="flex flex-col gap-6">
+      <div className="rounded-lg border border-border bg-card">
+        <div className="border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold text-foreground">Weekly schedule</h3>
+          <p className="text-xs text-muted-foreground">
+            Active configs scheduled per day &amp; time. Hover a cell for names.
+          </p>
+        </div>
+        {times.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            No active task assignments.
+          </p>
+        ) : (
+          <div className="overflow-x-auto p-4">
+            <table className="border-separate" style={{ borderSpacing: 2 }}>
+              <thead>
+                <tr>
+                  <th className="px-2 text-left text-xs font-medium text-muted-foreground">Day</th>
+                  {times.map((t) => (
+                    <th key={t} className="px-1 text-xs font-medium text-muted-foreground" style={{ minWidth: 44 }}>
+                      {t}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {HEAT_DAYS.map((d) => (
+                  <tr key={d.key}>
+                    <td className="px-2 text-sm text-foreground">{d.label}</td>
+                    {times.map((t) => {
+                      const k = `${t}|${d.key}`
+                      const n = counts.get(k) ?? 0
+                      return (
+                        <td
+                          key={k}
+                          title={n > 0 ? `${d.label} ${t}\n${(namesAt.get(k) ?? []).join("\n")}` : `${d.label} ${t}: none`}
+                          style={{ backgroundColor: cellColor(n), minWidth: 44, height: 30 }}
+                          className="text-center align-middle text-xs font-mono text-foreground/90"
+                        >
+                          {n > 0 ? n : ""}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <th className="px-4 py-2 font-medium">Configuration</th>
+              <th className="px-4 py-2 font-medium">Scheduled runs</th>
             </tr>
-          ) : (
-            summary.map((s) => (
-              <tr key={s.configName} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 text-foreground">{s.configName}</td>
-                <td className="px-4 py-2 text-muted-foreground">{s.schedules}</td>
+          </thead>
+          <tbody>
+            {summary.length === 0 ? (
+              <tr>
+                <td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">
+                  No active configurations.
+                </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              summary.map((s) => (
+                <tr key={s.configName} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 text-foreground">{s.configName}</td>
+                  <td className="px-4 py-2 text-muted-foreground">{s.schedules}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -1497,7 +1662,13 @@ function MonMetrics() {
     load()
   }, [load])
 
-  const maxProcessed = Math.max(1, ...metrics.map((m) => m.processedRecords + m.failedRecords))
+  const chartData = metrics.map((m) => ({
+    date: m.date.slice(5),
+    "Success %": Number(m.successRate.toFixed(1)),
+    Processed: m.processedRecords,
+    Failed: m.failedRecords,
+    "Avg s": Number(m.avgDurationSeconds.toFixed(1)),
+  }))
 
   return (
     <div className="flex flex-col gap-4">
@@ -1515,45 +1686,61 @@ function MonMetrics() {
         </Button>
       </div>
       {error && <ErrorBox message={error} />}
-      {metrics.length === 0 ? (
+      {chartData.length === 0 ? (
         <p className="text-sm text-muted-foreground">No data for this range.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Date</th>
-                <th className="px-3 py-2 font-medium">Success rate</th>
-                <th className="px-3 py-2 font-medium">Processed</th>
-                <th className="px-3 py-2 font-medium">Failed</th>
-                <th className="px-3 py-2 font-medium">Volume</th>
-                <th className="px-3 py-2 font-medium">Avg duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metrics.map((m) => (
-                <tr key={m.date} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 text-foreground">{m.date}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{m.successRate.toFixed(1)}%</td>
-                  <td className="px-3 py-2 text-muted-foreground">{m.processedRecords.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{m.failedRecords.toLocaleString()}</td>
-                  <td className="px-3 py-2">
-                    <div className="h-2 w-40 overflow-hidden rounded bg-muted">
-                      <div
-                        className="h-full bg-emerald-500/70"
-                        style={{
-                          width: `${((m.processedRecords + m.failedRecords) / maxProcessed) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {m.avgDurationSeconds ? `${m.avgDurationSeconds.toFixed(1)}s` : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartCard title="Daily success rate">
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
+                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
+                  axisLine={{ stroke: "hsl(var(--border))" }} />
+                <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
+                <RechartsTooltip content={<ChartTooltip suffix="%" />} />
+                <Line type="monotone" dataKey="Success %" stroke={C_BLUE} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Average execution duration">
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
+                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
+                  axisLine={{ stroke: "hsl(var(--border))" }} />
+                <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                <RechartsTooltip content={<ChartTooltip suffix="s" />} />
+                <Line type="monotone" dataKey="Avg s" stroke={C_AQUA} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <div className="lg:col-span-2">
+            <ChartCard title="Records processed vs failed">
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -8 }}>
+                  <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                  <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={16}
+                    axisLine={{ stroke: "hsl(var(--border))" }} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <RechartsTooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }} />
+                  <Bar dataKey="Processed" stackId="v" fill={C_BLUE} radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                  <Bar dataKey="Failed" stackId="v" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="flex gap-4 px-4 pb-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_BLUE }} /> Processed
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_RED }} /> Failed
+                </span>
+              </div>
+            </ChartCard>
+          </div>
         </div>
       )}
     </div>
