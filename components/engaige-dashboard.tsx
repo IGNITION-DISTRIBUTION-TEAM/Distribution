@@ -28,6 +28,7 @@ import {
   ChevronDown,
   ClipboardList,
   Clock,
+  LayoutDashboard,
   Link2,
   ListChecks,
   Loader2,
@@ -157,6 +158,148 @@ async function jsonFetch(url: string, init?: RequestInit) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
   return data
+}
+
+/* =============================== Dashboard ============================= */
+
+type DailyMetric = {
+  date: string
+  totalBatches: number
+  totalRecords: number
+  processedRecords: number
+  failedRecords: number
+  avgDurationSeconds: number
+  successRate: number
+}
+
+function DashboardSection() {
+  const [configs, setConfigs] = useState<EngaigeConfig[]>([])
+  const [metrics, setMetrics] = useState<DailyMetric[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ view: "metrics", start: daysAgoISO(13), end: todayISO() })
+      const [c, m] = await Promise.all([
+        jsonFetch("/api/engaige/configs"),
+        jsonFetch(`/api/engaige/monitoring?${params}`),
+      ])
+      setConfigs(c.configs ?? [])
+      setMetrics(m.metrics ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const totalBatches = metrics.reduce((a, m) => a + m.totalBatches, 0)
+  const processed = metrics.reduce((a, m) => a + m.processedRecords, 0)
+  const failed = metrics.reduce((a, m) => a + m.failedRecords, 0)
+  // Weighted by batches per day, so quiet days don't skew the average.
+  const successRate =
+    totalBatches > 0
+      ? metrics.reduce((a, m) => a + m.successRate * m.totalBatches, 0) / totalBatches
+      : 0
+
+  const stats: [string, string][] = [
+    ["Configurations", configs.length.toLocaleString()],
+    ["Active", configs.filter((c) => c.isActive).length.toLocaleString()],
+    ["Running now", configs.reduce((a, c) => a + c.runningCount, 0).toLocaleString()],
+    ["Batches (14d)", totalBatches.toLocaleString()],
+    ["Success rate (14d)", `${successRate.toFixed(1)}%`],
+    ["Records processed (14d)", processed.toLocaleString()],
+    ["Failed records (14d)", failed.toLocaleString()],
+  ]
+
+  const chartData = metrics.map((m) => ({
+    date: m.date.slice(5),
+    Processed: m.processedRecords,
+    Failed: m.failedRecords,
+    "Success %": Number(m.successRate.toFixed(1)),
+  }))
+
+  if (loading) return <Spinner label="Loading dashboard…" />
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold text-foreground">Dashboard</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Integration health at a glance — last 14 days.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+        </Button>
+      </div>
+
+      {error && <ErrorBox message={error} />}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-border bg-card px-4 py-3">
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {chartData.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+          No executions in the last 14 days.
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartCard title="Records per day">
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -8 }}>
+                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
+                  axisLine={{ stroke: "hsl(var(--border))" }} />
+                <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
+                <RechartsTooltip content={<ChartTooltip />} />
+                <Line type="monotone" dataKey="Processed" stroke={C_BLUE} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                <Line type="monotone" dataKey="Failed" stroke={C_RED} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+            <div className="flex gap-4 px-4 pb-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_BLUE }} /> Processed
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: C_RED }} /> Failed
+              </span>
+            </div>
+          </ChartCard>
+
+          <ChartCard title="Success rate per day">
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
+                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
+                  axisLine={{ stroke: "hsl(var(--border))" }} />
+                <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
+                <RechartsTooltip content={<ChartTooltip suffix="%" />} />
+                <Line type="monotone" dataKey="Success %" stroke={C_AQUA} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /* ============================ Configurations ============================ */
@@ -1841,9 +1984,10 @@ function MonMetrics() {
 
 export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
-  const [nav, setNav] = useState("configs")
+  const [nav, setNav] = useState("dashboard")
 
   const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
     { id: "configs", label: "Configurations", icon: <ClipboardList className="h-4 w-4" /> },
     { id: "mappings", label: "Column Mappings", icon: <Link2 className="h-4 w-4" /> },
     { id: "assignments", label: "Task Assignments", icon: <Clock className="h-4 w-4" /> },
@@ -1853,6 +1997,8 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
 
   const render = () => {
     switch (nav) {
+      case "configs":
+        return <ConfigsSection />
       case "mappings":
         return <MappingsSection />
       case "assignments":
@@ -1862,7 +2008,7 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
       case "monitoring":
         return <MonitoringSection />
       default:
-        return <ConfigsSection />
+        return <DashboardSection />
     }
   }
 
