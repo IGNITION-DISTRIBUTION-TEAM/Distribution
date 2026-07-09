@@ -25,6 +25,7 @@ import {
   ArrowLeft,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Clock,
   Link2,
@@ -168,6 +169,15 @@ function ConfigsSection() {
   const [showForm, setShowForm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set())
+
+  const toggleOpen = (id: string) =>
+    setOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   // New config form
   const [f, setF] = useState({
@@ -530,20 +540,68 @@ function ConfigsSection() {
           {configs.map((c) => {
             const execs = execByConfig.get(c.configId) ?? []
             const running = c.runningCount > 0
+            const open = openIds.has(c.configId)
             return (
-              <div key={c.configId} className="rounded-xl border border-border bg-card p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span>{c.isActive ? "🟢" : "🔴"}</span>
-                      <h3 className="font-semibold text-foreground">{c.configName}</h3>
-                      {c.mappingCount > 0 && (
-                        <Badge variant="outline" className="border-border text-muted-foreground">
-                          {c.mappingCount} mappings
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-2 grid gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
+              <div key={c.configId} className="rounded-xl border border-border bg-card">
+                {/* Collapsed header: expander on the left, all actions inline on the right. */}
+                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleOpen(c.configId)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    aria-expanded={open}
+                  >
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                        open ? "" : "-rotate-90"
+                      }`}
+                    />
+                    <span>{c.isActive ? "🟢" : "🔴"}</span>
+                    <span className="truncate font-semibold text-foreground">{c.configName}</span>
+                    {c.mappingCount > 0 && (
+                      <Badge variant="outline" className="shrink-0 border-border text-muted-foreground">
+                        {c.mappingCount} mappings
+                      </Badge>
+                    )}
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {running ? (
+                      <Button variant="outline" size="sm" onClick={() => cancelRun(c.configId)}>
+                        ⏹️ Cancel run
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => runConfig(c.configId, true)}
+                        >
+                          <Play className="mr-1 h-3.5 w-3.5" /> Sample (10)
+                        </Button>
+                        <Button size="sm" disabled={busy} onClick={() => runConfig(c.configId, false)}>
+                          <Play className="mr-1 h-3.5 w-3.5" /> Full run
+                        </Button>
+                      </>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => toggleConfig(c.configId)}>
+                      {c.isActive ? "Deactivate" : "Activate"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => deleteConfig(c.configId)}
+                      className="text-rose-300 hover:text-rose-200"
+                      aria-label="Delete configuration"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {open && (
+                  <div className="border-t border-border px-4 py-3">
+                    <div className="grid gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
                       <span>Template: {templateNameFromId(c.templateId)}</span>
                       <span>Source: {c.sourceTable}</span>
                       <span>Batch size: {c.batchSize}</span>
@@ -558,72 +616,33 @@ function ConfigsSection() {
                       <span>Created: {c.createdAt ?? "—"}</span>
                       <span>Updated: {c.updatedAt ?? "—"}</span>
                     </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleConfig(c.configId)}
-                      >
-                        {c.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteConfig(c.configId)}
-                        className="text-rose-300 hover:text-rose-200"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    {running ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => cancelRun(c.configId)}
-                      >
-                        ⏹️ Cancel run
-                      </Button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => runConfig(c.configId, true)}
-                        >
-                          <Play className="mr-1 h-3.5 w-3.5" /> Sample (10)
-                        </Button>
-                        <Button size="sm" disabled={busy} onClick={() => runConfig(c.configId, false)}>
-                          <Play className="mr-1 h-3.5 w-3.5" /> Full run
-                        </Button>
+
+                    {execs.length > 0 && (
+                      <div className="mt-4 border-t border-border pt-3">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Recent executions
+                        </p>
+                        <div className="flex flex-col gap-1 text-sm">
+                          {execs.map((e) => (
+                            <div
+                              key={e.batchId}
+                              className="flex flex-wrap items-center gap-x-3 text-muted-foreground"
+                            >
+                              <span>{STATUS_ICON[e.status] ?? "❔"}</span>
+                              <span className="text-foreground">{e.startTime ?? "—"}</span>
+                              <span>
+                                {e.processedRecords}/{e.totalRecords} ({e.failedRecords} failed)
+                              </span>
+                              <span>
+                                {e.durationSeconds != null && e.endTime
+                                  ? `${e.durationSeconds}s`
+                                  : "in progress…"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
-                  </div>
-                </div>
-
-                {execs.length > 0 && (
-                  <div className="mt-4 border-t border-border pt-3">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Recent executions
-                    </p>
-                    <div className="flex flex-col gap-1 text-sm">
-                      {execs.map((e) => (
-                        <div key={e.batchId} className="flex flex-wrap items-center gap-x-3 text-muted-foreground">
-                          <span>{STATUS_ICON[e.status] ?? "❔"}</span>
-                          <span className="text-foreground">{e.startTime ?? "—"}</span>
-                          <span>
-                            {e.processedRecords}/{e.totalRecords} ({e.failedRecords} failed)
-                          </span>
-                          <span>
-                            {e.durationSeconds != null && e.endTime
-                              ? `${e.durationSeconds}s`
-                              : "in progress…"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 )}
               </div>
