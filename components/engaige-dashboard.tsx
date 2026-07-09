@@ -170,6 +170,9 @@ function ConfigsSection() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [openIds, setOpenIds] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState("")
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 10
 
   const toggleOpen = (id: string) =>
     setOpenIds((prev) => {
@@ -227,6 +230,21 @@ function ConfigsSection() {
     }
     return m
   }, [executions])
+
+  // Search + pagination (client-side; the list arrives in one query).
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return configs
+    return configs.filter((c) =>
+      [c.configName, c.sourceTable, templateNameFromId(c.templateId), c.eventId, c.externalSourceId]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    )
+  }, [configs, search])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, pageCount - 1)
+  const paged = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
 
   const createConfig = async () => {
     setBusy(true)
@@ -537,7 +555,30 @@ function ConfigsSection() {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {configs.map((c) => {
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              className={`${inputCls} max-w-sm`}
+              placeholder="Search name, source table, template…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+            />
+            <span className="text-sm text-muted-foreground">
+              {filtered.length === configs.length
+                ? `${configs.length} configuration${configs.length === 1 ? "" : "s"}`
+                : `${filtered.length} of ${configs.length} configurations`}
+            </span>
+          </div>
+
+          {filtered.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+              No configurations match &quot;{search}&quot;.
+            </div>
+          )}
+
+          {paged.map((c) => {
             const execs = execByConfig.get(c.configId) ?? []
             const running = c.runningCount > 0
             const open = openIds.has(c.configId)
@@ -648,6 +689,36 @@ function ConfigsSection() {
               </div>
             )
           })}
+
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-sm text-muted-foreground">
+                Showing {safePage * PAGE_SIZE + 1}–
+                {Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage === 0}
+                  onClick={() => setPage(safePage - 1)}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {safePage + 1} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage >= pageCount - 1}
+                  onClick={() => setPage(safePage + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
