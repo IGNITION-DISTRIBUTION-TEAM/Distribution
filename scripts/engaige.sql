@@ -32,6 +32,17 @@ GRANT USAGE
   ON PROCEDURE DATAWAREHOUSE.SS_INTEGRATION.EXECUTE_CONFIG_MANUALLY(VARCHAR, BOOLEAN)
   TO ROLE SVC_VERCEL_APP_ROLE;
 
--- The create-config flow checks source-table existence via INFORMATION_SCHEMA
--- and reads source columns; the app role must be able to see those tables
--- (already covered if it has USAGE on their schemas + SELECT on the tables).
+-- SOURCE TABLE/VIEW VISIBILITY -----------------------------------------------
+-- The mapping pickers and the create-config existence check read
+-- INFORMATION_SCHEMA, which only shows objects the role has SOME privilege on.
+-- Grant metadata visibility on each schema that holds source views/tables
+-- (REFERENCES = structure only, no data read; use SELECT if you prefer).
+-- Find a source's schema with:
+--   SELECT table_schema FROM DATAWAREHOUSE.INFORMATION_SCHEMA.TABLES
+--   WHERE table_name = '<SOURCE_NAME>';
+-- Then, per schema:
+--   GRANT USAGE ON SCHEMA DATAWAREHOUSE.<SCHEMA> TO ROLE SVC_VERCEL_APP_ROLE;
+--   GRANT REFERENCES ON ALL VIEWS  IN SCHEMA DATAWAREHOUSE.<SCHEMA> TO ROLE SVC_VERCEL_APP_ROLE;
+--   GRANT REFERENCES ON ALL TABLES IN SCHEMA DATAWAREHOUSE.<SCHEMA> TO ROLE SVC_VERCEL_APP_ROLE;
+--   GRANT REFERENCES ON FUTURE VIEWS  IN SCHEMA DATAWAREHOUSE.<SCHEMA> TO ROLE SVC_VERCEL_APP_ROLE;
+--   GRANT REFERENCES ON FUTURE TABLES IN SCHEMA DATAWAREHOUSE.<SCHEMA> TO ROLE SVC_VERCEL_APP_ROLE;

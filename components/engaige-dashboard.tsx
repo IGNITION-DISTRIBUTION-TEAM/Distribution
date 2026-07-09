@@ -644,6 +644,11 @@ function ConfigsSection() {
               activate.
             </p>
           </div>
+          {mapStep.columns.length === 0 && (
+            <ErrorBox
+              message={`No columns visible for ${mapStep.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then retry. See scripts/engaige.sql.`}
+            />
+          )}
           {Object.entries(TEMPLATE_SECTIONS[mapStep.templateId] ?? {}).map(([section, fields]) => (
             <div key={section}>
               <h4 className="mb-2 text-sm font-semibold text-foreground">{section}</h4>
@@ -1009,6 +1014,11 @@ function MappingsSection() {
 
           {showForm && selected && (
             <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
+              {columns.length === 0 && (
+                <ErrorBox
+                  message={`No columns visible for ${selected.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then refresh. See scripts/engaige.sql.`}
+                />
+              )}
               <div className="grid gap-3 sm:grid-cols-3">
                 <label className="flex flex-col gap-1 text-sm">
                   <span className="text-muted-foreground">Source column</span>
