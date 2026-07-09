@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Briefcase, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck } from "lucide-react"
+import { Briefcase, Cpu, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -50,6 +50,13 @@ const DEPARTMENTS: Department[] = [
     label: "Tickets",
     description: "Log requests, track tickets, and view reporting.",
     icon: Ticket,
+    enabled: true,
+  },
+  {
+    id: "engaige",
+    label: "EngAIge",
+    description: "Integration configs, mappings, schedules, and monitoring.",
+    icon: Cpu,
     enabled: true,
   },
 ]
