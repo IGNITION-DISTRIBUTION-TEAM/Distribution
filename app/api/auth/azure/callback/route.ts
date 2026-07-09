@@ -102,6 +102,9 @@ export async function GET(request: NextRequest) {
     // Tokens are intentionally NOT stored — they push the cookie past the 4KB
     // browser limit and nothing in the app reads them back.
     console.log("[v0] Setting session cookie")
+    // 10 hours: long enough for a full workday so dashboards left open don't
+    // start failing with "Not authenticated" mid-shift.
+    const SESSION_SECONDS = 10 * 3600
     redirectResponse.cookies.set("azure_session", JSON.stringify({
       email: userInfo.email,
       name: userInfo.name,
@@ -109,12 +112,12 @@ export async function GET(request: NextRequest) {
       isSuperAdmin: access.isSuperAdmin,
       employeeEmail: access.employeeEmail,
       departments,
-      expiresAt: Date.now() + 3600000, // 1 hour
+      expiresAt: Date.now() + SESSION_SECONDS * 1000,
     }), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 3600, // 1 hour
+      maxAge: SESSION_SECONDS,
       path: "/",
     })
 
