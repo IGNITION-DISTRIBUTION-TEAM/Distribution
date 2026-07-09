@@ -1159,6 +1159,17 @@ function AssignmentsSection() {
     scheduleType: "Daily" as string,
     days: daysForScheduleType("Daily") as Record<DayKey, boolean>,
   })
+  const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all")
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 10
+  // Inline edit of one assignment's schedule.
+  const [editing, setEditing] = useState<{
+    assignmentId: string
+    taskWindow: string
+    scheduleType: string
+    days: Record<DayKey, boolean>
+  } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1186,12 +1197,71 @@ function AssignmentsSection() {
   const byConfig = useMemo(() => {
     const m = new Map<string, EngaigeAssignment[]>()
     for (const a of assignments) {
+      if (statusFilter === "active" && !a.isActive) continue
+      if (statusFilter === "inactive" && a.isActive) continue
       const arr = m.get(a.configId) ?? []
       arr.push(a)
       m.set(a.configId, arr)
     }
     return m
-  }, [assignments])
+  }, [assignments, statusFilter])
+
+  // Search by config name; when a status filter is on, hide configs with no
+  // matching assignments so the list only shows relevant groups.
+  const visibleConfigs = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return configs.filter((c) => {
+      if (q && !c.configName.toLowerCase().includes(q)) return false
+      if (statusFilter !== "all" && (byConfig.get(c.configId) ?? []).length === 0) return false
+      return true
+    })
+  }, [configs, search, statusFilter, byConfig])
+
+  const pageCount = Math.max(1, Math.ceil(visibleConfigs.length / PAGE_SIZE))
+  const safePage = Math.min(page, pageCount - 1)
+  const pagedConfigs = visibleConfigs.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+
+  const startEdit = (a: EngaigeAssignment) =>
+    setEditing({
+      assignmentId: a.assignmentId,
+      taskWindow: a.taskWindow,
+      scheduleType:
+        a.scheduleType === "DAILY"
+          ? "Daily"
+          : a.scheduleType === "WEEKDAYS"
+            ? "Weekdays"
+            : a.scheduleType === "WEEKENDS"
+              ? "Weekends"
+              : "Specific Days",
+      days: {
+        monday: a.monday,
+        tuesday: a.tuesday,
+        wednesday: a.wednesday,
+        thursday: a.thursday,
+        friday: a.friday,
+        saturday: a.saturday,
+        sunday: a.sunday,
+      },
+    })
+
+  const saveEdit = async () => {
+    if (!editing) return
+    setBusy(true)
+    setError(null)
+    try {
+      await jsonFetch("/api/engaige/assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...editing, action: "update" }),
+      })
+      setEditing(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const setScheduleType = (t: string) => {
     const days =
@@ -1348,45 +1418,208 @@ function AssignmentsSection() {
             </div>
           )}
 
-          {configs.map((c) => {
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              className={`${inputCls} max-w-sm`}
+              placeholder="Search configuration…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+            />
+            <div className="inline-flex rounded-md border border-border bg-background/40 p-0.5 text-sm">
+              {(
+                [
+                  ["all", "All"],
+                  ["active", "Active"],
+                  ["inactive", "Inactive"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(k)
+                    setPage(0)
+                  }}
+                  className={`rounded px-3 py-1 font-medium transition-colors ${
+                    statusFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="text-sm text-muted-foreground">
+              {visibleConfigs.length} configuration{visibleConfigs.length === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          {visibleConfigs.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+              Nothing matches the current search/filter.
+            </div>
+          )}
+
+          {pagedConfigs.map((c) => {
             const list = byConfig.get(c.configId) ?? []
             return (
               <div key={c.configId} className="rounded-xl border border-border bg-card p-5">
                 <h3 className="mb-2 font-medium text-foreground">{c.configName}</h3>
                 {list.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No assignments.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {statusFilter === "all" ? "No assignments." : `No ${statusFilter} assignments.`}
+                  </p>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {list.map((a) => (
-                      <div
-                        key={a.assignmentId}
-                        className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 last:border-0 last:pb-0"
-                      >
-                        <div className="text-sm">
-                          <span className="font-medium text-foreground">{timeLabel(a.taskWindow)}</span>
-                          <span className="ml-3 text-muted-foreground">{describeDays(a)}</span>
-                          <span className="ml-3">{a.isActive ? "🟢 Active" : "🔴 Inactive"}</span>
+                    {list.map((a) =>
+                      editing?.assignmentId === a.assignmentId ? (
+                        <div
+                          key={a.assignmentId}
+                          className="flex flex-col gap-3 rounded-lg border border-primary/40 bg-background/40 p-3"
+                        >
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="flex flex-col gap-1 text-sm">
+                              <span className="text-muted-foreground">Time window</span>
+                              <select
+                                className={inputCls}
+                                value={editing.taskWindow}
+                                onChange={(e) => setEditing({ ...editing, taskWindow: e.target.value })}
+                              >
+                                {TIME_WINDOWS.map((t) => (
+                                  <option key={t} value={t}>
+                                    {timeLabel(t)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="flex flex-col gap-1 text-sm">
+                              <span className="text-muted-foreground">Schedule type</span>
+                              <select
+                                className={inputCls}
+                                value={editing.scheduleType}
+                                onChange={(e) => {
+                                  const t = e.target.value
+                                  setEditing({
+                                    ...editing,
+                                    scheduleType: t,
+                                    days:
+                                      t === "Specific Days"
+                                        ? editing.days
+                                        : daysForScheduleType(t as (typeof SCHEDULE_TYPES)[number]),
+                                  })
+                                }}
+                              >
+                                {SCHEDULE_TYPES.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          {editing.scheduleType === "Specific Days" && (
+                            <div className="flex flex-wrap gap-3">
+                              {DAY_KEYS.map((d) => (
+                                <label
+                                  key={d}
+                                  className="flex items-center gap-1.5 text-sm capitalize text-foreground"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={editing.days[d]}
+                                    onChange={(e) =>
+                                      setEditing({
+                                        ...editing,
+                                        days: { ...editing.days, [d]: e.target.checked },
+                                      })
+                                    }
+                                  />
+                                  {d.slice(0, 3)}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={saveEdit} disabled={busy}>
+                              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                              Save
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setEditing(null)} disabled={busy}>
+                              Cancel
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => toggle(a.assignmentId)}>
-                            Toggle
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => remove(a.assignmentId)}
-                            className="text-rose-300 hover:text-rose-200"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                      ) : (
+                        <div
+                          key={a.assignmentId}
+                          className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 last:border-0 last:pb-0"
+                        >
+                          <div className="text-sm">
+                            <span className="font-medium text-foreground">{timeLabel(a.taskWindow)}</span>
+                            <span className="ml-3 text-muted-foreground">{describeDays(a)}</span>
+                            <Badge
+                              variant="outline"
+                              className={`ml-3 ${
+                                a.isActive
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                  : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                              }`}
+                            >
+                              {a.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startEdit(a)}>
+                              Edit
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => toggle(a.assignmentId)}>
+                              {a.isActive ? "Deactivate" : "Activate"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => remove(a.assignmentId)}
+                              className="text-rose-300 hover:text-rose-200"
+                              aria-label="Delete assignment"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    )}
                   </div>
                 )}
               </div>
             )
           })}
+
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-sm text-muted-foreground">
+                Showing {safePage * PAGE_SIZE + 1}–
+                {Math.min((safePage + 1) * PAGE_SIZE, visibleConfigs.length)} of {visibleConfigs.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {safePage + 1} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage >= pageCount - 1}
+                  onClick={() => setPage(safePage + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

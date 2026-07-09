@@ -102,11 +102,19 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH /api/engaige/assignments — { assignmentId, action: "toggle" }.
+// PATCH /api/engaige/assignments —
+//   { assignmentId, action: "toggle" } flips is_active
+//   { assignmentId, action: "update", taskWindow, scheduleType, days } edits the schedule
 export async function PATCH(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "engaige")
   if (guard instanceof NextResponse) return guard
-  let body: { assignmentId?: unknown; action?: unknown }
+  let body: {
+    assignmentId?: unknown
+    action?: unknown
+    taskWindow?: unknown
+    scheduleType?: unknown
+    days?: unknown
+  }
   try {
     body = await request.json()
   } catch {
@@ -116,19 +124,46 @@ export async function PATCH(request: NextRequest) {
   if (!UUID_RE.test(assignmentId)) {
     return NextResponse.json({ error: "Invalid assignmentId" }, { status: 400 })
   }
-  if (body.action !== "toggle") {
-    return NextResponse.json({ error: "Unsupported action" }, { status: 400 })
-  }
+
   try {
-    await executeSnowflakeQueryWithMeta(
-      `UPDATE ${ASSIGNMENTS_TABLE} SET is_active = NOT is_active
-       WHERE assignment_id = ${sqlString(assignmentId)}`,
-      SF_OPTS
-    )
-    return NextResponse.json({ success: true })
+    if (body.action === "toggle") {
+      await executeSnowflakeQueryWithMeta(
+        `UPDATE ${ASSIGNMENTS_TABLE} SET is_active = NOT is_active
+         WHERE assignment_id = ${sqlString(assignmentId)}`,
+        SF_OPTS
+      )
+      return NextResponse.json({ success: true })
+    }
+
+    if (body.action === "update") {
+      const taskWindow = String(body.taskWindow ?? "")
+      const scheduleType = String(body.scheduleType ?? "")
+      const days = (body.days ?? {}) as Record<string, unknown>
+      if (!TIME_WINDOWS.includes(taskWindow)) {
+        return NextResponse.json({ error: "Invalid time window" }, { status: 400 })
+      }
+      if (!(SCHEDULE_TYPES as readonly string[]).includes(scheduleType)) {
+        return NextResponse.json({ error: "Invalid schedule type" }, { status: 400 })
+      }
+      const dayVals = DAY_KEYS.map((d) => Boolean(days[d]))
+      if (scheduleType === "Specific Days" && !dayVals.some(Boolean)) {
+        return NextResponse.json({ error: "Select at least one day" }, { status: 400 })
+      }
+      const daySets = DAY_KEYS.map((d, i) => `${d} = ${sqlBool(dayVals[i])}`).join(", ")
+      await executeSnowflakeQueryWithMeta(
+        `UPDATE ${ASSIGNMENTS_TABLE}
+         SET task_window = TIME(${sqlString(taskWindow)}),
+             schedule_type = ${sqlString(scheduleType.toUpperCase())}, ${daySets}
+         WHERE assignment_id = ${sqlString(assignmentId)}`,
+        SF_OPTS
+      )
+      return NextResponse.json({ success: true })
+    }
+
+    return NextResponse.json({ error: "Unsupported action" }, { status: 400 })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("[/api/engaige/assignments] toggle error:", message)
+    console.error("[/api/engaige/assignments] patch error:", message)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
