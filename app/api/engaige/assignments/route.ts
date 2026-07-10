@@ -139,7 +139,9 @@ export async function PATCH(request: NextRequest) {
       const taskWindow = String(body.taskWindow ?? "")
       const scheduleType = String(body.scheduleType ?? "")
       const days = (body.days ?? {}) as Record<string, unknown>
-      if (!TIME_WINDOWS.includes(taskWindow)) {
+      // Any valid HH:MM:SS — assignments created outside this app may sit on
+      // non-standard windows, and re-saving them must not fail.
+      if (!/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(taskWindow)) {
         return NextResponse.json({ error: "Invalid time window" }, { status: 400 })
       }
       if (!(SCHEDULE_TYPES as readonly string[]).includes(scheduleType)) {

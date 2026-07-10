@@ -30,7 +30,6 @@ import {
   Clock,
   LayoutDashboard,
   Link2,
-  ListChecks,
   Loader2,
   LogOut,
   Play,
@@ -1205,6 +1204,8 @@ function AssignmentsSection() {
     scheduleType: string
     days: Record<DayKey, boolean>
   } | null>(null)
+  // Shown inside the inline editor, where the user is actually looking.
+  const [editError, setEditError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1275,7 +1276,8 @@ function AssignmentsSection() {
   const safePage = Math.min(page, pageCount - 1)
   const pagedConfigs = visibleConfigs.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
 
-  const startEdit = (a: EngaigeAssignment) =>
+  const startEdit = (a: EngaigeAssignment) => {
+    setEditError(null)
     setEditing({
       assignmentId: a.assignmentId,
       taskWindow: a.taskWindow,
@@ -1297,11 +1299,12 @@ function AssignmentsSection() {
         sunday: a.sunday,
       },
     })
+  }
 
   const saveEdit = async () => {
     if (!editing) return
     setBusy(true)
-    setError(null)
+    setEditError(null)
     try {
       await jsonFetch("/api/engaige/assignments", {
         method: "PATCH",
@@ -1311,7 +1314,7 @@ function AssignmentsSection() {
       setEditing(null)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setEditError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -1562,9 +1565,13 @@ function AssignmentsSection() {
                                 value={editing.taskWindow}
                                 onChange={(e) => setEditing({ ...editing, taskWindow: e.target.value })}
                               >
-                                {TIME_WINDOWS.map((t) => (
+                                {(TIME_WINDOWS.includes(editing.taskWindow)
+                                  ? TIME_WINDOWS
+                                  : [editing.taskWindow, ...TIME_WINDOWS]
+                                ).map((t) => (
                                   <option key={t} value={t}>
                                     {timeLabel(t)}
+                                    {!TIME_WINDOWS.includes(t) ? " (current)" : ""}
                                   </option>
                                 ))}
                               </select>
@@ -1616,6 +1623,7 @@ function AssignmentsSection() {
                               ))}
                             </div>
                           )}
+                          {editError && <ErrorBox message={editError} />}
                           <div className="flex gap-2">
                             <Button size="sm" onClick={saveEdit} disabled={busy}>
                               {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -1695,155 +1703,6 @@ function AssignmentsSection() {
               </div>
             </div>
           )}
-        </>
-      )}
-    </div>
-  )
-}
-
-/* =========================== Schedule Editor =========================== */
-
-function ScheduleEditorSection() {
-  const [configs, setConfigs] = useState<EngaigeConfig[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [taskWindow, setTaskWindow] = useState(TIME_WINDOWS[0])
-  const [scheduleType, setScheduleType] = useState<string>("Daily")
-  const [days, setDays] = useState<Record<DayKey, boolean>>(daysForScheduleType("Daily"))
-
-  useEffect(() => {
-    // All configs — schedules can be prepared on inactive ones too.
-    jsonFetch("/api/engaige/configs")
-      .then((d) => setConfigs(d.configs as EngaigeConfig[]))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
-  }, [])
-
-  const setType = (t: string) => {
-    setScheduleType(t)
-    if (t !== "Specific Days") setDays(daysForScheduleType(t as (typeof SCHEDULE_TYPES)[number]))
-  }
-
-  const toggleConfig = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const apply = async () => {
-    setBusy(true)
-    setError(null)
-    setNotice(null)
-    try {
-      const res = await jsonFetch("/api/engaige/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          configIds: Array.from(selected),
-          taskWindow,
-          scheduleType,
-          days,
-          replaceExisting: true,
-        }),
-      })
-      setNotice(`Scheduled ${res.scheduled} configuration(s).`)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (loading) return <Spinner label="Loading configurations…" />
-
-  return (
-    <div className="flex max-w-3xl flex-col gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-foreground">Schedule editor</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Apply one time window and schedule to many configurations at once.
-        </p>
-      </div>
-      {error && <ErrorBox message={error} />}
-      {notice && <OkBox message={notice} />}
-
-      {configs.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-          No active configurations.
-        </div>
-      ) : (
-        <>
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">1. Configurations</h3>
-            <div className="flex flex-col gap-1.5">
-              {configs.map((c) => (
-                <label key={c.configId} className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(c.configId)}
-                    onChange={() => toggleConfig(c.configId)}
-                  />
-                  {c.configName}
-                  {!c.isActive && <span className="text-xs text-muted-foreground">(inactive)</span>}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-muted-foreground">2. Time window</span>
-              <select className={inputCls} value={taskWindow} onChange={(e) => setTaskWindow(e.target.value)}>
-                {TIME_WINDOWS.map((t) => (
-                  <option key={t} value={t}>
-                    {timeLabel(t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-muted-foreground">3. Schedule type</span>
-              <select className={inputCls} value={scheduleType} onChange={(e) => setType(e.target.value)}>
-                {SCHEDULE_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {scheduleType === "Specific Days" && (
-            <div className="flex flex-wrap gap-3">
-              {DAY_KEYS.map((d) => (
-                <label key={d} className="flex items-center gap-1.5 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={days[d]}
-                    onChange={(e) => setDays({ ...days, [d]: e.target.checked })}
-                  />
-                  {d.slice(0, 3)}
-                </label>
-              ))}
-            </div>
-          )}
-
-          <div>
-            <p className="mb-2 text-sm text-muted-foreground">
-              {selected.size} configuration(s) at {taskWindow.slice(0, 5)} · {scheduleType}. Existing
-              assignments at this time window will be replaced.
-            </p>
-            <Button onClick={apply} disabled={busy || selected.size === 0}>
-              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Apply schedule
-            </Button>
-          </div>
         </>
       )}
     </div>
@@ -2308,7 +2167,6 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
     { id: "configs", label: "Configurations", icon: <ClipboardList className="h-4 w-4" /> },
     { id: "mappings", label: "Column Mappings", icon: <Link2 className="h-4 w-4" /> },
     { id: "assignments", label: "Task Assignments", icon: <Clock className="h-4 w-4" /> },
-    { id: "schedule", label: "Schedule Editor", icon: <ListChecks className="h-4 w-4" /> },
     { id: "monitoring", label: "Monitoring", icon: <BarChart3 className="h-4 w-4" /> },
   ]
 
@@ -2320,8 +2178,6 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
         return <MappingsSection />
       case "assignments":
         return <AssignmentsSection />
-      case "schedule":
-        return <ScheduleEditorSection />
       case "monitoring":
         return <MonitoringSection />
       default:
