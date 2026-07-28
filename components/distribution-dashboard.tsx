@@ -2496,13 +2496,15 @@ function ExtendExpiredContent() {
                     <TableCell>
                       {!r.inHistory ? (
                         <span className="text-muted-foreground">—</span>
-                      ) : r.historyEstatus == null ? (
+                      ) : r.historyEstatus == null ||
+                        String(r.historyEstatus).trim().toUpperCase() === "SALE" ? (
+                        // NULL and SALE are both extendable/uploadable.
                         <Badge
                           variant="outline"
                           className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                         >
                           <CheckCircle2 className="mr-1 h-3 w-3" />
-                          NULL
+                          {r.historyEstatus == null ? "NULL" : String(r.historyEstatus)}
                         </Badge>
                       ) : (
                         <Badge
