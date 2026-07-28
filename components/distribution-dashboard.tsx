@@ -2497,8 +2497,10 @@ function ExtendExpiredContent() {
                       {!r.inHistory ? (
                         <span className="text-muted-foreground">—</span>
                       ) : r.historyEstatus == null ||
-                        String(r.historyEstatus).trim().toUpperCase() === "SALE" ? (
-                        // NULL and SALE are both extendable/uploadable.
+                        ["SALE", "SALE MADE"].includes(
+                          String(r.historyEstatus).trim().toUpperCase()
+                        ) ? (
+                        // NULL and SALE / SALE MADE are all extendable/uploadable.
                         <Badge
                           variant="outline"
                           className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"

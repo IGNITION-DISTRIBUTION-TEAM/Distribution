@@ -99,7 +99,7 @@ SELECT * FROM (
   FROM ${HISTORY_TABLE} s
   WHERE idnumber IN (${inList})
     AND campaignid = ${campaignIdNum}
-    AND (estatus IS NULL OR UPPER(TRIM(estatus)) = 'SALE')
+    AND (estatus IS NULL OR UPPER(TRIM(estatus)) IN ('SALE', 'SALE MADE'))
   QUALIFY ROW_NUMBER() OVER (PARTITION BY idnumber ORDER BY CREATEDONDATE DESC) = 1
 )
 `
