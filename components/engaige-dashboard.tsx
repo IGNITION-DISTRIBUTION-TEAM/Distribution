@@ -21,6 +21,13 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
+import {
   AlertCircle,
   ArrowLeft,
   BarChart3,
@@ -338,6 +345,79 @@ function DashboardSection() {
 
 /* ============================ Configurations ============================ */
 
+type BatchError = {
+  logId: string
+  statusCode: number | null
+  errorMessage: string
+  createdAt: string | null
+  request: Record<string, unknown>
+  response: Record<string, unknown>
+}
+
+// Why a batch's records failed — reads API_CALL_LOGS for the batch.
+function BatchErrorsDialog({ batchId, onClose }: { batchId: string; onClose: () => void }) {
+  const [errors, setErrors] = useState<BatchError[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    jsonFetch(`/api/engaige/monitoring?view=errors&batchId=${encodeURIComponent(batchId)}`)
+      .then((d) => setErrors(d.errors ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [batchId])
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Batch errors</DialogTitle>
+          <DialogDescription className="font-mono text-xs">{batchId}</DialogDescription>
+        </DialogHeader>
+        {error && <ErrorBox message={error} />}
+        {!errors && !error && <Spinner label="Loading errors…" />}
+        {errors && errors.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No API error logs found for this batch. The failures may have happened before the API
+            call stage — check the EngAIge platform's retry queue.
+          </p>
+        )}
+        {errors && errors.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {errors.map((e) => (
+              <div key={e.logId} className="rounded-lg border border-border bg-background/40 p-3">
+                <p className="text-sm text-rose-300">
+                  {e.statusCode != null ? `HTTP ${e.statusCode} — ` : ""}
+                  {e.errorMessage || "(no message)"}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{e.createdAt ?? ""}</p>
+                {Object.keys(e.request).length > 0 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-muted-foreground">
+                      Request payload
+                    </summary>
+                    <pre className="mt-1 max-h-48 overflow-auto rounded bg-background p-2 text-xs text-muted-foreground">
+                      {JSON.stringify(e.request, null, 2)}
+                    </pre>
+                  </details>
+                )}
+                {Object.keys(e.response).length > 0 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-muted-foreground">
+                      Response payload
+                    </summary>
+                    <pre className="mt-1 max-h-48 overflow-auto rounded bg-background p-2 text-xs text-muted-foreground">
+                      {JSON.stringify(e.response, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function ConfigsSection() {
   const [configs, setConfigs] = useState<EngaigeConfig[]>([])
   const [executions, setExecutions] = useState<EngaigeExecution[]>([])
@@ -350,6 +430,9 @@ function ConfigsSection() {
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 10
+  // Run feedback shown inside the config's own card, where the user clicked.
+  const [runMsg, setRunMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
+  const [errorBatch, setErrorBatch] = useState<string | null>(null)
 
   const toggleOpen = (id: string) =>
     setOpenIds((prev) => {
@@ -532,18 +615,22 @@ function ConfigsSection() {
 
   const runConfig = async (id: string, testMode: boolean) => {
     setBusy(true)
-    setError(null)
-    setNotice(null)
+    setRunMsg((m) => ({ ...m, [id]: { ok: true, text: "Running…" } }))
+    // Make the outcome visible where the user clicked.
+    setOpenIds((prev) => new Set(prev).add(id))
     try {
       const res = await jsonFetch(`/api/engaige/configs/${id}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "run", testMode }),
       })
-      setNotice(res.message || "Execution started.")
+      setRunMsg((m) => ({ ...m, [id]: { ok: true, text: res.message || "Execution completed." } }))
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setRunMsg((m) => ({
+        ...m,
+        [id]: { ok: false, text: err instanceof Error ? err.message : String(err) },
+      }))
     } finally {
       setBusy(false)
     }
@@ -822,6 +909,18 @@ function ConfigsSection() {
                   </div>
                 </div>
 
+                {runMsg[c.configId] && (
+                  <div
+                    className={`mx-4 mb-3 rounded-md border px-3 py-2 text-sm ${
+                      runMsg[c.configId].ok
+                        ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-300"
+                        : "border-rose-500/40 bg-rose-500/5 text-rose-300"
+                    }`}
+                  >
+                    {runMsg[c.configId].text}
+                  </div>
+                )}
+
                 {open && (
                   <div className="border-t border-border px-4 py-3">
                     <div className="grid gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
@@ -853,7 +952,7 @@ function ConfigsSection() {
                             >
                               <span>{STATUS_ICON[e.status] ?? "❔"}</span>
                               <span className="text-foreground">{e.startTime ?? "—"}</span>
-                              <span>
+                              <span className={e.failedRecords > 0 ? "font-medium text-rose-300" : ""}>
                                 {e.processedRecords}/{e.totalRecords} ({e.failedRecords} failed)
                               </span>
                               <span>
@@ -861,6 +960,15 @@ function ConfigsSection() {
                                   ? `${e.durationSeconds}s`
                                   : "in progress…"}
                               </span>
+                              {e.failedRecords > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setErrorBatch(e.batchId)}
+                                  className="text-xs text-rose-300 underline-offset-2 hover:underline"
+                                >
+                                  View errors
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -902,6 +1010,10 @@ function ConfigsSection() {
             </div>
           )}
         </div>
+      )}
+
+      {errorBatch && (
+        <BatchErrorsDialog batchId={errorBatch} onClose={() => setErrorBatch(null)} />
       )}
     </div>
   )
