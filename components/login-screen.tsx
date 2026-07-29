@@ -8,6 +8,7 @@ export function LoginScreen() {
   const { loginWithAzure } = useAuth()
   const [isAzureLoading, setIsAzureLoading] = useState(false)
   const [error, setError] = useState("")
+  const [errorDetail, setErrorDetail] = useState("")
 
   // Surface auth errors from the Azure callback (?auth_error=...&reason=...)
   useEffect(() => {
@@ -36,16 +37,23 @@ export function LoginScreen() {
           msg = "Access denied. Contact administrator."
       }
     } else if (authError === "token_exchange_failed") {
+      msg = "Sign-in could not be completed (Microsoft token exchange failed)."
+    } else if (authError === "gate_unavailable") {
+      msg = "Signed in with Microsoft, but the access check against the database failed. Try again shortly."
+    } else if (authError === "callback_failed") {
       msg = "Sign-in could not be completed. Please try again."
     } else if (authError === "missing_verifier" || authError === "missing_code") {
       msg = "Sign-in session expired. Please try again."
     }
     setError(msg)
+    const detail = params.get("detail")
+    if (detail) setErrorDetail(detail)
 
     // Clean the URL so refresh doesn't keep re-showing the error.
     const url = new URL(window.location.href)
     url.searchParams.delete("auth_error")
     url.searchParams.delete("reason")
+    url.searchParams.delete("detail")
     window.history.replaceState({}, "", url.toString())
   }, [])
 
@@ -88,6 +96,9 @@ export function LoginScreen() {
           {error && (
             <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
+              {errorDetail && (
+                <p className="mt-1 break-words font-mono text-xs opacity-80">{errorDetail}</p>
+              )}
             </div>
           )}
 

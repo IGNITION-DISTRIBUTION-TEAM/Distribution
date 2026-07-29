@@ -48,18 +48,40 @@ export async function GET(request: NextRequest) {
     const response = new NextResponse()
     response.cookies.delete("azure_code_verifier")
 
-    // Exchange code for tokens — redirect_uri must match the one used at /authorize
+    // Exchange code for tokens — redirect_uri must match the one used at /authorize.
+    // Failures here are Azure-side (expired client secret, redirect URI mismatch)
+    // — surface the detail so the login screen can say what actually broke.
     const redirectUri = `${request.nextUrl.origin}/api/auth/azure/callback`
     console.log("[v0] Exchanging code for tokens, redirectUri:", redirectUri)
-    const tokens = await exchangeCodeForToken(code, codeVerifier, redirectUri)
+    let tokens
+    try {
+      tokens = await exchangeCodeForToken(code, codeVerifier, redirectUri)
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.error("[Azure AD Error] token exchange:", detail)
+      return NextResponse.redirect(
+        `${request.nextUrl.origin}/?auth_error=token_exchange_failed&detail=${encodeURIComponent(detail.slice(0, 180))}`
+      )
+    }
     console.log("[v0] Tokens received")
 
     // Extract user info from ID token
     const userInfo = extractUserInfoFromToken(tokens.idToken)
     console.log("[v0] User info extracted:", userInfo.email)
 
-    // Role/active gate — bounce to login if denied.
-    const access = await checkAccess(userInfo.email)
+    // Role/active gate — bounce to login if denied. A THROW here is not a
+    // denial: the gate itself (Snowflake) was unreachable — say so explicitly
+    // instead of blaming the token exchange.
+    let access
+    try {
+      access = await checkAccess(userInfo.email)
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.error("[Azure AD Error] access gate check failed:", detail)
+      return NextResponse.redirect(
+        `${request.nextUrl.origin}/?auth_error=gate_unavailable&detail=${encodeURIComponent(detail.slice(0, 180))}`
+      )
+    }
     if (!access.allowed) {
       console.log("[v0] Access denied:", access.reason)
       return NextResponse.redirect(
@@ -125,8 +147,9 @@ export async function GET(request: NextRequest) {
     return redirectResponse
   } catch (error) {
     console.error("[Azure AD Error]", error)
+    const detail = error instanceof Error ? error.message : String(error)
     return NextResponse.redirect(
-      `${request.nextUrl.origin}/?auth_error=token_exchange_failed`
+      `${request.nextUrl.origin}/?auth_error=callback_failed&detail=${encodeURIComponent(detail.slice(0, 180))}`
     )
   }
 }
