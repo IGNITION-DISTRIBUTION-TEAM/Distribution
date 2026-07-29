@@ -13,10 +13,12 @@ export async function GET(request: NextRequest) {
   if (guard instanceof NextResponse) return guard
 
   try {
+    // Timestamps as epoch ms (storage is UTC) so the browser can render them
+    // in the viewer's local timezone.
     const rows = await executeSnowflakeQuery<Record<string, unknown>>(
       `SELECT batch_id, config_id,
-              TO_VARCHAR(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start_time,
-              TO_VARCHAR(end_time, 'YYYY-MM-DD HH24:MI:SS') AS end_time,
+              DATE_PART(EPOCH_MILLISECOND, start_time) AS start_ms,
+              DATE_PART(EPOCH_MILLISECOND, end_time) AS end_ms,
               total_records, processed_records, failed_records, status,
               TIMESTAMPDIFF(second, start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS duration_seconds
        FROM ${HISTORY_TABLE}
@@ -27,8 +29,8 @@ export async function GET(request: NextRequest) {
     const executions: EngaigeExecution[] = rows.map((r) => ({
       batchId: String(r.BATCH_ID ?? ""),
       configId: String(r.CONFIG_ID ?? ""),
-      startTime: r.START_TIME == null ? null : String(r.START_TIME),
-      endTime: r.END_TIME == null ? null : String(r.END_TIME),
+      startMs: r.START_MS == null ? null : Number(r.START_MS),
+      endMs: r.END_MS == null ? null : Number(r.END_MS),
       totalRecords: Number(r.TOTAL_RECORDS ?? 0),
       processedRecords: Number(r.PROCESSED_RECORDS ?? 0),
       failedRecords: Number(r.FAILED_RECORDS ?? 0),

@@ -6,6 +6,7 @@ import {
   HISTORY_TABLE,
   API_LOGS_TABLE,
   ASSIGNMENTS_TABLE,
+  RETRY_QUEUE_TABLE,
 } from "@/lib/engaige-shared"
 import { SF_OPTS, sqlString, safeJsonParse } from "@/lib/engaige-server"
 
@@ -37,8 +38,8 @@ export async function GET(request: NextRequest) {
 
       const rows = await executeSnowflakeQuery<Record<string, unknown>>(
         `SELECT p.batch_id, c.config_name,
-                TO_VARCHAR(p.start_time, 'YYYY-MM-DD HH24:MI:SS') AS start_time,
-                TO_VARCHAR(p.end_time, 'YYYY-MM-DD HH24:MI:SS') AS end_time,
+                DATE_PART(EPOCH_MILLISECOND, p.start_time) AS start_ms,
+                DATE_PART(EPOCH_MILLISECOND, p.end_time) AS end_ms,
                 p.total_records, p.processed_records, p.failed_records, p.status,
                 TIMESTAMPDIFF(second, p.start_time, COALESCE(p.end_time, CURRENT_TIMESTAMP())) AS duration_seconds
          FROM ${HISTORY_TABLE} p
@@ -49,8 +50,8 @@ export async function GET(request: NextRequest) {
       const records = rows.map((r) => ({
         batchId: String(r.BATCH_ID ?? ""),
         configName: String(r.CONFIG_NAME ?? ""),
-        startTime: r.START_TIME == null ? null : String(r.START_TIME),
-        endTime: r.END_TIME == null ? null : String(r.END_TIME),
+        startMs: r.START_MS == null ? null : Number(r.START_MS),
+        endMs: r.END_MS == null ? null : Number(r.END_MS),
         totalRecords: Number(r.TOTAL_RECORDS ?? 0),
         processedRecords: Number(r.PROCESSED_RECORDS ?? 0),
         failedRecords: Number(r.FAILED_RECORDS ?? 0),
@@ -162,25 +163,48 @@ export async function GET(request: NextRequest) {
       if (!BATCH_RE.test(batchId)) {
         return NextResponse.json({ error: "Invalid batchId" }, { status: 400 })
       }
-      const logs = await executeSnowflakeQuery<Record<string, unknown>>(
-        `SELECT log_id, TO_JSON(request_payload) AS request_payload_json,
-                TO_JSON(response_payload) AS response_payload_json,
-                status_code, error_message,
-                TO_VARCHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
-         FROM ${API_LOGS_TABLE}
-         WHERE batch_id = ${sqlString(batchId)}
-           AND (status_code >= 400 OR error_message IS NOT NULL)
-         ORDER BY created_at DESC LIMIT 25`,
-        SF_OPTS
-      )
+      // Failed records land in the RETRY_QUEUE; API_CALL_LOGS only carries
+      // HTTP-level failures — show both.
+      const [logs, retries] = await Promise.all([
+        executeSnowflakeQuery<Record<string, unknown>>(
+          `SELECT log_id, TO_JSON(request_payload) AS request_payload_json,
+                  TO_JSON(response_payload) AS response_payload_json,
+                  status_code, error_message,
+                  DATE_PART(EPOCH_MILLISECOND, created_at) AS created_ms
+           FROM ${API_LOGS_TABLE}
+           WHERE batch_id = ${sqlString(batchId)}
+             AND (status_code >= 400 OR error_message IS NOT NULL)
+           ORDER BY created_at DESC LIMIT 25`,
+          SF_OPTS
+        ),
+        executeSnowflakeQuery<Record<string, unknown>>(
+          `SELECT retry_id, TO_JSON(record_payload) AS record_payload_json,
+                  error_message, retry_count, status,
+                  DATE_PART(EPOCH_MILLISECOND, next_retry_time) AS next_retry_ms,
+                  DATE_PART(EPOCH_MILLISECOND, created_at) AS created_ms
+           FROM ${RETRY_QUEUE_TABLE}
+           WHERE batch_id = ${sqlString(batchId)}
+           ORDER BY created_at DESC LIMIT 25`,
+          SF_OPTS
+        ),
+      ])
       return NextResponse.json({
         errors: logs.map((r) => ({
           logId: String(r.LOG_ID ?? ""),
           statusCode: r.STATUS_CODE == null ? null : Number(r.STATUS_CODE),
           errorMessage: r.ERROR_MESSAGE == null ? "" : String(r.ERROR_MESSAGE),
-          createdAt: r.CREATED_AT == null ? null : String(r.CREATED_AT),
+          createdMs: r.CREATED_MS == null ? null : Number(r.CREATED_MS),
           request: safeJsonParse(r.REQUEST_PAYLOAD_JSON),
           response: safeJsonParse(r.RESPONSE_PAYLOAD_JSON),
+        })),
+        retries: retries.map((r) => ({
+          retryId: String(r.RETRY_ID ?? ""),
+          errorMessage: r.ERROR_MESSAGE == null ? "" : String(r.ERROR_MESSAGE),
+          retryCount: Number(r.RETRY_COUNT ?? 0),
+          status: String(r.STATUS ?? ""),
+          nextRetryMs: r.NEXT_RETRY_MS == null ? null : Number(r.NEXT_RETRY_MS),
+          createdMs: r.CREATED_MS == null ? null : Number(r.CREATED_MS),
+          payload: safeJsonParse(r.RECORD_PAYLOAD_JSON),
         })),
       })
     }

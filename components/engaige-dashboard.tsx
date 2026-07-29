@@ -197,6 +197,15 @@ function Spinner({ label }: { label: string }) {
   )
 }
 
+// Epoch ms → local date-time string in the viewer's timezone.
+function fmtLocal(ms: number | null | undefined): string {
+  if (ms == null) return "—"
+  const d = new Date(ms)
+  if (isNaN(d.getTime())) return "—"
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 async function jsonFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, init)
   const data = await res.json().catch(() => ({}))
@@ -349,21 +358,45 @@ type BatchError = {
   logId: string
   statusCode: number | null
   errorMessage: string
-  createdAt: string | null
+  createdMs: number | null
   request: Record<string, unknown>
   response: Record<string, unknown>
 }
+type RetryRow = {
+  retryId: string
+  errorMessage: string
+  retryCount: number
+  status: string
+  nextRetryMs: number | null
+  createdMs: number | null
+  payload: Record<string, unknown>
+}
 
-// Why a batch's records failed — reads API_CALL_LOGS for the batch.
+function JsonDetails({ label, value }: { label: string; value: Record<string, unknown> }) {
+  if (Object.keys(value).length === 0) return null
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer text-xs text-muted-foreground">{label}</summary>
+      <pre className="mt-1 max-h-48 overflow-auto rounded bg-background p-2 text-xs text-muted-foreground">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
+  )
+}
+
+// Why a batch's records failed — reads both the retry queue (failed records)
+// and API_CALL_LOGS (HTTP-level failures).
 function BatchErrorsDialog({ batchId, onClose }: { batchId: string; onClose: () => void }) {
-  const [errors, setErrors] = useState<BatchError[] | null>(null)
+  const [data, setData] = useState<{ errors: BatchError[]; retries: RetryRow[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     jsonFetch(`/api/engaige/monitoring?view=errors&batchId=${encodeURIComponent(batchId)}`)
-      .then((d) => setErrors(d.errors ?? []))
+      .then((d) => setData({ errors: d.errors ?? [], retries: d.retries ?? [] }))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [batchId])
+
+  const empty = data && data.errors.length === 0 && data.retries.length === 0
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -373,44 +406,51 @@ function BatchErrorsDialog({ batchId, onClose }: { batchId: string; onClose: () 
           <DialogDescription className="font-mono text-xs">{batchId}</DialogDescription>
         </DialogHeader>
         {error && <ErrorBox message={error} />}
-        {!errors && !error && <Spinner label="Loading errors…" />}
-        {errors && errors.length === 0 && (
+        {!data && !error && <Spinner label="Loading errors…" />}
+        {empty && (
           <p className="text-sm text-muted-foreground">
-            No API error logs found for this batch. The failures may have happened before the API
-            call stage — check the EngAIge platform's retry queue.
+            No error rows recorded for this batch in the retry queue or API logs. The failures may
+            be logged elsewhere by the EngAIge platform.
           </p>
         )}
-        {errors && errors.length > 0 && (
-          <div className="flex flex-col gap-3">
-            {errors.map((e) => (
-              <div key={e.logId} className="rounded-lg border border-border bg-background/40 p-3">
-                <p className="text-sm text-rose-300">
-                  {e.statusCode != null ? `HTTP ${e.statusCode} — ` : ""}
-                  {e.errorMessage || "(no message)"}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{e.createdAt ?? ""}</p>
-                {Object.keys(e.request).length > 0 && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs text-muted-foreground">
-                      Request payload
-                    </summary>
-                    <pre className="mt-1 max-h-48 overflow-auto rounded bg-background p-2 text-xs text-muted-foreground">
-                      {JSON.stringify(e.request, null, 2)}
-                    </pre>
-                  </details>
-                )}
-                {Object.keys(e.response).length > 0 && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs text-muted-foreground">
-                      Response payload
-                    </summary>
-                    <pre className="mt-1 max-h-48 overflow-auto rounded bg-background p-2 text-xs text-muted-foreground">
-                      {JSON.stringify(e.response, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            ))}
+        {data && data.retries.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Failed records ({data.retries.length})
+            </p>
+            <div className="flex flex-col gap-3">
+              {data.retries.map((r) => (
+                <div key={r.retryId} className="rounded-lg border border-border bg-background/40 p-3">
+                  <p className="text-sm text-rose-300">{r.errorMessage || "(no message)"}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {r.status} · retry {r.retryCount}
+                    {r.nextRetryMs ? ` · next ${fmtLocal(r.nextRetryMs)}` : ""} ·{" "}
+                    {fmtLocal(r.createdMs)}
+                  </p>
+                  <JsonDetails label="Record payload" value={r.payload} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {data && data.errors.length > 0 && (
+          <div>
+            <p className="mb-2 mt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              API errors ({data.errors.length})
+            </p>
+            <div className="flex flex-col gap-3">
+              {data.errors.map((e) => (
+                <div key={e.logId} className="rounded-lg border border-border bg-background/40 p-3">
+                  <p className="text-sm text-rose-300">
+                    {e.statusCode != null ? `HTTP ${e.statusCode} — ` : ""}
+                    {e.errorMessage || "(no message)"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{fmtLocal(e.createdMs)}</p>
+                  <JsonDetails label="Request payload" value={e.request} />
+                  <JsonDetails label="Response payload" value={e.response} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </DialogContent>
@@ -951,12 +991,12 @@ function ConfigsSection() {
                               className="flex flex-wrap items-center gap-x-3 text-muted-foreground"
                             >
                               <span>{STATUS_ICON[e.status] ?? "❔"}</span>
-                              <span className="text-foreground">{e.startTime ?? "—"}</span>
+                              <span className="text-foreground">{fmtLocal(e.startMs)}</span>
                               <span className={e.failedRecords > 0 ? "font-medium text-rose-300" : ""}>
                                 {e.processedRecords}/{e.totalRecords} ({e.failedRecords} failed)
                               </span>
                               <span>
-                                {e.durationSeconds != null && e.endTime
+                                {e.durationSeconds != null && e.endMs
                                   ? `${e.durationSeconds}s`
                                   : "in progress…"}
                               </span>
@@ -1839,8 +1879,8 @@ function daysAgoISO(n: number): string {
 type HistoryRecord = {
   batchId: string
   configName: string
-  startTime: string | null
-  endTime: string | null
+  startMs: number | null
+  endMs: number | null
   totalRecords: number
   processedRecords: number
   failedRecords: number
@@ -1988,7 +2028,7 @@ function MonHistory() {
                     {STATUS_ICON[r.status] ?? "❔"} {r.status}
                   </td>
                   <td className="px-3 py-2 text-foreground">{r.configName}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{r.startTime ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{fmtLocal(r.startMs)}</td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {r.processedRecords}/{r.totalRecords}
                   </td>

@@ -218,8 +218,8 @@ export type EngaigeExecution = {
   batchId: string
   configId: string
   configName?: string
-  startTime: string | null
-  endTime: string | null
+  startMs: number | null
+  endMs: number | null
   totalRecords: number
   processedRecords: number
   failedRecords: number
