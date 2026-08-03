@@ -473,6 +473,52 @@ function ConfigsSection() {
   // Run feedback shown inside the config's own card, where the user clicked.
   const [runMsg, setRunMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
   const [errorBatch, setErrorBatch] = useState<string | null>(null)
+  // Inline edit of one config's fields.
+  const [editing, setEditing] = useState<{
+    configId: string
+    configName: string
+    sourceTable: string
+    endpoint: string
+    externalSourceId: string
+    eventId: string
+    batchSize: number
+  } | null>(null)
+  const [editErr, setEditErr] = useState<string | null>(null)
+
+  const startEdit = (c: EngaigeConfig) => {
+    setEditErr(null)
+    setEditing({
+      configId: c.configId,
+      configName: c.configName,
+      sourceTable: c.sourceTable,
+      endpoint: c.apiEndpoint.includes("triggerexternalevent")
+        ? "/triggerexternalevent"
+        : "/externalevent",
+      externalSourceId: c.externalSourceId,
+      eventId: c.eventId,
+      batchSize: c.batchSize,
+    })
+    setOpenIds((prev) => new Set(prev).add(c.configId))
+  }
+
+  const saveEdit = async () => {
+    if (!editing) return
+    setBusy(true)
+    setEditErr(null)
+    try {
+      await jsonFetch(`/api/engaige/configs/${editing.configId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...editing, action: "update" }),
+      })
+      setEditing(null)
+      await load()
+    } catch (e) {
+      setEditErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const toggleOpen = (id: string) =>
     setOpenIds((prev) => {
@@ -934,6 +980,9 @@ function ConfigsSection() {
                         </Button>
                       </>
                     )}
+                    <Button variant="outline" size="sm" onClick={() => startEdit(c)}>
+                      Edit
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => toggleConfig(c.configId)}>
                       {c.isActive ? "Deactivate" : "Activate"}
                     </Button>
@@ -961,7 +1010,93 @@ function ConfigsSection() {
                   </div>
                 )}
 
-                {open && (
+                {open && editing?.configId === c.configId && (
+                  <div className="border-t border-border px-4 py-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">Configuration name</span>
+                        <input
+                          className={inputCls}
+                          value={editing.configName}
+                          onChange={(e) => setEditing({ ...editing, configName: e.target.value })}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">Source table / view</span>
+                        <input
+                          className={inputCls}
+                          value={editing.sourceTable}
+                          onChange={(e) => setEditing({ ...editing, sourceTable: e.target.value })}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">Endpoint</span>
+                        <select
+                          className={inputCls}
+                          value={editing.endpoint}
+                          onChange={(e) => setEditing({ ...editing, endpoint: e.target.value })}
+                        >
+                          {ENDPOINT_OPTIONS.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">Batch size</span>
+                        <input
+                          type="number"
+                          min={1}
+                          className={inputCls}
+                          value={editing.batchSize}
+                          onChange={(e) =>
+                            setEditing({ ...editing, batchSize: Number(e.target.value) })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">External source ID</span>
+                        <input
+                          className={inputCls}
+                          value={editing.externalSourceId}
+                          onChange={(e) =>
+                            setEditing({ ...editing, externalSourceId: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-muted-foreground">Event ID</span>
+                        <input
+                          className={inputCls}
+                          value={editing.eventId}
+                          onChange={(e) => setEditing({ ...editing, eventId: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    {editErr && (
+                      <div className="mt-3">
+                        <ErrorBox message={editErr} />
+                      </div>
+                    )}
+                    <div className="mt-3 flex gap-2">
+                      <Button size="sm" onClick={saveEdit} disabled={busy}>
+                        {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Save changes
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditing(null)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {open && editing?.configId !== c.configId && (
                   <div className="border-t border-border px-4 py-3">
                     <div className="grid gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
                       <span>Template: {templateNameFromId(c.templateId)}</span>
