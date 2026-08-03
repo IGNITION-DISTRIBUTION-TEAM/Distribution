@@ -46,6 +46,7 @@ type EmailMapping = {
 
 type EmployeeSearchResult = {
   email: string
+  name?: string | null
   jobTitle: string | null
   status: string | null
 }
@@ -360,25 +361,43 @@ function MapUserCard() {
   const [results, setResults] = useState<EmployeeSearchResult[]>([])
   const [employee, setEmployee] = useState<EmployeeDetail | null>(null)
   const [lookupError, setLookupError] = useState<string | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [savedFor, setSavedFor] = useState<string | null>(null)
 
-  // Debounced employee search
+  // Debounced employee search — by email OR name.
   useEffect(() => {
     if (query.trim().length < 2) {
       setResults([])
+      setSearching(false)
+      setSearchError(null)
       return
     }
+    let cancelled = false
+    setSearching(true)
+    setSearchError(null)
     const t = setTimeout(async () => {
       try {
         const r = await fetch(`/api/admin/employees?q=${encodeURIComponent(query)}`)
         const data = await r.json()
-        if (r.ok) setResults(data.employees ?? [])
-      } catch {
-        // ignore
+        if (cancelled) return
+        if (!r.ok) {
+          setResults([])
+          setSearchError(data.error ?? `Search failed (${r.status})`)
+        } else {
+          setResults(data.employees ?? [])
+        }
+      } catch (e) {
+        if (!cancelled) setSearchError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setSearching(false)
       }
     }, 250)
-    return () => clearTimeout(t)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
   }, [query])
 
   // When the chosen employee email looks valid, fetch full HR record.
@@ -465,8 +484,19 @@ function MapUserCard() {
               setEmployeeEmail(e.target.value)
               setQuery(e.target.value)
             }}
-            placeholder="search by email..."
+            placeholder="search by name or email…"
           />
+          {searching && (
+            <p className="mt-1 text-xs text-muted-foreground">Searching HR…</p>
+          )}
+          {searchError && (
+            <p className="mt-1 text-xs text-rose-400">Search failed: {searchError}</p>
+          )}
+          {!searching && !searchError && query.trim().length >= 2 && results.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              No active employees match &quot;{query.trim()}&quot;.
+            </p>
+          )}
           {results.length > 0 && (
             <div className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-background">
               {results.map((emp) => (
@@ -480,8 +510,9 @@ function MapUserCard() {
                     setResults([])
                   }}
                 >
-                  <div className="text-foreground">{emp.email}</div>
+                  <div className="text-foreground">{emp.name || emp.email}</div>
                   <div className="text-xs text-muted-foreground">
+                    {emp.name ? `${emp.email} · ` : ""}
                     {emp.jobTitle ?? "no title"} · {emp.status ?? "no status"}
                   </div>
                 </button>
