@@ -35,6 +35,7 @@ import {
   ChevronDown,
   ClipboardList,
   Clock,
+  HelpCircle,
   LayoutDashboard,
   Link2,
   Loader2,
@@ -2443,11 +2444,162 @@ function MonMetrics() {
   )
 }
 
+/* ================================= Tour =============================== */
+
+type TourStep = {
+  nav: string
+  title: string
+  body: React.ReactNode
+}
+
+const TOUR_STEPS: TourStep[] = [
+  {
+    nav: "dashboard",
+    title: "1. Dashboard — the health overview",
+    body: (
+      <>
+        <p>Your starting point. The tiles across the top show, for the last 14 days:</p>
+        <ul className="ml-4 list-disc space-y-1">
+          <li><b>Configurations / Active / Running now</b> — how many integrations exist, are switched on, and are executing right now.</li>
+          <li><b>Batches, Success rate, Records, Failed</b> — how much has run and how much of it succeeded.</li>
+        </ul>
+        <p>The two line charts show records processed vs failed per day and the daily success rate. Use it to spot a bad day at a glance, then dig in under Monitoring.</p>
+      </>
+    ),
+  },
+  {
+    nav: "configs",
+    title: "2. Configurations — the integrations themselves",
+    body: (
+      <>
+        <p>Each row is one integration (a source view feeding an EngAIge endpoint). Click a row to expand its details and recent runs.</p>
+        <ul className="ml-4 list-disc space-y-1">
+          <li><b>Search / pages</b> — filter by name, source, or template; the list pages 10 at a time.</li>
+          <li><b>Sample (10)</b> — a safe test run of ~10 records. Always start here.</li>
+          <li><b>Full run</b> — processes the whole source. Use once a sample looks right.</li>
+          <li><b>Edit</b> — change the name, source view, endpoint, batch size, and the Source/Event IDs.</li>
+          <li><b>Deactivate</b> — switch the integration off without deleting it.</li>
+          <li><b>🗑 Delete</b> — removes the config and its mappings & schedules. Permanent.</li>
+          <li><b>View errors</b> (on a run with failures) — opens the exact reason each record failed.</li>
+          <li><b>+ Add configuration</b> (top right) — create a new integration.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    nav: "mappings",
+    title: "3. Column Mappings — match your data to the template",
+    body: (
+      <>
+        <p>Only needed for <b>template</b> configs (Debicheck / Sale Writeback). Pick a configuration, then map each required template field to a column from your source view.</p>
+        <p><b>Add mapping</b> creates one link; the 🗑 removes it. Generic configs send the source columns through as-is, so they usually need no mappings here.</p>
+      </>
+    ),
+  },
+  {
+    nav: "assignments",
+    title: "4. Task Assignments — schedule automatic runs",
+    body: (
+      <>
+        <p>Set the times a configuration should run on its own.</p>
+        <ul className="ml-4 list-disc space-y-1">
+          <li><b>Add assignment</b> — pick a config, a time window, and a schedule (Daily / Weekdays / Weekends / specific days).</li>
+          <li><b>Edit</b> — change an existing assignment's time or days.</li>
+          <li><b>Activate / Deactivate</b> — pause a schedule without deleting it.</li>
+          <li><b>Search &amp; the All/Active/Inactive filter</b> — find assignments quickly.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    nav: "monitoring",
+    title: "5. Monitoring — history, schedules & performance",
+    body: (
+      <>
+        <p>Three tabs:</p>
+        <ul className="ml-4 list-disc space-y-1">
+          <li><b>Processing history</b> — every run for a chosen date, filterable by status/config, with totals.</li>
+          <li><b>Schedule overview</b> — a weekly heatmap of what runs when, plus a per-config summary.</li>
+          <li><b>Performance metrics</b> — success rate, volume, and duration charts over a date range.</li>
+        </ul>
+        <p>That's the tour — you can reopen it any time from the <b>Tour</b> button in the top bar.</p>
+      </>
+    ),
+  },
+]
+
+function EngaigeTour({
+  step,
+  setStep,
+  onNav,
+  onClose,
+}: {
+  step: number
+  setStep: (n: number) => void
+  onNav: (nav: string) => void
+  onClose: () => void
+}) {
+  const s = TOUR_STEPS[step]
+  const last = step === TOUR_STEPS.length - 1
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{s.title}</DialogTitle>
+          <DialogDescription>
+            Step {step + 1} of {TOUR_STEPS.length}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground [&_b]:text-foreground">
+          {s.body}
+        </div>
+        <div className="mt-2">
+          <Button variant="outline" size="sm" onClick={() => onNav(s.nav)}>
+            Show me this page
+          </Button>
+        </div>
+        <div className="mt-4 flex items-center justify-between">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={step === 0}
+              onClick={() => setStep(step - 1)}
+            >
+              Back
+            </Button>
+            {last ? (
+              <Button size="sm" onClick={onClose}>
+                Done
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => {
+                  onNav(TOUR_STEPS[step + 1].nav)
+                  setStep(step + 1)
+                }}
+              >
+                Next
+              </Button>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /* ============================== Dashboard ============================== */
 
 export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
   const [nav, setNav] = useState("dashboard")
+  const [tourOpen, setTourOpen] = useState(false)
+  const [tourStep, setTourStep] = useState(0)
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -2547,11 +2699,32 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
             )}
             <span className="text-sm font-medium text-muted-foreground">EngAIge Integration Manager</span>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setTourStep(0)
+              setNav("dashboard")
+              setTourOpen(true)
+            }}
+          >
+            <HelpCircle className="mr-2 h-4 w-4" />
+            Tour
+          </Button>
         </header>
         <main className="flex-1 overflow-auto min-w-0">
           <div className="min-w-0 p-6">{render()}</div>
         </main>
       </SidebarInset>
+
+      {tourOpen && (
+        <EngaigeTour
+          step={tourStep}
+          setStep={setTourStep}
+          onNav={setNav}
+          onClose={() => setTourOpen(false)}
+        />
+      )}
     </SidebarProvider>
   )
 }
