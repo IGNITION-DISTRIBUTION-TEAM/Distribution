@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Usage by Tenant | Telco Retail</title>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill page-badge">Strategy</span>
+  <h2 class="page-title" style="font-family:var(--font-header); margin:10px 0 0;">Data Usage by Tenant</h2>
+  <hr class="spot-rule">
+  <div id="placeholderBody"></div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+renderPlaceholderPage({
+  title: "Data Usage by Tenant", badge: "Strategy",
+  note: "Data usage (GB) requires CDR data. Not currently available via the MCP connection.",
+  kpis: [
+    { label: "Total Data (GB) MTD", source: "CDR / data usage table" },
+    { label: "Active Data Users", source: "CDR / data usage table" },
+    { label: "Avg GB per User", source: "CDR / data usage table" },
+    { label: "Data Revenue MTD", source: "CDR / revenue table" },
+  ],
+  chartRows: [
+    [
+      { title: "Data (GB) by Tenant — Monthly", source: "CDR / data usage table" },
+      { title: "Active Data Users by Tenant", source: "CDR / data usage table" },
+    ],
+    [
+      { title: "Data Usage Trend (13 months)", source: "CDR / data usage table" },
+      { title: "GB per User by Tenant", source: "CDR / data usage table" },
+    ],
+  ],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+/* Shared Spot CI styling for the static telco-dashboard-web rebuild.
+   One stylesheet for every page — see assets/spot-charts.js for the matching JS helpers. */
+:root {
+  --inkcore:     #0e0e0e;
+  --zero-white:  #12141a;   /* text on light surfaces */
+  --on-dark:     #ffffff;
+  --hypermint:   #13f460;
+  --sonic-blue:  #2d40e9;
+  --ultraviolet: #52bec0;
+  --highvolt:    #f44610;
+
+  --page-bg:   #f0f1f4;
+  --surface-1: #ffffff;
+  --surface-2: #f5f6f8;
+  --border:    #e3e5ea;
+
+  --font-header: 'At Hauss Std Retina', 'Helvetica Now', Helvetica, Arial, sans-serif;
+  --font-body:   'Helvetica Now', Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  background: var(--page-bg);
+  color: var(--zero-white);
+  padding-bottom: 40px;
+}
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 16px 28px; background: var(--surface-1);
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.spot-logo {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--inkcore); color: var(--on-dark);
+  font-family: var(--font-header); font-weight: 700; font-size: 0.95rem;
+  padding: 7px 12px; border-radius: 6px;
+}
+.spot-logo sup { font-size: 0.55em; }
+.brand h1 { font-family: var(--font-header); font-size: 1.15rem; font-weight: 700; }
+.brand a.back-link {
+  color: var(--highvolt); font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.brand a.back-link:hover { color: var(--inkcore); text-decoration: underline; }
+.badge-pill {
+  display: inline-block; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 10px; font-size: 11px; color: #6b7280;
+}
+.page { padding: 20px 28px; max-width: 1400px; margin: 0 auto; }
+.spot-rule {
+  height: 3px; border: none; border-radius: 2px; margin: 8px 0 22px;
+  background: linear-gradient(90deg, var(--highvolt), var(--hypermint), var(--sonic-blue));
+}
+
+.kpi-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px; margin-bottom: 22px;
+}
+.kpi-tile { background: var(--inkcore); border-radius: 12px; padding: 16px 20px; }
+.kpi-label {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #9aa0aa; margin-bottom: 8px;
+}
+.kpi-value { font-family: var(--font-header); font-size: 1.7rem; font-weight: 700; color: var(--on-dark); }
+.kpi-delta { margin-top: 4px; font-size: 0.85rem; font-weight: 600; }
+.kpi-delta.up { color: var(--hypermint); }
+.kpi-delta.down { color: var(--highvolt); }
+
+.filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.filter-label { font-size: 12px; color: #6b7280; margin-right: 4px; }
+.chip {
+  cursor: pointer; user-select: none; border: 1px solid var(--border);
+  background: var(--surface-1); border-radius: 999px; padding: 5px 12px;
+  font-size: 12px; color: var(--zero-white); transition: background .1s, color .1s, border-color .1s;
+}
+.chip.active { background: var(--highvolt); border-color: var(--highvolt); color: var(--on-dark); }
+.filter-note { color: var(--highvolt); font-size: 12px; margin: 6px 0 16px; min-height: 16px; }
+
+.chart-full { margin-bottom: 16px; }
+.grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 8px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.chart-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+
+h3.section-title {
+  font-family: var(--font-header); color: var(--highvolt); font-size: 15px;
+  margin: 28px 0 2px; letter-spacing: -0.01em;
+}
+p.section-sub { color: #6b7280; font-size: 12px; margin: 0 0 12px; }
+p.note-line { color: var(--sonic-blue); font-style: italic; font-size: 12px; margin-bottom: 8px; }
+
+table.league { width: 100%; border-collapse: collapse; background: var(--surface-1);
+  border-radius: 10px; overflow: hidden; }
+table.league thead th {
+  padding: 8px; font-size: 11px; color: #555; text-align: left; background: var(--surface-2);
+}
+table.league thead th.num { text-align: right; }
+table.league tbody td { padding: 6px 8px; font-size: 13px; }
+table.league tbody tr:hover td { background: var(--surface-2); }
+table.league tbody td.rank { color: #888; font-size: 12px; width: 28px; }
+table.league tbody td.num { text-align: right; font-weight: 600; }
+.table-caption {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 8px;
+}
+
+.pill-red { background: rgba(244,70,16,0.1); color: var(--highvolt); }
+.pill-green { background: rgba(19,244,96,0.14); color: #0a7d38; }
+
+.placeholder-card {
+  background: var(--surface-1); border: 1px dashed var(--border); border-radius: 10px;
+  padding: 18px 16px; text-align: center; min-height: 90px;
+}
+.placeholder-card .p-label {
+  color: #555; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;
+}
+.placeholder-card .p-dash { color: #444; font-size: 22px; font-weight: 700; }
+.placeholder-card .p-source { color: #3a3a3a; font-size: 10px; margin-top: 6px; }
+.placeholder-card .p-source span { color: var(--highvolt); }
+
+.placeholder-chart {
+  background: var(--surface-1); border: 1px dashed var(--border); border-radius: 10px;
+  padding: 24px 20px; display: flex; flex-direction: column; justify-content: center;
+  align-items: center; text-align: center;
+}
+.placeholder-chart .p-title { color: var(--zero-white); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.placeholder-chart .p-pending { color: #555; font-size: 12px; }
+.placeholder-chart .p-source { color: var(--highvolt); font-size: 11px; margin-top: 6px; }
+.note-banner { color: #666; font-size: 12px; margin-bottom: 16px; }
+
+footer {
+  margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  font-size: 11px; color: rgba(16,17,20,0.32); letter-spacing: 0.03em; text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .grid-2x2, .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}

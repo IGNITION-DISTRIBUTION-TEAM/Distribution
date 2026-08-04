@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wastage | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Commercial</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Wastage</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="monthlyChart" style="height:320px;"></div>
+    <div class="chart-box" id="reasonsChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="ageChart" style="height:320px;"></div>
+    <div class="chart-box" id="ageShareChart" style="height:320px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/17_wastage.json')
+  .then(r => r.json())
+  .then(data => {
+    const k = data.kpis;
+    renderKpiRow('kpiRow', [
+      { label: 'Terminated This Month', value: fmtNum(k.this_month) },
+      { label: 'Terminated Last Month', value: fmtNum(k.last_month), delta: k.this_month - k.last_month },
+      { label: 'Last 7 Days', value: fmtNum(k.last_7) },
+      { label: 'Early Churn ≤30d (prev 2 months)', value: fmtNum(k.early_churn) },
+    ]);
+
+    spotBar('monthlyChart', data.monthly_churn.map(r => fmtMonth(toDate(r.month))), data.monthly_churn.map(r => r.terminated),
+      'Monthly Terminations (13 months)', PALETTE.highvolt);
+
+    spotHBar('reasonsChart', data.churn_reasons.map(r => r.reason), data.churn_reasons.map(r => r.count),
+      'Churn Reasons (last 6 months)', PALETTE.sonicBlue);
+
+    const order = ['0-30 days','31-90 days','91-180 days','181-365 days','365+ days'];
+    const age = data.age_at_churn.slice().sort((a, b) => order.indexOf(a.band) - order.indexOf(b.band));
+    spotBar('ageChart', age.map(r => r.band), age.map(r => r.count), 'Age at Churn Distribution (13 months)', PALETTE.ultraviolet);
+    spotPie('ageShareChart', age.map(r => r.band), age.map(r => r.count), 'Age at Churn — Share');
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

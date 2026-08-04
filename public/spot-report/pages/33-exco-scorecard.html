@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exco Scorecard | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+
+<div class="page">
+  <span class="badge-pill">Strategy</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Exco Scorecard</h2>
+  <hr class="spot-rule">
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="actChart" style="height:320px;"></div>
+    <div class="chart-box" id="revChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="channelChart" style="height:320px;"></div>
+    <div class="chart-box" id="churnChart" style="height:320px;"></div>
+  </div>
+
+  <h3 class="section-title">Employee NPS</h3>
+  <p class="section-sub">Source: quarterly survey, hand-maintained on SharePoint (ENPS Feedback.xlsx) — one-time pull, not a live connection.</p>
+  <div class="grid-2" style="align-items:stretch;">
+    <div class="chart-box" style="padding:20px;" id="enpsKpi"></div>
+    <div class="chart-box" id="enpsChart" style="height:280px;"></div>
+  </div>
+
+  <footer>
+    <span>Spot Telco Retail — Snowflake UCONNECT_DW</span>
+    <span>Static rebuild</span>
+  </footer>
+</div>
+
+<script>
+fetch('../data/33_exco_scorecard.json')
+  .then(r => r.json())
+  .then(data => {
+    const k = data.kpis;
+    renderKpiRow('kpiRow', [
+      { label: 'Total Active SIMs', value: fmtNum(k.active_sims) },
+      { label: 'Activations This Month', value: fmtNum(k.act_mtd), delta: k.act_mtd - k.act_lm },
+      { label: 'Revenue MTD', value: fmtCurrency(k.rev_mtd) },
+      { label: 'Last Month Activations', value: fmtNum(k.act_lm) },
+    ]);
+
+    const actX = data.monthly_activations.map(r => fmtMonth(toDate(r.month)));
+    const actY = data.monthly_activations.map(r => r.activations);
+    const roll3 = actY.map((_, i) => {
+      const slice = actY.slice(Math.max(0, i - 2), i + 1);
+      return Math.round(slice.reduce((a, b) => a + b, 0) / slice.length);
+    });
+    spotCombo('actChart', actX,
+      { name: 'Activations', y: actY, color: PALETTE.hypermint },
+      { name: '3M avg', y: roll3, color: PALETTE.highvolt },
+      'Monthly Activations — 13 Months');
+
+    spotBar('revChart', data.monthly_revenue.map(r => fmtMonth(toDate(r.month))),
+      data.monthly_revenue.map(r => r.revenue), 'Monthly Revenue — 13 Months', PALETTE.sonicBlue);
+
+    spotPie('channelChart', data.channel_mix.map(r => r.channel), data.channel_mix.map(r => r.sims),
+      'SIM Acquisition by Channel (All Time)');
+
+    spotHBar('churnChart', data.churn_reasons.map(r => r.reason), data.churn_reasons.map(r => r.count),
+      'Churn by Reason — Last 3 Months', PALETTE.highvolt);
+
+    const realRows = data.enps.filter(r => !r.pending);
+    const latest = realRows[realRows.length - 1];
+    const pendingRow = data.enps.find(r => r.pending);
+    document.getElementById('enpsKpi').innerHTML = `
+      <div class="kpi-label" style="color:#888;">Latest eNPS (${latest.period})</div>
+      <div style="font-family:var(--font-header); font-size:2rem; font-weight:700; margin-top:6px;">${latest.enps}</div>
+      ${pendingRow ? `<p style="color:#888; font-size:12px; margin-top:10px;">${pendingRow.period} shows 0 in the source — likely not yet surveyed, not a real score.</p>` : ''}
+    `;
+    Plotly.newPlot('enpsChart', [{
+      x: data.enps.map(r => r.period), y: data.enps.map(r => r.enps), type: 'bar',
+      marker: { color: data.enps.map(r => r.pending ? PALETTE.border : PALETTE.hypermint), line: { width: 0 } },
+      text: data.enps.map(r => r.pending ? 'pending' : String(r.enps)), textposition: 'outside',
+      hovertemplate: '%{x}<br><b>%{y}</b><extra></extra>',
+    }], baseLayout('Employee NPS by Quarter'), PLOTLY_CFG);
+
+    document.getElementById('asOfBadge').textContent =
+      'Data as of ' + data.monthly_activations[data.monthly_activations.length - 1].month.slice(0, 7);
+  })
+  .catch(err => { document.getElementById('asOfBadge').textContent = 'Failed to load data'; console.error(err); });
+</script>
+
+</body>
+</html>

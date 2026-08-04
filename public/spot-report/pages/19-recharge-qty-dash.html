@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recharge Qty Dash | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Recharges</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Recharge Qty Dash</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="monthlyQtyChart" style="height:320px;"></div>
+    <div class="chart-box" id="monthlyValChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="weeklyQtyChart" style="height:320px;"></div>
+    <div class="chart-box" id="weeklyValChart" style="height:320px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+const COLOURS_19 = { "PINLESS+ATM": PALETTE.hypermint, "VOUCHER": PALETTE.sonicBlue };
+function pivotSeries(rows, keyField, valField, groupField) {
+  const keys = [...new Set(rows.map(r => r[keyField]))].sort();
+  const groups = [...new Set(rows.map(r => r[groupField]))];
+  return { keys, series: groups.map(g => ({
+    name: g, color: COLOURS_19[g] || PALETTE.ultraviolet,
+    y: keys.map(k => (rows.find(r => r[keyField] === k && r[groupField] === g) || { [valField]: 0 })[valField]),
+  })) };
+}
+
+fetch('../data/19_recharge_qty_dash.json')
+  .then(r => r.json())
+  .then(data => {
+    const k = data.kpis;
+    renderKpiRow('kpiRow', [
+      { label: 'Recharges This Month (Qty)', value: fmtNum(k.qty_mtd) },
+      { label: 'Revenue This Month', value: fmtCurrency(k.value_mtd) },
+      { label: 'Recharges Last Month (Qty)', value: fmtNum(k.qty_lm), delta: k.qty_mtd - k.qty_lm },
+      { label: 'Revenue Last Month', value: fmtCurrency(k.value_lm) },
+    ]);
+
+    const m = pivotSeries(data.monthly, 'month', 'qty', 'type');
+    spotStackedBar('monthlyQtyChart', m.keys.map(k => fmtMonth(toDate(k))), m.series, 'Monthly Recharge Qty by Type (13 months)');
+    const mv = pivotSeries(data.monthly, 'month', 'value', 'type');
+    spotStackedBar('monthlyValChart', mv.keys.map(k => fmtMonth(toDate(k))), mv.series, 'Monthly Recharge Revenue by Type (13 months)');
+
+    const w = pivotSeries(data.weekly, 'week', 'qty', 'type');
+    spotStackedBar('weeklyQtyChart', w.keys.map(k => fmtWeek(toDate(k))), w.series, 'Weekly Recharge Qty (26 weeks)');
+    const wv = pivotSeries(data.weekly, 'week', 'value', 'type');
+    spotStackedBar('weeklyValChart', wv.keys.map(k => fmtWeek(toDate(k))), wv.series, 'Weekly Recharge Revenue (26 weeks)');
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

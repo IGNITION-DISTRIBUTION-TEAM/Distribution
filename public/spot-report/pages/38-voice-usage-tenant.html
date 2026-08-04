@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Usage by Tenant | Telco Retail</title>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill page-badge">Strategy</span>
+  <h2 class="page-title" style="font-family:var(--font-header); margin:10px 0 0;">Voice Usage by Tenant</h2>
+  <hr class="spot-rule">
+  <div id="placeholderBody"></div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+renderPlaceholderPage({
+  title: "Voice Usage by Tenant", badge: "Strategy",
+  note: "Voice usage requires CDR (Call Detail Records) data. Not currently available via the MCP connection.",
+  kpis: [
+    { label: "Total Voice Minutes MTD", source: "CDR / usage table" },
+    { label: "Active Voice Users", source: "CDR / usage table" },
+    { label: "Avg Minutes per User", source: "CDR / usage table" },
+    { label: "Voice Revenue MTD", source: "CDR / revenue table" },
+  ],
+  chartRows: [
+    [
+      { title: "Voice Minutes by Tenant — Monthly", source: "CDR / usage table" },
+      { title: "Active Voice Users by Tenant", source: "CDR / usage table" },
+    ],
+    [
+      { title: "Voice Usage Trend (13 months)", source: "CDR / usage table" },
+      { title: "Minutes per User by Tenant", source: "CDR / usage table" },
+    ],
+  ],
+});
+</script>
+</body>
+</html>

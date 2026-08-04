@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Store Trend | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Sales</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Trading Store Trend</h2>
+  <hr class="spot-rule">
+
+  <div class="filter-row" id="filterRow">
+    <span class="filter-label">Sales Channel:</span>
+  </div>
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="monthlyChart" style="height:300px;"></div>
+    <div class="chart-box" id="weeklyChart" style="height:300px;"></div>
+  </div>
+
+  <h3 class="section-title">Top Stores by Activations</h3>
+  <div id="tenantTable"></div>
+
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+
+<script>
+let DATA = null;
+let selected = new Set(['F2F']);
+
+function render() {
+  const chans = Array.from(selected);
+  const monthly = aggregateByPeriod(DATA.monthly_by_channel, 'month');
+  const weekly = aggregateByPeriod(DATA.weekly_by_channel, 'week');
+
+  const mX = monthly.map(r => fmtMonth(toDate(r.period)));
+  spotBar('monthlyChart', mX, monthly.map(r => r.cnt), 'Monthly Activations — Trading Stores (13 months)', PALETTE.sonicBlue);
+
+  const wX = weekly.map(r => fmtWeek(toDate(r.period)));
+  spotBar('weeklyChart', wX, weekly.map(r => r.cnt), 'Weekly Activations — Trading Stores (26 weeks)', PALETTE.hypermint);
+
+  const thisMonthKey = monthly[monthly.length - 1] ? monthly[monthly.length - 1].period : null;
+  const lastMonthKey = monthly.length >= 2 ? monthly[monthly.length - 2].period : null;
+  const thisM = thisMonthKey ? monthly[monthly.length - 1].cnt : 0;
+  const lastM = lastMonthKey ? monthly[monthly.length - 2].cnt : 0;
+  const last7 = DATA.last7_by_channel.filter(r => chans.includes(r.channel)).reduce((a, r) => a + r.cnt, 0);
+
+  renderKpiRow('kpiRow', [
+    { label: 'This Month', value: fmtNum(thisM) },
+    { label: 'Last Month', value: fmtNum(lastM), delta: thisM - lastM },
+    { label: 'Last 7 Days', value: fmtNum(last7) },
+    { label: 'Active Channels', value: chans.length ? chans.join(', ') : 'All' },
+  ]);
+
+  renderTenantTable(chans);
+}
+
+function aggregateByPeriod(rows, key) {
+  const filtered = rows.filter(r => selected.has(r.channel));
+  const buckets = {};
+  filtered.forEach(r => { buckets[r[key]] = (buckets[r[key]] || 0) + r.cnt; });
+  return Object.keys(buckets).sort().map(k => ({ period: k, cnt: buckets[k] }));
+}
+
+function renderTenantTable(chans) {
+  const totals = {};
+  DATA.top_tenants_by_channel.filter(r => chans.includes(r.channel)).forEach(r => {
+    if (!totals[r.tenant]) totals[r.tenant] = { tenant: r.tenant, this_month: 0, last_month: 0 };
+    totals[r.tenant].this_month += r.this_month;
+    totals[r.tenant].last_month += r.last_month;
+  });
+  const rows = Object.values(totals).sort((a, b) => b.this_month - a.this_month).slice(0, 20);
+  if (!rows.length) {
+    document.getElementById('tenantTable').innerHTML = '<p class="section-sub">No store data for selected channels.</p>';
+    return;
+  }
+  const body = rows.map((r, i) => {
+    const delta = r.this_month - r.last_month;
+    const deltaColor = delta >= 0 ? 'var(--hypermint)' : 'var(--highvolt)';
+    const deltaStr = (delta >= 0 ? '+' : '') + fmtNum(delta);
+    return `<tr>
+      <td class="rank">${i + 1}.</td><td>${r.tenant}</td>
+      <td class="num" style="color:var(--hypermint);">${fmtNum(r.this_month)}</td>
+      <td class="num" style="color:var(--sonic-blue);">${fmtNum(r.last_month)}</td>
+      <td class="num" style="color:${deltaColor};">${deltaStr}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tenantTable').innerHTML = `
+    <table class="league">
+      <thead><tr><th>#</th><th>Store</th><th class="num">This Month</th><th class="num">Last Month</th><th class="num">Δ</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+fetch('../data/12_trading_store_trend.json')
+  .then(r => r.json())
+  .then(data => {
+    DATA = data;
+    const channels = ['F2F', 'Telesales', 'Digital', 'OTHER'];
+    const row = document.getElementById('filterRow');
+    channels.forEach(c => {
+      const chip = document.createElement('span');
+      chip.className = 'chip' + (selected.has(c) ? ' active' : '');
+      chip.textContent = c;
+      chip.onclick = () => {
+        if (selected.has(c)) selected.delete(c); else selected.add(c);
+        chip.classList.toggle('active');
+        render();
+      };
+      row.appendChild(chip);
+    });
+    render();
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

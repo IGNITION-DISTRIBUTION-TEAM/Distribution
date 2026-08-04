@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recharge Revenue Monthly | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Recharges</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Recharge Revenue Monthly</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="stackedChart" style="height:320px;"></div>
+    <div class="chart-box" id="totalChart" style="height:320px;"></div>
+  </div>
+  <h3 class="section-title">Monthly Revenue Detail</h3>
+  <div id="detailTable"></div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/21_recharge_revenue_monthly.json')
+  .then(r => r.json())
+  .then(data => {
+    const m = data.monthly.map(r => ({ ...r, total: r.cellc + r.voucher + r.app + r.billrun + r.postpaid + r.website }));
+    const x = m.map(r => fmtMonth(toDate(r.month)));
+
+    const thisM = m[m.length - 1], lastM = m[m.length - 2];
+    renderKpiRow('kpiRow', [
+      { label: 'Total Revenue This Month', value: fmtCurrency(thisM.total) },
+      { label: 'Total Revenue Last Month', value: fmtCurrency(lastM.total), delta: Math.round(thisM.total - lastM.total) },
+      { label: 'Cell C Recharge This Month', value: fmtCurrency(thisM.cellc) },
+      { label: 'App Purchases This Month', value: fmtCurrency(thisM.app) },
+    ]);
+
+    spotStackedBar('stackedChart', x, [
+      { name: 'Cell C Recharge', y: m.map(r => r.cellc), color: PALETTE.hypermint },
+      { name: 'Billrun', y: m.map(r => r.billrun), color: PALETTE.sonicBlue },
+      { name: 'Postpaid', y: m.map(r => r.postpaid), color: PALETTE.ultraviolet },
+      { name: 'App', y: m.map(r => r.app), color: PALETTE.highvolt },
+      { name: 'Voucher', y: m.map(r => r.voucher), color: '#9b59b6' },
+      { name: 'Website', y: m.map(r => r.website), color: '#1abc9c' },
+    ], 'Monthly Revenue by Stream (Stacked)');
+
+    spotBar('totalChart', x, m.map(r => r.total), 'Total Monthly Revenue', PALETTE.hypermint);
+
+    const rows = m.slice().reverse().map(r => `
+      <tr><td>${fmtMonth(toDate(r.month))}</td>
+        <td class="num">${fmtCurrency(r.cellc)}</td><td class="num">${fmtCurrency(r.billrun)}</td>
+        <td class="num">${fmtCurrency(r.postpaid)}</td><td class="num">${fmtCurrency(r.app)}</td>
+        <td class="num">${fmtCurrency(r.voucher)}</td><td class="num">${fmtCurrency(r.website)}</td>
+        <td class="num" style="font-weight:600;">${fmtCurrency(r.total)}</td></tr>`).join('');
+    document.getElementById('detailTable').innerHTML = `
+      <table class="league">
+        <thead><tr><th>Month</th><th class="num">Cell C</th><th class="num">Billrun</th><th class="num">Postpaid</th>
+          <th class="num">App</th><th class="num">Voucher</th><th class="num">Website</th><th class="num">Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

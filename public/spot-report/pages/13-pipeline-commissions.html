@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline & Provisional Commissions | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Sales</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Pipeline & Provisional Commissions</h2>
+  <hr class="spot-rule">
+  <p class="note-banner">Source: hand-maintained BDM pipeline tracker on SharePoint, weekly snapshot dated
+    2026-02-23 (latest available when pulled 2026-07-28) — a one-time pull, not a live connection, and already
+    ~5 months stale. No decision-maker contact details are shown here — counts only.
+    <strong style="color:var(--highvolt);">"Provisional Commissions" isn't available</strong> — this workbook
+    has no Rand-value or commission column, only pipeline stage tracking.</p>
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="funnelChart" style="height:320px;"></div>
+    <div class="chart-box" id="categoryChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="stackedChart" style="height:340px;"></div>
+    <div class="chart-box" id="winRateChart" style="height:340px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/13_pipeline_commissions.json')
+  .then(r => r.json())
+  .then(data => {
+    const rows = data.rows;
+    const stageTotals = {};
+    rows.forEach(r => { stageTotals[r.stage] = (stageTotals[r.stage] || 0) + r.count; });
+    const stageBySort = {};
+    rows.forEach(r => { stageBySort[r.stage] = r.sort; });
+    const stagesAsc = Object.keys(stageTotals).sort((a, b) => stageBySort[a] - stageBySort[b]);
+
+    const totalPipeline = rows.reduce((a, r) => a + r.count, 0);
+    const won = stageTotals['Live and Trading'] || 0;
+    const lost = stageTotals['Not interested or deal lost'] || 0;
+    const active = totalPipeline - won - lost;
+    const winRate = (won + lost) ? (won / (won + lost) * 100) : 0;
+
+    renderKpiRow('kpiRow', [
+      { label: 'Total Pipeline (this snapshot)', value: fmtNum(totalPipeline) },
+      { label: 'Active (in progress)', value: fmtNum(active) },
+      { label: 'Live and Trading (won)', value: fmtNum(won) },
+      { label: 'Win Rate (won / won+lost)', value: winRate.toFixed(1) + '%' },
+    ]);
+
+    Plotly.newPlot('funnelChart', [{
+      type: 'funnel', y: stagesAsc, x: stagesAsc.map(s => stageTotals[s]),
+      textinfo: 'value+percent initial',
+      marker: { color: CHART_PALETTE.concat(CHART_PALETTE).slice(0, stagesAsc.length) },
+    }], {
+      title: { text: 'Pipeline Funnel by Stage', font: { color: PALETTE.zeroWhite, size: 14 }, x: 0 },
+      paper_bgcolor: PALETTE.surface1, plot_bgcolor: PALETTE.surface1,
+      font: { color: '#888', size: 11 }, margin: { l: 8, r: 8, t: 40, b: 8 },
+    }, PLOTLY_CFG);
+
+    const catTotals = {};
+    rows.forEach(r => { catTotals[r.category] = (catTotals[r.category] || 0) + r.count; });
+    const cats = Object.keys(catTotals).sort((a, b) => catTotals[b] - catTotals[a]);
+    Plotly.newPlot('categoryChart', [{
+      x: cats, y: cats.map(c => catTotals[c]), type: 'bar',
+      marker: { color: CHART_PALETTE.slice(0, cats.length), line: { width: 0 } },
+      hovertemplate: '%{x}<br><b>%{y:,}</b><extra></extra>',
+    }], baseLayout('Pipeline by Category (all stages)'), PLOTLY_CFG);
+
+    const stagesDesc = stagesAsc.slice().reverse();
+    const stackedTraces = cats.map((cat, i) => ({
+      y: stagesDesc, x: stagesDesc.map(s => (rows.find(r => r.stage === s && r.category === cat) || { count: 0 }).count),
+      type: 'bar', orientation: 'h', name: cat,
+      marker: { color: CHART_PALETTE[i % CHART_PALETTE.length], line: { width: 0 } },
+    }));
+    const stackedLayout = baseLayout('Stage by Category (Stacked)');
+    stackedLayout.barmode = 'stack';
+    Plotly.newPlot('stackedChart', stackedTraces, stackedLayout, PLOTLY_CFG);
+
+    const winByCatWon = {}, winByCatLost = {};
+    rows.filter(r => r.stage === 'Live and Trading').forEach(r => { winByCatWon[r.category] = r.count; });
+    rows.filter(r => r.stage === 'Not interested or deal lost').forEach(r => { winByCatLost[r.category] = r.count; });
+    const catsWithBoth = Object.keys({ ...winByCatWon, ...winByCatLost });
+    const winRates = catsWithBoth.map(c => {
+      const w = winByCatWon[c] || 0, l = winByCatLost[c] || 0;
+      return (w + l) ? Math.round(w / (w + l) * 1000) / 10 : null;
+    }).map(v => v == null ? 0 : v);
+    Plotly.newPlot('winRateChart', [{
+      x: catsWithBoth, y: winRates, type: 'bar',
+      marker: { color: PALETTE.hypermint, line: { width: 0 } },
+      hovertemplate: '%{x}<br><b>%{y:.1f}%%</b><extra></extra>',
+    }], (() => { const l = baseLayout('Win Rate by Category (won ÷ won+lost)');
+      l.yaxis = { showgrid: true, gridcolor: PALETTE.border, ticksuffix: '%', range: [0, 100] }; return l; })(), PLOTLY_CFG);
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

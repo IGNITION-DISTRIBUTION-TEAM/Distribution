@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Revenue Comparisons | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Recharges</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Revenue Comparisons</h2>
+  <hr class="spot-rule">
+  <h3 class="section-title" style="margin-top:0;">This Month vs Last Month</h3>
+  <div class="kpi-row" id="kpiRow" style="margin-bottom:16px;"></div>
+  <div class="chart-box" id="groupedChart" style="height:320px; margin-bottom:16px;"></div>
+  <div class="grid-2">
+    <div class="chart-box" id="shareChart" style="height:300px;"></div>
+    <div class="chart-box" id="momChart" style="height:300px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+const STREAMS = { "Cell C Recharge": "cellc", "Retail Voucher": "voucher", "App Purchases": "app", "Billrun": "billrun", "Postpaid": "postpaid" };
+
+fetch('../data/22_revenue_comparisons.json')
+  .then(r => r.json())
+  .then(data => {
+    const m = data.monthly;
+    const x = m.map(r => fmtMonth(toDate(r.month)));
+    const names = Object.keys(STREAMS);
+    const colours = [PALETTE.hypermint, PALETTE.sonicBlue, PALETTE.ultraviolet, PALETTE.highvolt, '#9b59b6'];
+
+    const thisM = m[m.length - 1], lastM = m[m.length - 2];
+    renderKpiRow('kpiRow', names.map((n, i) => ({
+      label: n, value: fmtCurrency(thisM[STREAMS[n]]), delta: Math.round(thisM[STREAMS[n]] - lastM[STREAMS[n]]),
+    })));
+
+    spotMultiBar('groupedChart', x, names.map((n, i) => ({ name: n, color: colours[i], y: m.map(r => r[STREAMS[n]]) })),
+      'Revenue by Stream — Side by Side (13 months)');
+
+    const total = m.map(r => names.reduce((a, n) => a + r[STREAMS[n]], 0));
+    Plotly.newPlot('shareChart',
+      names.map((n, i) => ({
+        x, y: m.map((r, j) => total[j] ? Math.round(r[STREAMS[n]] / total[j] * 1000) / 10 : 0),
+        type: 'scatter', mode: 'lines', name: n, stackgroup: 'one', line: { color: colours[i], width: 2 },
+      })),
+      (() => { const l = baseLayout('Revenue Share by Stream (%)'); l.yaxis = { showgrid: true, gridcolor: PALETTE.border, ticksuffix: '%', range: [0, 100] };
+        l.legend = { orientation: 'h', y: 1.14, font: { color: PALETTE.zeroWhite, size: 10 }, bgcolor: 'rgba(0,0,0,0)' }; return l; })(),
+      PLOTLY_CFG);
+
+    const curr = m[m.length - 1], prev = m[m.length - 2];
+    const deltas = names.map(n => curr[STREAMS[n]] - prev[STREAMS[n]]);
+    Plotly.newPlot('momChart', [{
+      x: names, y: deltas, type: 'bar',
+      marker: { color: deltas.map(d => d >= 0 ? PALETTE.hypermint : PALETTE.highvolt), line: { width: 0 } },
+      hovertemplate: '%{x}<br><b>R%{y:+,.0f}</b><extra></extra>',
+    }], baseLayout(`MoM Revenue Change — ${fmtMonthLong(toDate(curr.month))}`), PLOTLY_CFG);
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

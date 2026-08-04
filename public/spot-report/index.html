@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telco Retail | Spot Dashboard</title>
+<link rel="stylesheet" href="assets/spot-ci.css">
+<style>
+  .section-card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 22px 22px; margin-bottom: 20px;
+  }
+  .section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .section-head .icon { font-size: 22px; }
+  .section-head .title { font-size: 16px; font-weight: 700; }
+  .section-list { margin: 0; padding-left: 16px; list-style: disc; }
+  .section-list li { padding: 2px 0; font-size: 13px; }
+  .section-list li.sub { padding-left: 14px; color: #888; }
+  .section-list a { text-decoration: none; font-weight: 600; }
+  .section-list a:hover { text-decoration: underline; }
+  .section-list .pending { color: #aaa; }
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 1000px) { .cols3 { grid-template-columns: 1fr; } }
+  .hero-badge {
+    background: var(--hypermint); color: var(--inkcore); font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 20px; letter-spacing: 0.06em;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+  </div>
+  <span class="badge-pill">Static rebuild — pilot in progress</span>
+</div>
+
+<div class="page">
+  <div style="font-size:13px; color:#666; letter-spacing:0.14em; text-transform:uppercase; margin-bottom:8px;">
+    SPOT CONNECT
+  </div>
+  <h1 style="font-size:48px; font-weight:800; letter-spacing:-0.03em; margin:0; line-height:1.05;">Telco Retail</h1>
+  <div style="display:flex; align-items:center; gap:12px; margin-top:12px;">
+    <span class="hero-badge">PACK v1</span>
+    <span style="color:#555; font-size:13px;">Business Custodian: Siddeek Rahim</span>
+  </div>
+  <hr class="spot-rule" style="margin-top:24px;">
+
+  <p style="color:#888; max-width:680px; font-size:15px; margin-bottom:32px;">
+    Static, GitHub-Pages-hosted rebuild of the Telco Retail Streamlit dashboard.
+    Pages are ported one at a time — linked pages below are live; greyed-out
+    pages are still pending.
+  </p>
+
+  <div class="cols3" id="sections"></div>
+
+  <footer>
+    <span>SPOT · Telco Retail · Pack v1</span>
+    <span>Business Custodian: Siddeek Rahim · Powered by Snowflake</span>
+  </footer>
+</div>
+
+<script>
+// name -> href for pages that have been ported so far. Add an entry here
+// each time a new page/*.html file goes live.
+const LIVE_PAGES = {
+  "Sales Trends": "pages/01-sales-trends.html",
+  "Exco Scorecard": "pages/33-exco-scorecard.html",
+  "Spot Connect Book": "pages/34-spot-connect-book.html",
+  "OKR Scorecard": "pages/35-okr-scorecard.html",
+  "OKR Trends": "pages/36-okr-trends.html",
+  "Revenue Trends": "pages/37-revenue-trends.html",
+  "Voice Usage by Tenant": "pages/38-voice-usage-tenant.html",
+  "Data Usage by Tenant": "pages/39-data-usage-tenant.html",
+  "Retain Users via Free Airtime": "pages/40-retain-users-airtime.html",
+  "Quality of Sales by Tenant & Store": "pages/02-quality-of-sales.html",
+  "New SIM Activations & Utilisation 1": "pages/11-sim-activations-1.html",
+  "New SIM Activations & Utilisation 2": "pages/41-sim-activations-2.html",
+  "New SIM Activations & Utilisation 3": "pages/42-sim-activations-3.html",
+  "New SIM Activations & Utilisation 4": "pages/43-sim-activations-4.html",
+  "Trading Store Trend": "pages/12-trading-store-trend.html",
+  "Pipeline & Provisional Commissions": "pages/13-pipeline-commissions.html",
+  "Spar": "pages/03-spar-scorecard.html",
+  "Build It": "pages/04-build-it-scorecard.html",
+  "Mica": "pages/05-mica-scorecard.html",
+  "Pet Pool & Home": "pages/06-pet-pool-scorecard.html",
+  "Aheers": "pages/07-aheers-scorecard.html",
+  "Fashion Fusion": "pages/08-fashion-fusion-scorecard.html",
+  "Progas": "pages/09-progas-scorecard.html",
+  "Midas": "pages/10-midas-scorecard.html",
+  "Subscriptions - Telesales": "pages/14-subscriptions-telesales.html",
+  "Subscriptions - App": "pages/44-subscriptions-app.html",
+  "Subscriptions - WhatsApp": "pages/45-subscriptions-whatsapp.html",
+  "Subscriptions - Below the Line": "pages/46-subscriptions-below-the-line.html",
+  "Subscriptions - Mobile Store": "pages/47-subscriptions-mobile-store.html",
+  "Subscriptions - Mobile Store DigiM VAS": "pages/48-subscriptions-digim-vas.html",
+  "Subscriptions Cohort Analysis": "pages/15-subscriptions-cohort.html",
+  "Commercial Cohort Analysis": "pages/16-commercial-cohort.html",
+  "Wastage": "pages/17-wastage.html",
+  "Pargo Collections": "pages/18-pargo-collections.html",
+  "Recharge Qty Dash": "pages/19-recharge-qty-dash.html",
+  "Recharge Trend by Recharge Type": "pages/20-recharge-trend-type.html",
+  "Recharge Revenue Monthly": "pages/21-recharge-revenue-monthly.html",
+  "Revenue Comparisons": "pages/22-revenue-comparisons.html",
+  "Prepaid Recharge Projection": "pages/23-prepaid-recharge-projection.html",
+};
+
+const SECTIONS = [
+  { icon: "🎯", title: "Strategy & Book", accent: "var(--hypermint)", pages: [
+      "Exco Scorecard", "Spot Connect Book", "OKR Scorecard", "OKR Trends",
+      "Revenue Trends", "Voice Usage by Tenant", "Data Usage by Tenant",
+      "Retain Users via Free Airtime",
+  ]},
+  { icon: "📈", title: "Sales", accent: "var(--sonic-blue)", pages: [
+      "Sales Trends", "Quality of Sales by Tenant & Store",
+      "New SIM Activations & Utilisation 1", "New SIM Activations & Utilisation 2",
+      "New SIM Activations & Utilisation 3", "New SIM Activations & Utilisation 4",
+      "Trading Store Trend", "Scorecards",
+      { sub: "↳ Spar" }, { sub: "↳ Build It" }, { sub: "↳ Mica" }, { sub: "↳ Pet Pool & Home" },
+      { sub: "↳ Aheers" }, { sub: "↳ Fashion Fusion" }, { sub: "↳ Progas" }, { sub: "↳ Midas" },
+      "Pipeline & Provisional Commissions",
+  ]},
+  { icon: "🔄", title: "Subscriptions", accent: "var(--ultraviolet)", pages: [
+      "Subscriptions - Telesales", "Subscriptions - App", "Subscriptions - WhatsApp",
+      "Subscriptions - Below the Line", "Subscriptions - Mobile Store",
+      "Subscriptions - Mobile Store DigiM VAS", "Subscriptions Cohort Analysis",
+      { sub: "↳ Telesales Billed/Paid · App Billed/Paid" },
+  ]},
+  { icon: "💼", title: "Commercial", accent: "#9b59b6", pages: [
+      "Commercial Cohort Analysis", { sub: "↳ Revenue Cohort · Cohorts 1/2/3 (Acq & Active)" },
+      "Wastage", "Pargo Collections",
+  ]},
+  { icon: "⚡", title: "Recharges", accent: "var(--highvolt)", pages: [
+      "Recharge Qty Dash", "Recharge Trend by Recharge Type", "Recharge Revenue Monthly",
+      "Revenue Comparisons", "Prepaid Recharge Projection",
+  ]},
+  { icon: "💰", title: "Financials", accent: "#f1c40f", pages: [
+      "Income Statement", "Income Statement Summary", "Revenue Metrics",
+      "Margin Efficiency Metrics", "Cost of Sale Metrics", "Opex Metrics",
+      "Acquisition Cost Metrics", "Forward 12 & Trailing 12", "Value of New Business",
+  ]},
+];
+
+function pageItemHtml(p) {
+  if (typeof p === 'object') {
+    const bare = p.sub.replace(/^↳\s*/, '');
+    if (LIVE_PAGES[bare]) {
+      return `<li class="sub"><a href="${LIVE_PAGES[bare]}" style="color:var(--zero-white);">${p.sub}</a></li>`;
+    }
+    return `<li class="sub">${p.sub}</li>`;
+  }
+  if (p === "Scorecards") {
+    return `<li>Scorecards</li>`;
+  }
+  if (LIVE_PAGES[p]) {
+    return `<li><a href="${LIVE_PAGES[p]}" style="color:var(--zero-white);">${p}</a></li>`;
+  }
+  return `<li class="pending">${p}</li>`;
+}
+
+document.getElementById('sections').innerHTML = SECTIONS.map(s => `
+  <div class="section-card" style="border-top:3px solid ${s.accent};">
+    <div class="section-head">
+      <span class="icon">${s.icon}</span>
+      <span class="title" style="color:${s.accent};">${s.title}</span>
+    </div>
+    <ul class="section-list">${s.pages.map(pageItemHtml).join('')}</ul>
+  </div>
+`).join('');
+</script>
+
+</body>
+</html>

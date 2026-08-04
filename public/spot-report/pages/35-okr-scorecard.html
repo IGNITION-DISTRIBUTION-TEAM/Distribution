@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OKR Scorecard | Telco Retail</title>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill page-badge">Strategy</span>
+  <h2 class="page-title" style="font-family:var(--font-header); margin:10px 0 0;">OKR Scorecard</h2>
+  <hr class="spot-rule">
+  <div id="placeholderBody"></div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+renderPlaceholderPage({
+  title: "OKR Scorecard", badge: "Strategy",
+  note: "OKR tracking requires a dedicated source table with targets, owners, and RAG statuses. Not currently available via MCP.",
+  kpis: [
+    { label: "OKRs On Track", source: "OKR tracking table" },
+    { label: "OKRs At Risk", source: "OKR tracking table" },
+    { label: "OKRs Off Track", source: "OKR tracking table" },
+    { label: "Completion %", source: "OKR tracking table" },
+  ],
+  chartRows: [[
+    { title: "OKR RAG Status — Current Quarter", source: "OKR tracking table" },
+    { title: "Key Results Progress by Objective", source: "OKR tracking table" },
+  ]],
+});
+</script>
+</body>
+</html>

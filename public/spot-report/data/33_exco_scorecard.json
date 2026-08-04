@@ -1,0 +1,34 @@
+{
+  "kpis": { "active_sims": 397155, "act_mtd": 5129, "act_lm": 66607, "rev_mtd": 849109.19 },
+  "monthly_activations": [
+    {"month":"2025-07-01","activations":52907},{"month":"2025-08-01","activations":68034},
+    {"month":"2025-09-01","activations":66532},{"month":"2025-10-01","activations":61942},
+    {"month":"2025-11-01","activations":65373},{"month":"2025-12-01","activations":55687},
+    {"month":"2026-01-01","activations":51100},{"month":"2026-02-01","activations":51609},
+    {"month":"2026-03-01","activations":60889},{"month":"2026-04-01","activations":55235},
+    {"month":"2026-05-01","activations":59825},{"month":"2026-06-01","activations":58727},
+    {"month":"2026-07-01","activations":66607},{"month":"2026-08-01","activations":5129}
+  ],
+  "monthly_revenue": [
+    {"month":"2025-07-01","revenue":7313031.29},{"month":"2025-08-01","revenue":9045358.31},
+    {"month":"2025-09-01","revenue":9459751.18},{"month":"2025-10-01","revenue":10007975.06},
+    {"month":"2025-11-01","revenue":10386621.64},{"month":"2025-12-01","revenue":12922875.81},
+    {"month":"2026-01-01","revenue":11452441.44},{"month":"2026-02-01","revenue":9350092.87},
+    {"month":"2026-03-01","revenue":10422983.35},{"month":"2026-04-01","revenue":10167844.40},
+    {"month":"2026-05-01","revenue":10323884.89},{"month":"2026-06-01","revenue":9982561.31},
+    {"month":"2026-07-01","revenue":10235126.62},{"month":"2026-08-01","revenue":849109.19}
+  ],
+  "channel_mix": [
+    {"channel":"Unknown","sims":2557762},{"channel":"Telesales","sims":2092982},
+    {"channel":"F2F","sims":288093},{"channel":"Digital","sims":177408},{"channel":"OTHER","sims":25327}
+  ],
+  "churn_reasons": [
+    {"reason":"(blank)","count":206215},{"reason":"Unknown","count":3474}
+  ],
+  "enps": [
+    {"period":"FY24 Q1","enps":13,"pending":false},{"period":"FY24 Q2","enps":67,"pending":false},
+    {"period":"FY24 Q3","enps":58,"pending":false},{"period":"FY24 Q4","enps":75,"pending":false},
+    {"period":"FY25 Q1","enps":54,"pending":false},{"period":"FY25 Q2","enps":36,"pending":false},
+    {"period":"FY25 Q3","enps":0,"pending":true}
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "kpis": { "total_sims": 5141572, "active_sims": 397155, "ltm_revenue": 122901616.70 },
+  "monthly_activations": [
+    {"month":"2025-07-01","activations":52907},{"month":"2025-08-01","activations":68034},
+    {"month":"2025-09-01","activations":66532},{"month":"2025-10-01","activations":61942},
+    {"month":"2025-11-01","activations":65373},{"month":"2025-12-01","activations":55687},
+    {"month":"2026-01-01","activations":51100},{"month":"2026-02-01","activations":51609},
+    {"month":"2026-03-01","activations":60889},{"month":"2026-04-01","activations":55235},
+    {"month":"2026-05-01","activations":59825},{"month":"2026-06-01","activations":58727},
+    {"month":"2026-07-01","activations":66607},{"month":"2026-08-01","activations":5129}
+  ],
+  "monthly_revenue": [
+    {"month":"2025-07-01","revenue":7313031.29},{"month":"2025-08-01","revenue":9045358.31},
+    {"month":"2025-09-01","revenue":9459751.18},{"month":"2025-10-01","revenue":10007975.06},
+    {"month":"2025-11-01","revenue":10386621.64},{"month":"2025-12-01","revenue":12922875.81},
+    {"month":"2026-01-01","revenue":11452441.44},{"month":"2026-02-01","revenue":9350092.87},
+    {"month":"2026-03-01","revenue":10422983.35},{"month":"2026-04-01","revenue":10167844.40},
+    {"month":"2026-05-01","revenue":10323884.89},{"month":"2026-06-01","revenue":9982561.31},
+    {"month":"2026-07-01","revenue":10235126.62},{"month":"2026-08-01","revenue":849109.19}
+  ],
+  "grouping_mix": [
+    {"grouping":"Prepay","sims":391183},{"grouping":"Postpay","sims":5770},{"grouping":"FLTE","sims":202}
+  ],
+  "channel_mix": [
+    {"channel":"Unknown","sims":2557762},{"channel":"Telesales","sims":2092982},
+    {"channel":"F2F","sims":288093},{"channel":"Digital","sims":177408},{"channel":"OTHER","sims":25327}
+  ]
+}

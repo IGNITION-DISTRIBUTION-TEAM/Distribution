@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retain Users via Free Airtime | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+<div class="page">
+  <span class="badge-pill">Strategy</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Retain Users via Free Airtime</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="qtyChart" style="height:300px;"></div>
+    <div class="chart-box" id="valueChart" style="height:300px;"></div>
+  </div>
+  <div class="grid-2">
+    <div>
+      <div class="chart-box" id="retentionChart" style="height:300px;"></div>
+      <p class="section-sub" style="margin-top:6px;">"Still active" = usage recorded in the last 7 days, from VW_ACTIVE_SUBSCRIPTIONS_USAGE_DETAILS.</p>
+    </div>
+    <div>
+      <div class="chart-box" id="roiChart" style="height:300px;"></div>
+      <p class="section-sub" style="margin-top:6px;">Revenue = same-month non-reward revenue from accounts that received a reward that month.</p>
+    </div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/40_retain_users_airtime.json')
+  .then(r => r.json())
+  .then(data => {
+    const m = data.monthly;
+    const thisQty = m[m.length - 1].reward_qty, thisVal = m[m.length - 1].reward_value;
+    const lastQty = m[m.length - 2].reward_qty;
+    const totalVal = m.reduce((a, r) => a + r.reward_value, 0);
+    renderKpiRow('kpiRow', [
+      { label: 'Rewards Paid This Month (Qty)', value: fmtNum(thisQty) },
+      { label: 'Reward Value This Month', value: fmtCurrency(thisVal) },
+      { label: 'Rewards Last Month (Qty)', value: fmtNum(lastQty), delta: thisQty - lastQty },
+      { label: 'Total Reward Spend (13M)', value: fmtCurrency(totalVal) },
+    ]);
+
+    const x = m.map(r => fmtMonth(toDate(r.month)));
+    spotBar('qtyChart', x, m.map(r => r.reward_qty), 'Free Airtime Rewards Paid — Monthly Qty (13 months)', PALETTE.hypermint);
+    spotBar('valueChart', x, m.map(r => r.reward_value), 'Free Airtime Reward Value — Monthly (R)', PALETTE.sonicBlue);
+
+    const ret = data.retention_by_reward.map(r => ({ ...r, pct: Math.round(r.still_active / r.total * 1000) / 10 }));
+    Plotly.newPlot('retentionChart', [{
+      x: ret.map(r => r.group), y: ret.map(r => r.pct), type: 'bar',
+      marker: { color: [PALETTE.hypermint, PALETTE.highvolt], line: { width: 0 } },
+      text: ret.map(r => r.pct.toFixed(1) + '%'), textposition: 'outside',
+      hovertemplate: '%{x}<br><b>%{y:.1f}%% still active</b><extra></extra>',
+    }], (() => { const l = baseLayout('Retention Rate: Reward Recipients vs No Reward');
+      l.yaxis = { showgrid: true, gridcolor: PALETTE.border, ticksuffix: '%', range: [0, 100] }; return l; })(), PLOTLY_CFG);
+
+    spotLine('roiChart', data.revenue_per_recipient.map(r => fmtMonth(toDate(r.month))),
+      [{ name: 'Revenue per Recipient', y: data.revenue_per_recipient.map(r => r.recipients ? r.recipient_revenue / r.recipients : 0), color: PALETTE.ultraviolet }],
+      'Revenue per Reward Recipient — Monthly');
+
+    document.getElementById('asOfBadge').textContent = 'Data as of ' + m[m.length - 1].month.slice(0, 7);
+  })
+  .catch(err => { document.getElementById('asOfBadge').textContent = 'Failed to load data'; console.error(err); });
+</script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Trends | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+
+<div class="page">
+  <span class="badge-pill">Sales</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Sales Trends</h2>
+  <hr class="spot-rule">
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="filter-row" id="filterRow">
+    <span class="filter-label">Tenant Filter (charts below only):</span>
+  </div>
+  <div class="filter-note" id="filterNote"></div>
+
+  <div class="chart-box chart-full" id="rollingCombo" style="height:340px;"></div>
+
+  <div class="grid-2x2">
+    <div class="chart-box" id="last7Chart" style="height:300px;"></div>
+    <div class="chart-box" id="weeklyChart" style="height:300px;"></div>
+    <div class="chart-box" id="monthlyChart" style="height:300px;"></div>
+    <div class="chart-box" id="dailyChart" style="height:300px;"></div>
+  </div>
+
+  <h3 class="section-title">SIM Quality Indicators</h3>
+  <p class="section-sub">Source: active subscriptions view · last 90 days by activation date. Unaffected by the tenant filter above.</p>
+  <div class="grid-2">
+    <div class="chart-box" id="snuChart" style="height:280px;"></div>
+    <div class="chart-box" id="active1Chart" style="height:280px;"></div>
+  </div>
+
+  <h3 class="section-title">Tenant Rankings</h3>
+  <p class="section-sub">Best → worst by activations. Unaffected by the tenant filter above.</p>
+  <div class="grid-2" id="leagueTables"></div>
+
+  <footer>
+    <span>Spot Telco Retail — Snowflake UCONNECT_DW</span>
+    <span id="generatedFooter">Static rebuild</span>
+  </footer>
+</div>
+
+<script>
+let DATA = null;
+let denseDates = [];
+let baseByDate = {};
+let groupByDate = {};
+let selectedGroups = new Set();
+
+function buildIndexes() {
+  baseByDate = {};
+  DATA.daily.forEach(r => { baseByDate[r.date] = r.activations; });
+  groupByDate = {};
+  DATA.daily_by_group.forEach(r => {
+    if (!groupByDate[r.group]) groupByDate[r.group] = {};
+    groupByDate[r.group][r.date] = r.activations;
+  });
+}
+
+function currentSeries() {
+  if (selectedGroups.size === 0) {
+    return denseDates.map(d => ({ date: d, value: baseByDate[dateStr(d)] || 0 }));
+  }
+  return denseDates.map(d => {
+    const ds = dateStr(d);
+    let sum = 0;
+    selectedGroups.forEach(g => { sum += (groupByDate[g] && groupByDate[g][ds]) || 0; });
+    return { date: d, value: sum };
+  });
+}
+
+function renderTrendCharts() {
+  const series = currentSeries();
+  const last90 = series.slice(-90);
+  const rolling90 = rollingAvg(series, 7).slice(-90);
+
+  spotCombo('rollingCombo', rolling90.map(r => fmtDay(r.date)),
+    { name: 'Daily Activations', y: rolling90.map(r => r.value), color: PALETTE.sonicBlue },
+    { name: '7-Day Avg', y: rolling90.map(r => r.rolling), color: PALETTE.hypermint },
+    'Daily Activations & 7-Day Rolling Average');
+
+  const last7 = series.slice(-7);
+  spotBar('last7Chart', last7.map(r => fmtDayName(r.date)), last7.map(r => r.value),
+    'Last 7 Days — Daily Activations', PALETTE.hypermint);
+
+  const weekly = aggregateWeekly(series).slice(-26);
+  spotBar('weeklyChart', weekly.map(r => fmtWeek(r.date)), weekly.map(r => r.value),
+    'Weekly Activations', PALETTE.ultraviolet);
+
+  const monthly = aggregateMonthly(series).slice(-13);
+  spotBar('monthlyChart', monthly.map(r => fmtMonth(r.date)), monthly.map(r => r.value),
+    'Monthly Activations', PALETTE.highvolt);
+
+  spotBar('dailyChart', last90.map(r => fmtDay(r.date)), last90.map(r => r.value),
+    'Daily Activations (Rolling 13 Months)', PALETTE.sonicBlue);
+
+  renderKpis(series, monthly);
+}
+
+function renderKpis(series, monthly) {
+  const today = series[series.length - 1];
+  const last7Total = series.slice(-7).reduce((a, r) => a + r.value, 0);
+  const thisMonthTotal = monthly.length >= 1 ? monthly[monthly.length - 1].value : 0;
+  const lastMonthTotal = monthly.length >= 2 ? monthly[monthly.length - 2].value : 0;
+  renderKpiRow('kpiRow', [
+    { label: 'Today', value: fmtNum(today.value) },
+    { label: 'Last 7 Days', value: fmtNum(last7Total) },
+    { label: 'This Month', value: fmtNum(thisMonthTotal) },
+    { label: 'vs Last Month', value: fmtNum(lastMonthTotal), delta: thisMonthTotal - lastMonthTotal },
+  ]);
+}
+
+function renderStaticCharts() {
+  const x = DATA.snu_active1.map(r => fmtDay(toDate(r.date)));
+  spotBar('snuChart', x, DATA.snu_active1.map(r => r.sims_never_used), 'SIMs Never Used — by Activation Date', PALETTE.highvolt);
+  spotBar('active1Chart', x, DATA.snu_active1.map(r => r.active_1), 'Active 1 — by Activation Date', PALETTE.hypermint);
+}
+
+function groupAndSort(field) {
+  const totals = {};
+  DATA.tenant_month.forEach(r => { totals[r.group] = (totals[r.group] || 0) + r[field]; });
+  const rows = Object.keys(totals).map(g => ({ label: g, value: totals[g] }));
+  const others = rows.filter(r => r.label === 'Other Tenants');
+  const rest = rows.filter(r => r.label !== 'Other Tenants').sort((a, b) => b.value - a.value);
+  return rest.concat(others);
+}
+
+function renderLeagueTables() {
+  const maxDate = denseDates[denseDates.length - 1];
+  const thisMonthLabel = fmtMonthLong(maxDate);
+  const prevMonthLabel = fmtMonthLong(addDays(monthStart(maxDate), -1));
+  document.getElementById('leagueTables').innerHTML =
+    renderLeagueTable(groupAndSort('last_month'), PALETTE.sonicBlue, prevMonthLabel) +
+    renderLeagueTable(groupAndSort('this_month'), PALETTE.hypermint, thisMonthLabel);
+}
+
+fetch('../data/01_sales_trends.json')
+  .then(r => r.json())
+  .then(data => {
+    DATA = data;
+    buildIndexes();
+    denseDates = denseDateRange(DATA.daily.map(r => r.date));
+    const groupsPresent = new Set(DATA.daily_by_group.map(r => r.group));
+    const ordered = DEFINED_GROUPS.filter(g => groupsPresent.has(g));
+    if (groupsPresent.has('Other Tenants')) ordered.push('Other Tenants');
+    selectedGroups = renderChips('filterRow', ordered, (sel) => {
+      selectedGroups = sel;
+      updateFilterNote('filterNote', selectedGroups);
+      renderTrendCharts();
+    });
+    renderTrendCharts();
+    renderStaticCharts();
+    renderLeagueTables();
+    document.getElementById('asOfBadge').textContent = 'Data as of ' + dateStr(denseDates[denseDates.length - 1]);
+  })
+  .catch(err => {
+    document.getElementById('asOfBadge').textContent = 'Failed to load data';
+    console.error(err);
+  });
+</script>
+
+</body>
+</html>

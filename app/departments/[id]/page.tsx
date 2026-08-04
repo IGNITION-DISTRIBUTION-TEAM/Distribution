@@ -9,6 +9,7 @@ import { DiallerDashboard } from "@/components/dialler-dashboard"
 import { SpotDashboard } from "@/components/spot-dashboard"
 import { TicketsDashboard } from "@/components/tickets-dashboard"
 import { EngaigeDashboard } from "@/components/engaige-dashboard"
+import { SpotReportDashboard } from "@/components/spot-report-dashboard"
 import { Button } from "@/components/ui/button"
 import { isDepartmentId } from "@/lib/departments"
 
@@ -58,6 +59,8 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
       return <TicketsDashboard onBack={goBack} />
     case "engaige":
       return <EngaigeDashboard onBack={goBack} />
+    case "spot-report":
+      return <SpotReportDashboard onBack={goBack} />
     default:
       // Registered but has no dashboard yet (e.g. EDC "coming soon").
       return (

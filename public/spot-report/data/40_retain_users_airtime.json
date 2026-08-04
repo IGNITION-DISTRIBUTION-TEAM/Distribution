@@ -1,0 +1,27 @@
+{
+  "monthly": [
+    {"month":"2025-07-01","reward_qty":1892,"reward_value":8555.05},
+    {"month":"2025-08-01","reward_qty":2272,"reward_value":11837.81},
+    {"month":"2025-09-01","reward_qty":2776,"reward_value":15272.52},
+    {"month":"2025-10-01","reward_qty":2878,"reward_value":15317.94},
+    {"month":"2025-11-01","reward_qty":1910,"reward_value":8965.95},
+    {"month":"2025-12-01","reward_qty":591,"reward_value":3266.67},
+    {"month":"2026-01-01","reward_qty":0,"reward_value":0.00},
+    {"month":"2026-02-01","reward_qty":0,"reward_value":0.00},
+    {"month":"2026-03-01","reward_qty":8,"reward_value":36.80},
+    {"month":"2026-04-01","reward_qty":0,"reward_value":0.00},
+    {"month":"2026-05-01","reward_qty":0,"reward_value":0.00},
+    {"month":"2026-06-01","reward_qty":384,"reward_value":24513.60},
+    {"month":"2026-07-01","reward_qty":73,"reward_value":4609.60},
+    {"month":"2026-08-01","reward_qty":0,"reward_value":0.00}
+  ],
+  "retention_by_reward": [
+    {"group":"Reward Recipient","total":1149,"still_active":927},
+    {"group":"No Reward","total":389859,"still_active":213445}
+  ],
+  "revenue_per_recipient": [
+    {"month":"2026-03-01","recipients":3,"recipient_revenue":0.00},
+    {"month":"2026-06-01","recipients":378,"recipient_revenue":10226.89},
+    {"month":"2026-07-01","recipients":73,"recipient_revenue":2169.00}
+  ]
+}

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prepaid Recharge Projection | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Recharges</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Prepaid Recharge Projection</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="qtyChart" style="height:320px;"></div>
+    <div class="chart-box" id="valChart" style="height:320px;"></div>
+  </div>
+  <p style="color:var(--highvolt); font-size:11px; margin-top:4px;">⚠ Projection uses straight-line trend from last 3 months. Pending connection to budget / forecasting data for model-based projections.</p>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+function projectSeries(actualDates, actualVals, months) {
+  const lastDate = actualDates[actualDates.length - 1];
+  const last3 = actualVals.slice(-3);
+  const trend = last3.length >= 2 ? (last3[last3.length - 1] - last3[0]) / (last3.length - 1) : 0;
+  const lastVal = actualVals[actualVals.length - 1];
+  const fwdDates = [], fwdVals = [];
+  for (let i = 1; i <= months; i++) {
+    fwdDates.push(new Date(Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth() + i, 1)));
+    fwdVals.push(Math.max(0, lastVal + trend * i));
+  }
+  return { fwdDates, fwdVals };
+}
+
+fetch('../data/23_prepaid_recharge_projection.json')
+  .then(r => r.json())
+  .then(data => {
+    const m = data.monthly;
+    const avgQty = Math.round(m.reduce((a, r) => a + r.qty, 0) / m.length);
+    const avgVal = m.reduce((a, r) => a + r.value, 0) / m.length;
+    const lastM = m[m.length - 1];
+    renderKpiRow('kpiRow', [
+      { label: 'Recharges Last Month', value: fmtNum(lastM.qty) },
+      { label: 'Revenue Last Month', value: fmtCurrency(lastM.value) },
+      { label: '12M Avg Qty/Month', value: fmtNum(avgQty) },
+      { label: '12M Avg Revenue/Month', value: fmtCurrency(avgVal) },
+    ]);
+
+    const dates = m.map(r => toDate(r.month));
+    const qtys = m.map(r => r.qty);
+    const vals = m.map(r => r.value);
+    const projQty = projectSeries(dates, qtys, 6);
+    const projVal = projectSeries(dates, vals, 6);
+
+    Plotly.newPlot('qtyChart', [
+      { x: dates.map(fmtMonth), y: qtys, type: 'bar', name: 'Actual', marker: { color: PALETTE.sonicBlue, line: { width: 0 } } },
+      { x: projQty.fwdDates.map(fmtMonth), y: projQty.fwdVals, type: 'bar', name: 'Projected', opacity: 0.5,
+        marker: { color: PALETTE.hypermint, line: { width: 0 } } },
+    ], (() => { const l = baseLayout('Prepaid Recharge Qty — Actual + 6-Month Projection'); l.barmode = 'group';
+      l.legend = { orientation: 'h', y: 1.1, font: { color: PALETTE.zeroWhite, size: 11 }, bgcolor: 'rgba(0,0,0,0)' }; return l; })(), PLOTLY_CFG);
+
+    Plotly.newPlot('valChart', [
+      { x: dates.map(fmtMonth), y: vals, type: 'bar', name: 'Actual', marker: { color: PALETTE.sonicBlue, line: { width: 0 } } },
+      { x: projVal.fwdDates.map(fmtMonth), y: projVal.fwdVals, type: 'bar', name: 'Projected', opacity: 0.5,
+        marker: { color: PALETTE.hypermint, line: { width: 0 } } },
+    ], (() => { const l = baseLayout('Recharge Revenue — Actual + 6-Month Projection'); l.barmode = 'group';
+      l.legend = { orientation: 'h', y: 1.1, font: { color: PALETTE.zeroWhite, size: 11 }, bgcolor: 'rgba(0,0,0,0)' }; return l; })(), PLOTLY_CFG);
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

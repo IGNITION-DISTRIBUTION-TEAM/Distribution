@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pargo Collections | Telco Retail</title>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill page-badge">Commercial</span>
+  <h2 class="page-title" style="font-family:var(--font-header); margin:10px 0 0;">Pargo Collections</h2>
+  <hr class="spot-rule">
+  <div id="placeholderBody"></div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+renderPlaceholderPage({
+  title: "Pargo Collections", badge: "Commercial",
+  note: "Pargo logistics data is not available via the current MCP connection. Charts will populate once integrated.",
+  kpis: [
+    { label: "Parcels Sent MTD", source: "Pargo integration / logistics table" },
+    { label: "Parcels Collected MTD", source: "Pargo integration / logistics table" },
+    { label: "Collection Rate %", source: "Pargo integration / logistics table" },
+    { label: "Avg Days to Collect", source: "Pargo integration / logistics table" },
+  ],
+  chartRows: [
+    [
+      { title: "Monthly Collections Trend", source: "Pargo API / logistics table" },
+      { title: "Sent vs Collected — by Month", source: "Pargo API / logistics table" },
+    ],
+    [
+      { title: "Collections by Tenant", source: "Pargo API / logistics table" },
+      { title: "Aged Uncollected Parcels", source: "Pargo API / logistics table" },
+    ],
+  ],
+});
+</script>
+</body>
+</html>

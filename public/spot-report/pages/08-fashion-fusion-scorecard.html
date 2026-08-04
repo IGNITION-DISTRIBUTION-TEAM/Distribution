@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fashion Fusion Scorecard | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Scorecard</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Fashion Fusion Scorecard</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="kpi-row" id="wastageRow" style="margin-top:-8px;"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="dailyChart" style="height:310px;"></div>
+    <div class="placeholder-chart" style="height:310px;">
+      <div class="p-title">Sales Per Day (Avg) — Fashion Fusion</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: NEW QOS, ROS, SNU, AVG Vouchers</div>
+    </div>
+  </div>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="monthlyChart" style="height:310px;"></div>
+    <div class="placeholder-chart" style="height:310px;">
+      <div class="p-title">L12 Month Voucher Redemptions — Fashion Fusion</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: L12 month voucher redemptions</div>
+    </div>
+  </div>
+  <h3 class="section-title">Cohort Revenue Analysis</h3>
+  <div class="grid-2" style="margin-bottom:8px;">
+    <div class="placeholder-chart" style="height:280px;">
+      <div class="p-title">Average Revenue per Acquired — by Cohort Month</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: COHORT table</div>
+    </div>
+    <div class="placeholder-chart" style="height:280px;">
+      <div class="p-title">Total Margin — by Cohort Month</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: COHORT table</div>
+    </div>
+  </div>
+  <h3 class="section-title">Store Performance</h3>
+  <p class="section-sub">QOS / ROS / voucher columns pending <strong style="color:var(--highvolt);">NEW QOS, ROS, SNU, AVG Vouchers</strong> data access. Activations are live.</p>
+  <div id="storeTable"></div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/08_fashion_fusion_scorecard.json').then(r => r.json()).then(renderScorecard).catch(err => console.error(err));
+</script>
+</body>
+</html>

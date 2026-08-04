@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spot Connect Book | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+
+<div class="page">
+  <span class="badge-pill">Strategy</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Spot Connect Book</h2>
+  <hr class="spot-rule">
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="actRevChart" style="height:340px;"></div>
+    <div class="chart-box" id="cumChart" style="height:340px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="groupingChart" style="height:320px;"></div>
+    <div class="chart-box" id="channelChart" style="height:320px;"></div>
+  </div>
+
+  <footer>
+    <span>Spot Telco Retail — Snowflake UCONNECT_DW</span>
+    <span>Static rebuild</span>
+  </footer>
+</div>
+
+<script>
+fetch('../data/34_spot_connect_book.json')
+  .then(r => r.json())
+  .then(data => {
+    const k = data.kpis;
+    const churn = k.total_sims - k.active_sims;
+    const avgMonthly = Math.round(data.monthly_activations.reduce((a, r) => a + r.activations, 0) / data.monthly_activations.length);
+    renderKpiRow('kpiRow', [
+      { label: 'Total SIMs Sold (All Time)', value: fmtNum(k.total_sims) },
+      { label: 'Active SIM Base', value: fmtNum(k.active_sims), delta: -churn },
+      { label: 'Revenue — Last 12 Months', value: fmtCurrency(k.ltm_revenue) },
+      { label: 'Avg Monthly Activations (13M)', value: fmtNum(avgMonthly) },
+    ]);
+
+    const x = data.monthly_activations.map(r => fmtMonth(toDate(r.month)));
+    spotDualAxis('actRevChart', x,
+      { name: 'Activations', y: data.monthly_activations.map(r => r.activations), color: PALETTE.hypermint },
+      { name: 'Revenue', y: data.monthly_revenue.map(r => r.revenue), color: PALETTE.highvolt },
+      'Monthly Activations & Revenue — 13 Months');
+
+    let cum = 0;
+    const cumY = data.monthly_activations.map(r => (cum += r.activations));
+    spotAreaLine('cumChart', x, cumY, 'Cumulative Activations — 13 Month Rollup', PALETTE.sonicBlue);
+
+    spotPie('groupingChart', data.grouping_mix.map(r => r.grouping), data.grouping_mix.map(r => r.sims),
+      'Active SIMs by Grouping (Prepay / Postpaid / FLTE)');
+    spotPie('channelChart', data.channel_mix.map(r => r.channel), data.channel_mix.map(r => r.sims),
+      'SIM Acquisition by Sales Channel (All Time)');
+
+    document.getElementById('asOfBadge').textContent =
+      'Data as of ' + data.monthly_activations[data.monthly_activations.length - 1].month.slice(0, 7);
+  })
+  .catch(err => { document.getElementById('asOfBadge').textContent = 'Failed to load data'; console.error(err); });
+</script>
+
+</body>
+</html>

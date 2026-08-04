@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscriptions Cohort | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Subscriptions</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Subscriptions Cohort Analysis</h2>
+  <hr class="spot-rule">
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="channelChart" style="height:340px;"></div>
+    <div class="chart-box" id="heatmapChart" style="height:340px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="placeholder-chart" style="height:300px;">
+      <div class="p-title">Telesales Billed / Paid Cohort</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: Telesales channel not identified in VW_SPOT_BILLING_DATA — pending CHANNEL mapping</div>
+    </div>
+    <div class="placeholder-chart" style="height:300px;">
+      <div class="p-title">App Billed / Paid Cohort</div>
+      <div class="p-pending">Chart pending data access</div>
+      <div class="p-source">Source: App channel mapping pending — ONLINE may be the equivalent</div>
+    </div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/15_subscriptions_cohort.json')
+  .then(r => r.json())
+  .then(data => {
+    const months = [...new Set(data.monthly_by_channel.map(r => r.month))].sort();
+    const channels = [...new Set(data.monthly_by_channel.map(r => r.channel))];
+    const series = channels.map((ch, i) => ({
+      name: ch, color: CHART_PALETTE[i % CHART_PALETTE.length],
+      y: months.map(m => (data.monthly_by_channel.find(r => r.month === m && r.channel === ch) || { billed: 0 }).billed),
+    }));
+    spotStackedBar('channelChart', months.map(m => fmtMonth(toDate(m))), series, 'Monthly Billed Subscriptions by Channel');
+
+    const acqMonths = [...new Set(data.cohort.map(r => r.acquired_month))].sort();
+    const billMonths = [...new Set(data.cohort.map(r => r.billing_month))].sort();
+    const z = acqMonths.map(a => billMonths.map(b => {
+      const row = data.cohort.find(r => r.acquired_month === a && r.billing_month === b);
+      return row ? row.billed : 0;
+    }));
+    Plotly.newPlot('heatmapChart', [{
+      z, x: billMonths.map(m => fmtMonth(toDate(m))), y: acqMonths.map(m => fmtMonth(toDate(m))),
+      type: 'heatmap',
+      colorscale: [[0, 'rgba(0,0,0,0)'], [0.5, hexToRgba(PALETTE.sonicBlue, 0.6)], [1, PALETTE.hypermint]],
+      hovertemplate: 'Acquired: %{y}<br>Billed: %{x}<br><b>Count: %{z:,}</b><extra></extra>',
+      showscale: true,
+    }], {
+      title: { text: 'Cohort Retention Heatmap (Billed Count)', font: { color: PALETTE.zeroWhite, size: 14 }, x: 0 },
+      paper_bgcolor: PALETTE.surface1, plot_bgcolor: PALETTE.surface1,
+      font: { color: '#888', size: 11 }, margin: { l: 8, r: 8, t: 40, b: 8 },
+      xaxis: { tickfont: { size: 9, color: '#888' } }, yaxis: { tickfont: { size: 9, color: '#888' } },
+    }, PLOTLY_CFG);
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

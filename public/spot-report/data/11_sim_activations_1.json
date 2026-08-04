@@ -1,0 +1,66 @@
+{
+  "groups": [
+    {"label": "Spar", "daily": [
+      {"date":"2026-07-06","activations":391,"active1_pct":0.86700767263427114},{"date":"2026-07-07","activations":284,"active1_pct":0.82042253521126762},
+      {"date":"2026-07-08","activations":272,"active1_pct":0.81985294117647056},{"date":"2026-07-09","activations":192,"active1_pct":0.77083333333333337},
+      {"date":"2026-07-10","activations":208,"active1_pct":0.87019230769230771},{"date":"2026-07-11","activations":114,"active1_pct":0.81578947368421051},
+      {"date":"2026-07-13","activations":290,"active1_pct":0.8413793103448276},{"date":"2026-07-14","activations":342,"active1_pct":0.83333333333333337},
+      {"date":"2026-07-15","activations":451,"active1_pct":0.83592017738359203},{"date":"2026-07-16","activations":368,"active1_pct":0.82880434782608692},
+      {"date":"2026-07-17","activations":356,"active1_pct":0.8314606741573034},{"date":"2026-07-18","activations":173,"active1_pct":0.69364161849710981},
+      {"date":"2026-07-19","activations":31,"active1_pct":0.4838709677419355},{"date":"2026-07-20","activations":343,"active1_pct":0.79008746355685133},
+      {"date":"2026-07-21","activations":306,"active1_pct":0.84640522875816993},{"date":"2026-07-22","activations":348,"active1_pct":0.78735632183908044},
+      {"date":"2026-07-23","activations":351,"active1_pct":0.83475783475783472},{"date":"2026-07-24","activations":487,"active1_pct":0.74127310061601648},
+      {"date":"2026-07-25","activations":463,"active1_pct":0.72354211663066959},{"date":"2026-07-27","activations":356,"active1_pct":0.7106741573033708},
+      {"date":"2026-07-28","activations":414,"active1_pct":0.7125603864734299},{"date":"2026-07-29","activations":323,"active1_pct":0.59133126934984526},
+      {"date":"2026-07-30","activations":320,"active1_pct":0.51249999999999996},{"date":"2026-07-31","activations":383,"active1_pct":0.39947780678851175},
+      {"date":"2026-08-01","activations":338,"active1_pct":0.36390532544378701},{"date":"2026-08-02","activations":1,"active1_pct":0},
+      {"date":"2026-08-03","activations":304,"active1_pct":0.22697368421052633}
+    ]},
+    {"label": "Build It", "daily": [
+      {"date":"2026-07-06","activations":234,"active1_pct":0.79914529914529919},{"date":"2026-07-07","activations":175,"active1_pct":0.78285714285714281},
+      {"date":"2026-07-08","activations":200,"active1_pct":0.80500000000000005},{"date":"2026-07-09","activations":208,"active1_pct":0.75961538461538458},
+      {"date":"2026-07-10","activations":244,"active1_pct":0.71311475409836067},{"date":"2026-07-11","activations":128,"active1_pct":0.625},
+      {"date":"2026-07-12","activations":1,"active1_pct":0},{"date":"2026-07-13","activations":176,"active1_pct":0.72727272727272729},
+      {"date":"2026-07-14","activations":193,"active1_pct":0.67875647668393779},{"date":"2026-07-15","activations":273,"active1_pct":0.71062271062271065},
+      {"date":"2026-07-16","activations":256,"active1_pct":0.703125},{"date":"2026-07-17","activations":269,"active1_pct":0.75464684014869887},
+      {"date":"2026-07-18","activations":155,"active1_pct":0.63225806451612898},{"date":"2026-07-19","activations":17,"active1_pct":0.6470588235294118},
+      {"date":"2026-07-20","activations":181,"active1_pct":0.74033149171270718},{"date":"2026-07-21","activations":174,"active1_pct":0.72413793103448276},
+      {"date":"2026-07-22","activations":238,"active1_pct":0.67647058823529416},{"date":"2026-07-23","activations":250,"active1_pct":0.67600000000000005},
+      {"date":"2026-07-24","activations":323,"active1_pct":0.65325077399380804},{"date":"2026-07-25","activations":190,"active1_pct":0.52105263157894732},
+      {"date":"2026-07-27","activations":278,"active1_pct":0.57913669064748197},{"date":"2026-07-28","activations":226,"active1_pct":0.63274336283185839},
+      {"date":"2026-07-29","activations":195,"active1_pct":0.55384615384615388},{"date":"2026-07-30","activations":223,"active1_pct":0.49775784753363228},
+      {"date":"2026-07-31","activations":261,"active1_pct":0.36781609195402298},{"date":"2026-08-01","activations":185,"active1_pct":0.24864864864864866},
+      {"date":"2026-08-03","activations":294,"active1_pct":0.19727891156462585}
+    ]},
+    {"label": "Pet Pool & Home", "daily": [
+      {"date":"2026-07-06","activations":16,"active1_pct":0.625},{"date":"2026-07-07","activations":17,"active1_pct":0.88235294117647056},
+      {"date":"2026-07-08","activations":8,"active1_pct":0.125},{"date":"2026-07-09","activations":26,"active1_pct":0.76923076923076927},
+      {"date":"2026-07-10","activations":26,"active1_pct":0.73076923076923073},{"date":"2026-07-11","activations":10,"active1_pct":0.69999999999999996},
+      {"date":"2026-07-13","activations":22,"active1_pct":0.72727272727272729},{"date":"2026-07-14","activations":56,"active1_pct":0.7321428571428571},
+      {"date":"2026-07-15","activations":38,"active1_pct":0.65789473684210531},{"date":"2026-07-16","activations":42,"active1_pct":0.7142857142857143},
+      {"date":"2026-07-17","activations":69,"active1_pct":0.65217391304347827},{"date":"2026-07-18","activations":27,"active1_pct":0.59259259259259256},
+      {"date":"2026-07-19","activations":3,"active1_pct":0},{"date":"2026-07-20","activations":37,"active1_pct":0.54054054054054057},
+      {"date":"2026-07-21","activations":63,"active1_pct":0.52380952380952384},{"date":"2026-07-22","activations":49,"active1_pct":0.51020408163265307},
+      {"date":"2026-07-23","activations":57,"active1_pct":0.57894736842105265},{"date":"2026-07-24","activations":49,"active1_pct":0.67346938775510201},
+      {"date":"2026-07-25","activations":31,"active1_pct":0.35483870967741937},{"date":"2026-07-27","activations":26,"active1_pct":0.30769230769230771},
+      {"date":"2026-07-28","activations":23,"active1_pct":0.39130434782608697},{"date":"2026-07-29","activations":40,"active1_pct":0.29999999999999999},
+      {"date":"2026-07-30","activations":39,"active1_pct":0.38461538461538464},{"date":"2026-07-31","activations":51,"active1_pct":0.27450980392156865},
+      {"date":"2026-08-01","activations":27,"active1_pct":0.22222222222222221},{"date":"2026-08-03","activations":26,"active1_pct":0.23076923076923078}
+    ]},
+    {"label": "Fashion Fusion", "daily": [
+      {"date":"2026-07-06","activations":313,"active1_pct":0.76996805111821087},{"date":"2026-07-07","activations":242,"active1_pct":0.75206611570247939},
+      {"date":"2026-07-08","activations":282,"active1_pct":0.67375886524822692},{"date":"2026-07-09","activations":302,"active1_pct":0.70198675496688745},
+      {"date":"2026-07-10","activations":335,"active1_pct":0.71940298507462686},{"date":"2026-07-11","activations":187,"active1_pct":0.75401069518716579},
+      {"date":"2026-07-13","activations":261,"active1_pct":0.76628352490421459},{"date":"2026-07-14","activations":279,"active1_pct":0.66666666666666663},
+      {"date":"2026-07-15","activations":398,"active1_pct":0.6959798994974874},{"date":"2026-07-16","activations":355,"active1_pct":0.6619718309859155},
+      {"date":"2026-07-17","activations":353,"active1_pct":0.65439093484419264},{"date":"2026-07-18","activations":194,"active1_pct":0.65979381443298968},
+      {"date":"2026-07-19","activations":51,"active1_pct":0.6470588235294118},{"date":"2026-07-20","activations":234,"active1_pct":0.6495726495726496},
+      {"date":"2026-07-21","activations":184,"active1_pct":0.63586956521739135},{"date":"2026-07-22","activations":486,"active1_pct":0.59876543209876543},
+      {"date":"2026-07-23","activations":441,"active1_pct":0.66893424036281179},{"date":"2026-07-24","activations":484,"active1_pct":0.6549586776859504},
+      {"date":"2026-07-25","activations":403,"active1_pct":0.57816377171215882},{"date":"2026-07-27","activations":404,"active1_pct":0.62623762376237624},
+      {"date":"2026-07-28","activations":353,"active1_pct":0.54107648725212465},{"date":"2026-07-29","activations":307,"active1_pct":0.49185667752442996},
+      {"date":"2026-07-30","activations":344,"active1_pct":0.40406976744186046},{"date":"2026-07-31","activations":364,"active1_pct":0.40384615384615385},
+      {"date":"2026-08-01","activations":307,"active1_pct":0.33876221498371334},{"date":"2026-08-03","activations":279,"active1_pct":0.26523297491039427}
+    ]}
+  ]
+}

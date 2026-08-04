@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscriptions - Mobile Store | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Subscriptions · 5 of 6</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Subscriptions - Mobile Store</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow1" style="grid-template-columns:repeat(3,1fr);"></div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="monthlyTrend" style="height:260px;"></div>
+    <div class="chart-box" id="dailyTrend" style="height:260px;"></div>
+  </div>
+  <div class="chart-box" id="collectedChart" style="height:320px; margin-bottom:16px;"></div>
+  <div class="kpi-row" id="kpiRow2" style="margin-bottom:16px;"></div>
+  <div class="grid-2">
+    <div>
+      <h4 style="color:var(--hypermint); font-size:13px; margin-bottom:6px;">Sales Yesterday</h4>
+      <div id="dealsYday"></div>
+    </div>
+    <div>
+      <h4 style="color:var(--hypermint); font-size:13px; margin-bottom:6px;">Sales Last 30 Days</h4>
+      <div id="dealsL30"></div>
+    </div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/47_subscriptions_mobile_store.json').then(r => r.json()).then(renderSubscriptionBillingPage).catch(err => console.error(err));
+</script>
+</body>
+</html>

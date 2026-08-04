@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Revenue Trends | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+<div class="page">
+  <span class="badge-pill">Strategy</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Revenue Trends</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="totalChart" style="height:320px;"></div>
+    <div class="chart-box" id="streamChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="tenantChart" style="height:300px;"></div>
+    <div class="chart-box" id="cumChart" style="height:300px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/37_revenue_trends.json')
+  .then(r => r.json())
+  .then(data => {
+    const m = data.monthly;
+    const x = m.map(r => fmtMonth(toDate(r.month)));
+    const thisM = m[m.length - 1].total, lastM = m[m.length - 2].total;
+    const maxYear = toDate(m[m.length - 1].month).getUTCFullYear();
+    const ytd = m.filter(r => toDate(r.month).getUTCFullYear() === maxYear).reduce((a, r) => a + r.total, 0);
+    const avg = m.reduce((a, r) => a + r.total, 0) / m.length;
+    renderKpiRow('kpiRow', [
+      { label: 'Total Revenue This Month', value: fmtCurrency(thisM) },
+      { label: 'Total Revenue Last Month', value: fmtCurrency(lastM), delta: Math.round(thisM - lastM) },
+      { label: 'YTD Revenue', value: fmtCurrency(ytd) },
+      { label: 'Avg Monthly (13M)', value: fmtCurrency(avg) },
+    ]);
+
+    const totalY = m.map(r => r.total);
+    const roll3 = totalY.map((_, i) => {
+      const slice = totalY.slice(Math.max(0, i - 2), i + 1);
+      return Math.round(slice.reduce((a, b) => a + b, 0) / slice.length);
+    });
+    spotCombo('totalChart', x, { name: 'Total Revenue', y: totalY, color: PALETTE.sonicBlue },
+      { name: '3-Month Avg', y: roll3, color: PALETTE.hypermint }, 'Total Monthly Revenue + 3-Month Rolling Avg');
+
+    spotLine('streamChart', x, [
+      { name: 'Cell C', y: m.map(r => r.cellc), color: PALETTE.hypermint },
+      { name: 'App', y: m.map(r => r.app), color: PALETTE.highvolt },
+      { name: 'Billrun', y: m.map(r => r.billrun), color: PALETTE.sonicBlue },
+      { name: 'Postpaid', y: m.map(r => r.postpaid), color: PALETTE.ultraviolet },
+      { name: 'Voucher', y: m.map(r => r.voucher), color: '#9b59b6' },
+    ], 'Revenue by Stream — Trend Lines');
+
+    spotHBar('tenantChart', data.tenant_revenue.map(r => r.tenant), data.tenant_revenue.map(r => r.revenue),
+      'Revenue by Master Tenant (last 3 months)', PALETTE.ultraviolet);
+
+    const thisYr = m.filter(r => toDate(r.month).getUTCFullYear() === maxYear);
+    let cum = 0;
+    const cumY = thisYr.map(r => (cum += r.total));
+    spotAreaLine('cumChart', thisYr.map(r => fmtMonth(toDate(r.month))), cumY, 'Cumulative Revenue — Current Year', PALETTE.hypermint);
+
+    document.getElementById('asOfBadge').textContent = 'Data as of ' + m[m.length - 1].month.slice(0, 7);
+  })
+  .catch(err => { document.getElementById('asOfBadge').textContent = 'Failed to load data'; console.error(err); });
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New SIM Activations & Utilisation 1 | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Sales · 1 of 4</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">New SIM Activations and Utilisation</h2>
+  <hr class="spot-rule">
+  <div id="grid"></div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/11_sim_activations_1.json')
+  .then(r => r.json())
+  .then(data => renderActivationGrid('grid', data.groups, 2))
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

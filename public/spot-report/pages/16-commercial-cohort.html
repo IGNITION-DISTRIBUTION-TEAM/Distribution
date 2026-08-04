@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commercial Cohort | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Commercial</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Commercial Cohort Analysis</h2>
+  <hr class="spot-rule">
+  <p class="note-banner">Activation cohort view from UCONNECT_MAY_MERGE. Revenue-by-aging-month below is built by joining UCONNECT_MAY_MERGE + UCONNECT_MAY_MERGE_REVENUE ourselves — no dedicated cohort table needed.</p>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="acqChart" style="height:320px;"></div>
+    <div class="chart-box" id="retentionChart" style="height:320px;"></div>
+  </div>
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="chart-box" id="arpuChart" style="height:320px;"></div>
+    <div class="chart-box" id="channelChart" style="height:320px;"></div>
+  </div>
+  <h3 class="section-title">Revenue Cohort — by Aging Month</h3>
+  <p class="section-sub">Age 0 = acquisition month itself. Built from UCONNECT_MAY_MERGE + UCONNECT_MAY_MERGE_REVENUE — no dedicated cohort table.</p>
+  <div class="grid-2">
+    <div class="chart-box" id="revHeatmap" style="height:340px;"></div>
+    <div class="chart-box" id="retHeatmap" style="height:340px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/16_commercial_cohort.json')
+  .then(r => r.json())
+  .then(data => {
+    const acq = data.acquisitions;
+    const x = acq.map(r => fmtMonth(toDate(r.month)));
+    spotMultiBar('acqChart', x, [
+      { name: 'Acquired', y: acq.map(r => r.acquired), color: PALETTE.sonicBlue },
+      { name: 'Still Active', y: acq.map(r => r.still_active), color: PALETTE.hypermint },
+    ], 'Acquired vs Still Active SIMs by Cohort Month');
+
+    const retention = acq.map(r => Math.round(r.still_active / r.acquired * 1000) / 10);
+    spotLine('retentionChart', x, [{ name: 'Retention', y: retention, color: PALETTE.hypermint }], 'SIM Retention Rate by Cohort Month (%)');
+
+    const rev = data.revenue_per_cohort;
+    const arpu = rev.map(r => Math.round(r.revenue / r.accounts * 100) / 100);
+    spotBar('arpuChart', rev.map(r => fmtMonth(toDate(r.month))), arpu, 'Avg Revenue per Acquired SIM by Cohort Month', PALETTE.ultraviolet);
+
+    const chMonths = [...new Set(data.channel_by_month.map(r => r.month))].sort();
+    const channels = [...new Set(data.channel_by_month.map(r => r.channel))];
+    const chSeries = channels.map((ch, i) => ({
+      name: ch, color: CHART_PALETTE[i % CHART_PALETTE.length],
+      y: chMonths.map(m => (data.channel_by_month.find(r => r.month === m && r.channel === ch) || { count: 0 }).count),
+    }));
+    spotStackedBar('channelChart', chMonths.map(m => fmtMonth(toDate(m))), chSeries, 'Acquisitions by Channel — Last 12 Months (Stacked)');
+
+    const cohortMonths = [...new Set(data.cohort_aging.map(r => r.cohort_month))].sort();
+    const ages = [...new Set(data.cohort_aging.map(r => r.age_months))].sort((a, b) => a - b);
+    const revZ = cohortMonths.map(m => ages.map(a => {
+      const row = data.cohort_aging.find(r => r.cohort_month === m && r.age_months === a);
+      return row ? Math.round(row.revenue / row.acquired * 100) / 100 : 0;
+    }));
+    Plotly.newPlot('revHeatmap', [{
+      z: revZ, x: ages.map(a => 'Month ' + (a + 1)), y: cohortMonths.map(m => fmtMonth(toDate(m))),
+      type: 'heatmap', colorscale: [[0, 'rgba(0,0,0,0)'], [0.5, hexToRgba(PALETTE.sonicBlue, 0.6)], [1, PALETTE.hypermint]],
+      hovertemplate: 'Cohort: %{y}<br>%{x}<br><b>R%{z:,.2f} per acquired</b><extra></extra>', showscale: true,
+    }], {
+      title: { text: 'Avg Revenue per Acquired — by Cohort Month', font: { color: PALETTE.zeroWhite, size: 14 }, x: 0 },
+      paper_bgcolor: PALETTE.surface1, plot_bgcolor: PALETTE.surface1, font: { color: '#888', size: 11 }, margin: { l: 8, r: 8, t: 40, b: 8 },
+      xaxis: { tickfont: { size: 9, color: '#888' } }, yaxis: { tickfont: { size: 9, color: '#888' } },
+    }, PLOTLY_CFG);
+
+    const retZ = cohortMonths.map(m => ages.map(a => {
+      const row = data.cohort_aging.find(r => r.cohort_month === m && r.age_months === a);
+      return row ? Math.round(row.active / row.acquired * 1000) / 10 : 0;
+    }));
+    Plotly.newPlot('retHeatmap', [{
+      z: retZ, x: ages.map(a => 'Month ' + (a + 1)), y: cohortMonths.map(m => fmtMonth(toDate(m))),
+      type: 'heatmap', colorscale: [[0, 'rgba(0,0,0,0)'], [0.5, hexToRgba(PALETTE.highvolt, 0.6)], [1, PALETTE.hypermint]],
+      hovertemplate: 'Cohort: %{y}<br>%{x}<br><b>%{z:.1f}% still transacting</b><extra></extra>', showscale: true,
+    }], {
+      title: { text: '% of Cohort Still Transacting — by Aging Month', font: { color: PALETTE.zeroWhite, size: 14 }, x: 0 },
+      paper_bgcolor: PALETTE.surface1, plot_bgcolor: PALETTE.surface1, font: { color: '#888', size: 11 }, margin: { l: 8, r: 8, t: 40, b: 8 },
+      xaxis: { tickfont: { size: 9, color: '#888' } }, yaxis: { tickfont: { size: 9, color: '#888' } },
+    }, PLOTLY_CFG);
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>

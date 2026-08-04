@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OKR Trends | Telco Retail</title>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill page-badge">Strategy</span>
+  <h2 class="page-title" style="font-family:var(--font-header); margin:10px 0 0;">OKR Trends</h2>
+  <hr class="spot-rule">
+  <div id="placeholderBody"></div>
+  <footer><span>Spot Telco Retail</span><span>Static rebuild</span></footer>
+</div>
+<script>
+renderPlaceholderPage({
+  title: "OKR Trends", badge: "Strategy",
+  note: "OKR trend data requires a dedicated tracking source. Not currently available via MCP.",
+  kpis: [
+    { label: "Avg OKR Score", source: "OKR tracking table" },
+    { label: "Objectives Met QTD", source: "OKR tracking table" },
+    { label: "Score vs Prior Quarter", source: "OKR tracking table" },
+    { label: "Key Results Closed", source: "OKR tracking table" },
+  ],
+  chartRows: [[
+    { title: "OKR Completion % — Quarterly Trend", source: "OKR tracking table" },
+    { title: "Average Score by Objective", source: "OKR tracking table" },
+  ]],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "groups": [
+    {"label": "Aheers", "daily": [
+      {"date":"2026-07-06","activations":34,"active1_pct":0.82352941176470584},{"date":"2026-07-07","activations":6,"active1_pct":0.83333333333333337},
+      {"date":"2026-07-08","activations":1,"active1_pct":1},{"date":"2026-07-10","activations":5,"active1_pct":0.20000000000000001},
+      {"date":"2026-07-13","activations":1,"active1_pct":0},{"date":"2026-07-14","activations":1,"active1_pct":0},
+      {"date":"2026-07-18","activations":2,"active1_pct":1},{"date":"2026-07-20","activations":1,"active1_pct":0},
+      {"date":"2026-07-21","activations":1,"active1_pct":0},{"date":"2026-07-22","activations":16,"active1_pct":0.4375},
+      {"date":"2026-07-23","activations":12,"active1_pct":0.58333333333333337},{"date":"2026-07-24","activations":38,"active1_pct":0.71052631578947367},
+      {"date":"2026-07-25","activations":43,"active1_pct":0.67441860465116277},{"date":"2026-07-27","activations":22,"active1_pct":0.45454545454545453},
+      {"date":"2026-07-28","activations":26,"active1_pct":0.46153846153846156},{"date":"2026-07-29","activations":17,"active1_pct":0.6470588235294118},
+      {"date":"2026-07-30","activations":17,"active1_pct":0.58823529411764708},{"date":"2026-07-31","activations":54,"active1_pct":0.5},
+      {"date":"2026-08-01","activations":44,"active1_pct":0.56818181818181823},{"date":"2026-08-02","activations":1,"active1_pct":1},
+      {"date":"2026-08-03","activations":20,"active1_pct":0.25}
+    ]},
+    {"label": "Mica", "daily": [
+      {"date":"2026-07-05","activations":1,"active1_pct":0},{"date":"2026-07-06","activations":55,"active1_pct":0.54545454545454541},
+      {"date":"2026-07-07","activations":37,"active1_pct":0.51351351351351349},{"date":"2026-07-08","activations":43,"active1_pct":0.53488372093023251},
+      {"date":"2026-07-09","activations":39,"active1_pct":0.61538461538461542},{"date":"2026-07-10","activations":48,"active1_pct":0.4375},
+      {"date":"2026-07-11","activations":33,"active1_pct":0.42424242424242425},{"date":"2026-07-13","activations":43,"active1_pct":0.72093023255813948},
+      {"date":"2026-07-14","activations":45,"active1_pct":0.71111111111111114},{"date":"2026-07-15","activations":62,"active1_pct":0.58064516129032262},
+      {"date":"2026-07-16","activations":65,"active1_pct":0.46153846153846156},{"date":"2026-07-17","activations":54,"active1_pct":0.61111111111111116},
+      {"date":"2026-07-18","activations":33,"active1_pct":0.51515151515151514},{"date":"2026-07-19","activations":3,"active1_pct":0.66666666666666663},
+      {"date":"2026-07-20","activations":38,"active1_pct":0.55263157894736847},{"date":"2026-07-21","activations":58,"active1_pct":0.44827586206896552},
+      {"date":"2026-07-22","activations":64,"active1_pct":0.53125},{"date":"2026-07-23","activations":31,"active1_pct":0.54838709677419351},
+      {"date":"2026-07-24","activations":42,"active1_pct":0.6428571428571429},{"date":"2026-07-25","activations":47,"active1_pct":0.38297872340425532},
+      {"date":"2026-07-27","activations":50,"active1_pct":0.44},{"date":"2026-07-28","activations":50,"active1_pct":0.41999999999999998},
+      {"date":"2026-07-29","activations":45,"active1_pct":0.44444444444444442},{"date":"2026-07-30","activations":46,"active1_pct":0.43478260869565216},
+      {"date":"2026-07-31","activations":63,"active1_pct":0.23809523809523808},{"date":"2026-08-01","activations":52,"active1_pct":0.57692307692307687},
+      {"date":"2026-08-02","activations":1,"active1_pct":0},{"date":"2026-08-03","activations":47,"active1_pct":0.19148936170212766}
+    ]}
+  ]
+}

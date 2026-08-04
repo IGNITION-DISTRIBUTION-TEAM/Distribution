@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Briefcase, Cpu, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck } from "lucide-react"
+import { BarChart3, Briefcase, Cpu, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -57,6 +57,13 @@ const DEPARTMENTS: Department[] = [
     label: "EngAIge",
     description: "Integration configs, mappings, schedules, and monitoring.",
     icon: Cpu,
+    enabled: true,
+  },
+  {
+    id: "spot-report",
+    label: "Spot Report",
+    description: "Telco Retail dashboard — sales, subscriptions, recharges, and scorecards.",
+    icon: BarChart3,
     enabled: true,
   },
 ]

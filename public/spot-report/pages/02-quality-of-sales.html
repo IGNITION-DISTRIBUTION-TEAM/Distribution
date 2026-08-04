@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quality of Sales | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+  <span class="badge-pill" id="asOfBadge">Loading…</span>
+</div>
+<div class="page">
+  <span class="badge-pill">Sales</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Quality of Sales</h2>
+  <hr class="spot-rule">
+  <div class="kpi-row" id="kpiRow"></div>
+  <h3 class="section-title">Daily Activations & Active 1 % — Last 31 Days</h3>
+  <p class="section-sub">Bars = new activations (left axis) · Line = % of accounts created that day who used their SIM within 30 days (right axis).</p>
+  <div class="chart-box chart-full" id="comboChart" style="height:340px;"></div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+fetch('../data/02_quality_of_sales.json')
+  .then(r => r.json())
+  .then(data => {
+    const k = data.kpis;
+    renderKpiRow('kpiRow', [
+      { label: 'Active 7 Days After 1 Month', value: fmtPct(k.active7_30_35_pct) },
+      { label: 'Still Using After 1 Month', value: fmtPct(k.still_using_pct) },
+      { label: 'Quality of Sales Indicator', value: fmtPct(k.quality_indicator_pct) },
+      { label: 'Last Month M1 ARPU', value: '—' },
+    ]);
+    const x = data.daily.map(r => fmtDay(toDate(r.date)));
+    spotActivationCombo('comboChart', x, data.daily.map(r => r.activations), data.daily.map(r => r.active1_pct),
+      '', true);
+    document.getElementById('asOfBadge').textContent = 'Data as of ' + data.daily[data.daily.length - 1].date;
+  })
+  .catch(err => { document.getElementById('asOfBadge').textContent = 'Failed to load data'; console.error(err); });
+</script>
+</body>
+</html>

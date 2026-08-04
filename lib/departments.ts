@@ -1,6 +1,8 @@
 // Canonical list of department ids — the single source of truth shared by the
 // server (auth/session, admin API) and client (department picker, settings).
-export const DEPARTMENT_IDS = ["distribution", "dialler", "spot", "edc", "tickets", "engaige"] as const
+export const DEPARTMENT_IDS = [
+  "distribution", "dialler", "spot", "edc", "tickets", "engaige", "spot-report",
+] as const
 
 export type DepartmentId = (typeof DEPARTMENT_IDS)[number]
 
@@ -11,6 +13,7 @@ export const DEPARTMENT_LABELS: Record<DepartmentId, string> = {
   edc: "EDC",
   tickets: "Tickets",
   engaige: "EngAIge",
+  "spot-report": "Spot Report",
 }
 
 export function isDepartmentId(value: string): value is DepartmentId {

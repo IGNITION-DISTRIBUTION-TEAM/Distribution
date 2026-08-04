@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recharge Trend by Type | Telco Retail</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="../assets/spot-ci.css">
+<script src="../assets/spot-charts.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="spot-logo">Spot<sup>TM</sup></span>
+    <a class="back-link" href="../index.html">&larr; Back to Menu</a>
+  </div>
+</div>
+<div class="page">
+  <span class="badge-pill">Recharges</span>
+  <h2 style="font-family:var(--font-header); margin:10px 0 0;">Recharge Trend by Recharge Type</h2>
+  <hr class="spot-rule">
+  <div class="filter-row" id="filterRow">
+    <span class="filter-label">Revenue Types:</span>
+  </div>
+  <div class="grid-2" style="margin:16px 0;">
+    <div class="chart-box" id="qtyChart" style="height:300px;"></div>
+    <div class="chart-box" id="valChart" style="height:300px;"></div>
+  </div>
+  <div class="grid-2">
+    <div class="chart-box" id="lineChart" style="height:300px;"></div>
+    <div class="chart-box" id="momChart" style="height:300px;"></div>
+  </div>
+  <footer><span>Spot Telco Retail — Snowflake UCONNECT_DW</span><span>Static rebuild</span></footer>
+</div>
+<script>
+const REVENUE_TYPES = {
+  "Cell C Recharge": ["cellc_qty", "cellc_val"],
+  "Retail Voucher": ["voucher_qty", "voucher_val"],
+  "App Purchases": ["app_qty", "app_val"],
+  "Billrun": ["billrun_qty", "billrun_val"],
+  "Postpaid (Successful)": ["postpaid_qty", "postpaid_val"],
+  "Website Recharges": ["website_qty", "website_val"],
+};
+let DATA = null;
+let selected = new Set(Object.keys(REVENUE_TYPES));
+
+function render() {
+  const x = DATA.monthly.map(r => fmtMonth(toDate(r.month)));
+  const names = Object.keys(REVENUE_TYPES).filter(n => selected.has(n));
+
+  spotStackedBar('qtyChart', x, names.map((n, i) => ({
+    name: n, color: CHART_PALETTE[i % CHART_PALETTE.length], y: DATA.monthly.map(r => r[REVENUE_TYPES[n][0]]),
+  })), 'Monthly Recharge Quantity by Type');
+
+  spotStackedBar('valChart', x, names.map((n, i) => ({
+    name: n, color: CHART_PALETTE[i % CHART_PALETTE.length], y: DATA.monthly.map(r => r[REVENUE_TYPES[n][1]]),
+  })), 'Monthly Revenue (R) by Type');
+
+  spotLine('lineChart', x, names.map((n, i) => ({
+    name: n, color: CHART_PALETTE[i % CHART_PALETTE.length], y: DATA.monthly.map(r => r[REVENUE_TYPES[n][1]]),
+  })), 'Revenue Trend Lines by Type');
+
+  if (names.length) {
+    const valCol = REVENUE_TYPES[names[0]][1];
+    const vals = DATA.monthly.map(r => r[valCol]);
+    const mom = vals.map((v, i) => i === 0 || !vals[i - 1] ? null : Math.round((v - vals[i - 1]) / vals[i - 1] * 1000) / 10);
+    Plotly.newPlot('momChart', [{
+      x, y: mom, type: 'bar',
+      marker: { color: mom.map(v => (v || 0) >= 0 ? PALETTE.hypermint : PALETTE.highvolt), line: { width: 0 } },
+      hovertemplate: '%{x}<br><b>%{y:.1f}%%</b><extra></extra>',
+    }], (() => { const l = baseLayout(`MoM % Change — ${names[0]}`); l.yaxis = { showgrid: true, gridcolor: PALETTE.border, ticksuffix: '%' }; return l; })(), PLOTLY_CFG);
+  }
+}
+
+fetch('../data/20_recharge_trend_type.json')
+  .then(r => r.json())
+  .then(data => {
+    DATA = data;
+    const row = document.getElementById('filterRow');
+    Object.keys(REVENUE_TYPES).forEach(name => {
+      const chip = document.createElement('span');
+      chip.className = 'chip active';
+      chip.textContent = name;
+      chip.onclick = () => {
+        if (selected.has(name)) selected.delete(name); else selected.add(name);
+        chip.classList.toggle('active');
+        render();
+      };
+      row.appendChild(chip);
+    });
+    render();
+  })
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>
