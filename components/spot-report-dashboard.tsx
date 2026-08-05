@@ -24,6 +24,7 @@ import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
 import { SpotReportSimActivations } from "@/components/spot-report-sim-activations"
 import { SpotReportExco } from "@/components/spot-report-exco"
 import { SpotReportFinancialsUpload } from "@/components/spot-report-financials-upload"
+import { SpotReportConnectBook } from "@/components/spot-report-connect-book"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -42,6 +43,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportSimActivations />
     case "exco":
       return <SpotReportExco />
+    case "connect-book":
+      return <SpotReportConnectBook />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -55,7 +58,7 @@ const SECTIONS: Section[] = [
     title: "Strategy & Book",
     items: [
       { label: "Exco Scorecard", page: "33-exco-scorecard.html", native: "exco" },
-      { label: "Spot Connect Book", page: "34-spot-connect-book.html" },
+      { label: "Spot Connect Book", page: "34-spot-connect-book.html", native: "connect-book" },
       { label: "OKR Scorecard", page: "35-okr-scorecard.html" },
       { label: "OKR Trends", page: "36-okr-trends.html" },
       { label: "Revenue Trends", page: "37-revenue-trends.html" },
