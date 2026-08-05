@@ -35,6 +35,52 @@ export function mondayOf(s: string): string {
 }
 export const fmt = (n: number) => Math.round(n).toLocaleString()
 
+// ── Month-range filter ─────────────────────────────────────────────────────
+// Per-report month filter. `months` is a sorted list of month keys (any format
+// that sorts lexically, e.g. "YYYY-MM-DD" or "YYYY-MM"). Defaults to the full
+// span; inRange(m) trims a report's time-series to the picked window.
+export type MonthRange = { from: string; to: string }
+export function useMonthRange(months: string[]) {
+  const [range, setRange] = useState<MonthRange | null>(null)
+  useEffect(() => {
+    if (!months.length) return
+    setRange((prev) =>
+      prev && months.includes(prev.from) && months.includes(prev.to) ? prev : { from: months[0], to: months[months.length - 1] }
+    )
+  }, [months])
+  const inRange = useCallback((m: string) => !range || (m >= range.from && m <= range.to), [range])
+  return { range, setRange, inRange }
+}
+
+export function MonthRangeControl({
+  months,
+  range,
+  onChange,
+}: {
+  months: string[]
+  range: MonthRange | null
+  onChange: (r: MonthRange) => void
+}) {
+  if (months.length < 2 || !range) return null
+  const label = (m: string) => {
+    const [y, mo] = m.split("-")
+    return `${MONTHS[Number(mo) - 1] ?? mo} ${(y ?? "").slice(2)}`
+  }
+  const sel = "rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <span>Range</span>
+      <select className={sel} value={range.from} onChange={(e) => onChange({ from: e.target.value, to: e.target.value > range.to ? e.target.value : range.to })}>
+        {months.map((m) => (<option key={m} value={m}>{label(m)}</option>))}
+      </select>
+      <span aria-hidden>→</span>
+      <select className={sel} value={range.to} onChange={(e) => onChange({ to: e.target.value, from: e.target.value < range.from ? e.target.value : range.from })}>
+        {months.map((m) => (<option key={m} value={m}>{label(m)}</option>))}
+      </select>
+    </div>
+  )
+}
+
 export function StatTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
     <div className="rounded-md border border-border bg-card px-3 py-2">

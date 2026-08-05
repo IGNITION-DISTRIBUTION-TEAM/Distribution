@@ -1,11 +1,12 @@
 "use client"
 
+import { useMemo } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { BLUE, AMBER, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useReportData } from "@/components/spot-report-kit"
+import { BLUE, AMBER, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 
 type Payload = {
   kpis: { this_month: number; last_month: number; last_7: number; early_churn: number }
@@ -17,11 +18,13 @@ const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTH
 
 export function SpotReportWastage({ override }: { override?: Payload } = {}) {
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/17_wastage.json", override)
+  const months = useMemo(() => (data ? Array.from(new Set(data.monthly_churn.map((r) => String(r.month)))).sort() : []), [data])
+  const { range, setRange, inRange } = useMonthRange(months)
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
 
   const k = data.kpis
-  const monthly = data.monthly_churn.map((r) => ({ month: monthLabel(r.month), Terminated: r.terminated }))
+  const monthly = data.monthly_churn.filter((r) => inRange(String(r.month))).map((r) => ({ month: monthLabel(r.month), Terminated: r.terminated }))
   const ages = data.age_at_churn.map((r) => ({ band: r.band, Count: r.count }))
   const reasons = [...data.churn_reasons].sort((a, b) => b.count - a.count).slice(0, 10)
   const reasonsMeaningful = reasons.length > 1 || (reasons[0] && reasons[0].reason.toLowerCase() !== "unknown")
@@ -36,7 +39,10 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Subscription terminations — volume, recency and age at churn.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={months} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -4,7 +4,7 @@ import { useMemo } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
+import { SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 
 type Row = { month?: string; week?: string; type: string; qty: number; value: number }
 type Payload = { kpis: { qty_mtd: number; value_mtd: number; qty_lm: number; value_lm: number }; monthly: Row[]; weekly: Row[] }
@@ -22,14 +22,19 @@ function stack(rows: Row[], key: "month" | "week", metric: "qty" | "value", labe
 
 export function SpotReportRechargeQty({ override }: { override?: Payload } = {}) {
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/19_recharge_qty_dash.json", override)
+  const months = useMemo(() => (data ? Array.from(new Set(data.monthly.map((r) => String(r.month)))).sort() : []), [data])
+  const { range, setRange, inRange } = useMonthRange(months)
+  const monthKey = (d: string) => `${d.slice(0, 7)}-01`
   const m = useMemo(() => {
     if (!data) return null
+    const monthly = data.monthly.filter((r) => inRange(String(r.month)))
+    const weekly = data.weekly.filter((r) => inRange(monthKey(String(r.week))))
     return {
-      mQty: stack(data.monthly, "month", "qty", monthLabel),
-      mVal: stack(data.monthly, "month", "value", monthLabel),
-      wQty: (() => { const s = stack(data.weekly, "week", "qty", shortDay); return { data: s.data.slice(-26), types: s.types } })(),
+      mQty: stack(monthly, "month", "qty", monthLabel),
+      mVal: stack(monthly, "month", "value", monthLabel),
+      wQty: (() => { const s = stack(weekly, "week", "qty", shortDay); return { data: s.data.slice(-26), types: s.types } })(),
     }
-  }, [data])
+  }, [data, inRange]) // eslint-disable-line react-hooks/exhaustive-deps
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data || !m) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
   const k = data.kpis
@@ -41,7 +46,10 @@ export function SpotReportRechargeQty({ override }: { override?: Payload } = {})
           <div className="flex items-center gap-2"><h2 className="text-2xl font-semibold text-foreground">Recharge Qty Dash</h2><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span></div>
           <p className="mt-1 text-sm text-muted-foreground">Recharge volume and revenue by type — monthly and weekly.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={months} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Recharges this month" value={fmt(k.qty_mtd)} sub="MTD" />

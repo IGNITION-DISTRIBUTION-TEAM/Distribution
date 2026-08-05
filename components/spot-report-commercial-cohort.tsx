@@ -7,7 +7,7 @@ import {
 import { AlertCircle, DatabaseZap, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/lib/auth-context"
-import { SERIES, BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
+import { SERIES, BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 
 type Payload = {
   acquisitions: { month: string; acquired: number; still_active: number }[]
@@ -43,25 +43,31 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
     } catch (e) { setRefreshMsg(e instanceof Error ? e.message : String(e)); setRefreshing(false) }
   }
 
+  const monthOpts = useMemo(() => (data ? Array.from(new Set(data.acquisitions.map((r) => String(r.month)))).sort() : []), [data])
+  const { range, setRange, inRange } = useMonthRange(monthOpts)
   const model = useMemo(() => {
     if (!data) return null
-    const acq = data.acquisitions.map((r) => ({ month: monthLabel(r.month), Acquired: r.acquired, "Still active": r.still_active, ret: r.acquired > 0 ? (r.still_active / r.acquired) * 100 : 0 }))
-    const arpu = data.revenue_per_cohort.map((r) => ({ month: monthLabel(r.month), ARPU: r.accounts > 0 ? Math.round(r.revenue / r.accounts) : 0 }))
-    const chMonths = Array.from(new Set(data.channel_by_month.map((r) => r.month))).sort()
-    const channels = Array.from(new Set(data.channel_by_month.map((r) => r.channel)))
+    const acqRows = data.acquisitions.filter((r) => inRange(String(r.month)))
+    const revRows = data.revenue_per_cohort.filter((r) => inRange(String(r.month)))
+    const chRows = data.channel_by_month.filter((r) => inRange(String(r.month)))
+    const agingRows = data.cohort_aging.filter((r) => inRange(String(r.cohort_month)))
+    const acq = acqRows.map((r) => ({ month: monthLabel(r.month), Acquired: r.acquired, "Still active": r.still_active, ret: r.acquired > 0 ? (r.still_active / r.acquired) * 100 : 0 }))
+    const arpu = revRows.map((r) => ({ month: monthLabel(r.month), ARPU: r.accounts > 0 ? Math.round(r.revenue / r.accounts) : 0 }))
+    const chMonths = Array.from(new Set(chRows.map((r) => r.month))).sort()
+    const channels = Array.from(new Set(chRows.map((r) => r.channel)))
     const cell = new Map<string, number>()
-    for (const r of data.channel_by_month) cell.set(`${r.month}|${r.channel}`, r.count)
+    for (const r of chRows) cell.set(`${r.month}|${r.channel}`, r.count)
     const chStacked = chMonths.map((m) => { const row: Record<string, string | number> = { month: monthLabel(m) }; for (const c of channels) row[c] = cell.get(`${m}|${c}`) ?? 0; return row })
     // Retention heatmap from aging.
-    const cohorts = Array.from(new Set(data.cohort_aging.map((r) => r.cohort_month))).sort()
+    const cohorts = Array.from(new Set(agingRows.map((r) => r.cohort_month))).sort()
     let maxAge = 0
     const grid = new Map<string, number>()
-    for (const r of data.cohort_aging) { maxAge = Math.max(maxAge, r.age_months); const pct = r.acquired > 0 ? (r.active / r.acquired) * 100 : 0; grid.set(`${r.cohort_month}|${r.age_months}`, pct) }
+    for (const r of agingRows) { maxAge = Math.max(maxAge, r.age_months); const pct = r.acquired > 0 ? (r.active / r.acquired) * 100 : 0; grid.set(`${r.cohort_month}|${r.age_months}`, pct) }
     const ages = Array.from({ length: maxAge + 1 }, (_, i) => i)
-    const totalAcq = data.acquisitions.reduce((a, r) => a + r.acquired, 0)
-    const totalActive = data.acquisitions.reduce((a, r) => a + r.still_active, 0)
+    const totalAcq = acqRows.reduce((a, r) => a + r.acquired, 0)
+    const totalActive = acqRows.reduce((a, r) => a + r.still_active, 0)
     return { acq, arpu, channels, chStacked, cohorts, ages, grid, totalAcq, totalActive }
-  }, [data])
+  }, [data, inRange])
 
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data || !model) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
@@ -81,6 +87,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
           {live && data.refreshedAt && <p className="mt-1 text-xs text-muted-foreground">Data as of <span className="font-medium text-foreground">{data.refreshedAt}</span></p>}
         </div>
         <div className="flex items-center gap-2">
+          <MonthRangeControl months={monthOpts} range={range} onChange={setRange} />
           {user?.isSuperAdmin && (
             <Button variant="outline" size="sm" onClick={rebuild} disabled={refreshing}>
               {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DatabaseZap className="mr-2 h-4 w-4" />}
