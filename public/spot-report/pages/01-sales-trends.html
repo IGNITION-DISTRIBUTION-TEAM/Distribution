@@ -150,8 +150,25 @@ function renderLeagueTables() {
     renderLeagueTable(groupAndSort('this_month'), PALETTE.hypermint, thisMonthLabel);
 }
 
-fetch('../data/01_sales_trends.json')
-  .then(r => r.json())
+// Live-first: try the app's live endpoint (rebuilt from Snowflake), fall back
+// to the baked static snapshot if it's unavailable. snu_active1 isn't ported
+// to live yet, so carry it over from the snapshot when the live payload omits it.
+Promise.all([
+  fetch('/api/spot-report/sales-trends')
+    .then(r => { if (!r.ok) throw new Error('live unavailable'); return r.json(); })
+    .catch(() => null),
+  fetch('../data/01_sales_trends.json').then(r => r.json()).catch(() => null),
+])
+  .then(([live, snapshot]) => {
+    const data = live || snapshot;
+    if (!data) throw new Error('No data available');
+    if (live && (!live.snu_active1 || live.snu_active1.length === 0) && snapshot) {
+      data.snu_active1 = snapshot.snu_active1 || [];
+    }
+    const asOf = document.getElementById('asOfBadge');
+    if (asOf) asOf.textContent = live ? 'Live · Snowflake' : 'Snapshot';
+    return data;
+  })
   .then(data => {
     DATA = data;
     buildIndexes();
