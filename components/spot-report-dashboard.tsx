@@ -36,6 +36,7 @@ import { SpotReportTradingStoreTrend } from "@/components/spot-report-trading-st
 import { SpotReportScorecards } from "@/components/spot-report-scorecards"
 import { SpotReportPipelineCommissions } from "@/components/spot-report-pipeline-commissions"
 import { SpotReportPipelineUpload } from "@/components/spot-report-pipeline-upload"
+import { SpotReportSubscriptions } from "@/components/spot-report-subscriptions"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -78,6 +79,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportPipelineCommissions />
     case "pipeline-upload":
       return <SpotReportPipelineUpload />
+    case "subs-telesales":
+      return <SpotReportSubscriptions file="14_subscriptions_telesales.json" title="Subscriptions — Telesales" channel="Telesales" />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -114,7 +117,7 @@ const SECTIONS: Section[] = [
   {
     title: "Subscriptions",
     items: [
-      { label: "Telesales", page: "14-subscriptions-telesales.html" },
+      { label: "Telesales", page: "14-subscriptions-telesales.html", native: "subs-telesales" },
       { label: "App", page: "44-subscriptions-app.html" },
       { label: "WhatsApp", page: "45-subscriptions-whatsapp.html" },
       { label: "Below the Line", page: "46-subscriptions-below-the-line.html" },
