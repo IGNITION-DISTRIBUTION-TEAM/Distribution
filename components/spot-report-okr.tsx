@@ -56,14 +56,24 @@ export function SpotReportOkr() {
         <Button variant="outline" size="sm" onClick={load}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
       </div>
 
-      <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>
-          Actuals are live from Snowflake. <b>Targets and RAG status aren&apos;t shown</b> — those come from the
-          &quot;Goal sheet&quot; in the finance workbook, which has no target values yet. Populate it (or provide an
-          OKR targets source) and the vs-target / RAG view can be added.
-        </span>
-      </div>
+      {target == null ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Actuals are live from Snowflake. <b>No target is set</b> — the target comes from the &quot;Goal sheet&quot;
+            in the uploaded income statement. Upload a workbook with a filled-in &quot;Average subscription sales per
+            day&quot; target and the vs-target / RAG view appears.
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Actuals live from Snowflake; target from the uploaded income statement (Goal sheet). RAG compares the
+            7-day average to target.
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
