@@ -14,8 +14,20 @@ const DB = "DATAWAREHOUSE"
 const SCHEMA = "LEADS_DISTRIBUTION"
 const TABLE = `${DB}.${SCHEMA}.SPOT_TELCO_FINANCIALS`
 const SF_OPTS = { database: DB, schema: SCHEMA } as const
-const SHEET = "Format Is"
 const MAX_BYTES = 25 * 1024 * 1024
+
+// Sheets to import. Each has a different number of label columns before the
+// month columns; `labels` maps the first columns to HEADER/SUB_HEADER/
+// SUB_HEADER2/DETAIL and `dateStart` is the first month column.
+type SheetCfg = { name: string; dateStart: number; get: (r: unknown[]) => { header: string; sub: string; sub2: string; detail: string } }
+const str = (v: unknown) => String(v ?? "").trim()
+const SHEETS: SheetCfg[] = [
+  { name: "Format Is", dateStart: 4, get: (r) => ({ header: str(r[0]), sub: str(r[1]), sub2: str(r[2]), detail: str(r[3]) }) },
+  { name: "Telco fin", dateStart: 3, get: (r) => ({ header: str(r[0]), sub: str(r[1]), sub2: "", detail: str(r[2]) }) },
+  // Goal sheet: [Headers, Sub Headers, months…] — the metric name is in Sub Headers.
+  { name: "Goal sheet", dateStart: 2, get: (r) => ({ header: str(r[0]), sub: str(r[1]), sub2: "", detail: str(r[1]) }) },
+]
+const STATUS_SHEET = "Format Is"
 
 function sqlString(v: string): string {
   return `'${v.replace(/'/g, "''")}'`
@@ -72,7 +84,7 @@ export async function GET(request: NextRequest) {
               MAX(UPLOADED_BY) AS LAST_BY,
               TO_VARCHAR(MIN(PERIOD), 'YYYY-MM') AS FROM_P,
               TO_VARCHAR(MAX(PERIOD), 'YYYY-MM') AS TO_P
-       FROM ${TABLE} WHERE SHEET = ${sqlString(SHEET)}`,
+       FROM ${TABLE} WHERE SHEET = ${sqlString(STATUS_SHEET)}`,
       SF_OPTS
     )
     const r = rows[0] ?? {}
@@ -111,48 +123,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "File must be under 25MB" }, { status: 400 })
   }
 
-  // Parse the Format Is sheet.
-  let records: {
-    header: string; sub: string; sub2: string; detail: string; period: string; value: number
-  }[] = []
-  let periodCount = 0
+  // Parse every configured sheet into long rows, tagged by SHEET.
+  type Rec = { sheet: string; header: string; sub: string; sub2: string; detail: string; period: string; value: number }
+  const records: Rec[] = []
+  const perSheet: Record<string, number> = {}
+  let wbNames: string[] = []
   try {
     const buf = Buffer.from(await file.arrayBuffer())
     const wb = XLSX.read(buf, { type: "buffer" })
-    const ws = wb.Sheets[SHEET]
-    if (!ws) {
-      return NextResponse.json(
-        { error: `Sheet "${SHEET}" not found. Sheets present: ${wb.SheetNames.join(", ")}` },
-        { status: 400 }
-      )
-    }
-    const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: "", blankrows: false })
-    if (aoa.length < 2) return NextResponse.json({ error: "Sheet has no data rows" }, { status: 400 })
-
-    // Header row: cols 0-3 are labels; cols 4+ are month periods.
-    const head = aoa[0] as unknown[]
-    const periods: { col: number; period: string }[] = []
-    for (let c = 4; c < head.length; c++) {
-      const p = parsePeriod(head[c])
-      if (p) periods.push({ col: c, period: p })
-    }
-    periodCount = periods.length
-    if (periodCount === 0) {
-      return NextResponse.json({ error: "No month columns detected in the header row" }, { status: 400 })
-    }
-
-    for (let r = 1; r < aoa.length; r++) {
-      const row = aoa[r] as unknown[]
-      const header = String(row[0] ?? "").trim()
-      const sub = String(row[1] ?? "").trim()
-      const sub2 = String(row[2] ?? "").trim()
-      const detail = String(row[3] ?? "").trim()
-      if (!header && !sub && !detail) continue
-      for (const { col, period } of periods) {
-        const value = cleanNumber(row[col])
-        if (value === null) continue
-        records.push({ header, sub, sub2, detail, period, value })
+    wbNames = wb.SheetNames
+    for (const cfg of SHEETS) {
+      const ws = wb.Sheets[cfg.name]
+      if (!ws) continue // sheet optional — skip if absent
+      const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: "", blankrows: false })
+      if (aoa.length < 2) continue
+      const head = aoa[0] as unknown[]
+      const periods: { col: number; period: string }[] = []
+      for (let c = cfg.dateStart; c < head.length; c++) {
+        const p = parsePeriod(head[c])
+        if (p) periods.push({ col: c, period: p })
       }
+      if (periods.length === 0) continue
+      let count = 0
+      for (let r = 1; r < aoa.length; r++) {
+        const row = aoa[r] as unknown[]
+        const { header, sub, sub2, detail } = cfg.get(row)
+        if (!header && !sub && !detail) continue
+        for (const { col, period } of periods) {
+          const value = cleanNumber(row[col])
+          if (value === null) continue
+          records.push({ sheet: cfg.name, header, sub, sub2, detail, period, value })
+          count++
+        }
+      }
+      perSheet[cfg.name] = count
     }
   } catch (err) {
     return NextResponse.json(
@@ -161,24 +165,31 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (records.length === 0) {
-    return NextResponse.json({ error: "No numeric values parsed from the sheet" }, { status: 400 })
+  // At minimum the income statement must be present.
+  if (!perSheet["Format Is"]) {
+    return NextResponse.json(
+      { error: `No values parsed from the "Format Is" sheet. Sheets present: ${wbNames.join(", ")}` },
+      { status: 400 }
+    )
   }
 
   try {
     await ensureTable()
-    // Replace this sheet's rows.
-    await executeSnowflakeQueryWithMeta(`DELETE FROM ${TABLE} WHERE SHEET = ${sqlString(SHEET)}`, SF_OPTS)
+    const importedSheets = SHEETS.map((s) => s.name).filter((n) => perSheet[n] !== undefined)
+    // Replace rows for the sheets we imported.
+    await executeSnowflakeQueryWithMeta(
+      `DELETE FROM ${TABLE} WHERE SHEET IN (${importedSheets.map(sqlString).join(", ")})`,
+      SF_OPTS
+    )
 
     const by = sqlString(guard.email)
-    const sheetLit = sqlString(SHEET)
     const BATCH = 500
     for (let i = 0; i < records.length; i += BATCH) {
       const values = records
         .slice(i, i + BATCH)
         .map(
           (r) =>
-            `(${sheetLit}, ${sqlString(r.header)}, ${sqlString(r.sub)}, ${sqlString(r.sub2)}, ` +
+            `(${sqlString(r.sheet)}, ${sqlString(r.header)}, ${sqlString(r.sub)}, ${sqlString(r.sub2)}, ` +
             `${sqlString(r.detail)}, DATE ${sqlString(r.period)}, ${r.value}, ${by}, CURRENT_TIMESTAMP())`
         )
         .join(", ")
@@ -190,7 +201,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    return NextResponse.json({ success: true, rows: records.length, periods: periodCount })
+    return NextResponse.json({ success: true, rows: records.length, perSheet })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/spot-report/financials-upload] store error:", message)

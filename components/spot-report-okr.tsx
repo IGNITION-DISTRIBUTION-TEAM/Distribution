@@ -13,6 +13,7 @@ type Channel = { channel: string; yesterday: number; last7avg: number }
 export function SpotReportOkr() {
   const [channels, setChannels] = useState<Channel[] | null>(null)
   const [live, setLive] = useState(false)
+  const [target, setTarget] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -25,6 +26,7 @@ export function SpotReportOkr() {
         if (!r.ok) throw new Error(d.error || `Failed (${r.status})`)
         setChannels(d.channels ?? [])
         setLive(!!d.hasData)
+        setTarget(typeof d.targetPerDay === "number" ? d.targetPerDay : null)
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
@@ -74,11 +76,20 @@ export function SpotReportOkr() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label="Subscriptions yesterday" value={fmt(totalYest)} />
             <StatTile label="7-day avg / working day" value={totalAvg.toLocaleString(undefined, { maximumFractionDigits: 1 })} />
-            <StatTile label="Channels" value={String(channels.length)} />
             <StatTile
-              label="Yesterday vs 7-day avg"
-              value={`${totalYest - totalAvg >= 0 ? "+" : ""}${(totalYest - totalAvg).toLocaleString(undefined, { maximumFractionDigits: 1 })}`}
-              accent={totalYest - totalAvg >= 0 ? "text-emerald-300" : "text-rose-300"}
+              label="Target (subs/day)"
+              value={target != null ? target.toLocaleString(undefined, { maximumFractionDigits: 1 }) : "not set"}
+              sub={target == null ? "Goal sheet has no target" : undefined}
+            />
+            <StatTile
+              label="vs target (7-day avg)"
+              value={
+                target != null
+                  ? `${totalAvg - target >= 0 ? "+" : ""}${(totalAvg - target).toLocaleString(undefined, { maximumFractionDigits: 1 })}`
+                  : "—"
+              }
+              sub={target != null ? (totalAvg >= target ? "on/above target" : "below target") : undefined}
+              accent={target != null ? (totalAvg >= target ? "text-emerald-300" : "text-rose-300") : undefined}
             />
           </div>
 

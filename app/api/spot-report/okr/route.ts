@@ -80,7 +80,23 @@ export async function GET(request: NextRequest) {
       yesterday: num(r.YESTERDAY),
       last7avg: num(r.LAST7_AVG),
     }))
-    return NextResponse.json({ channels, hasData: channels.length > 0 })
+
+    // Target from the uploaded income statement's Goal sheet (may be null when
+    // the target cells are blank). Cross-DB read of the financials table.
+    let targetPerDay: number | null = null
+    try {
+      const t = await executeSnowflakeQuery<{ V: number | string }>(
+        `SELECT VALUE AS V FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.SPOT_TELCO_FINANCIALS
+         WHERE SHEET = 'Goal sheet' AND LOWER(DETAIL) LIKE '%subscription sales per day%'
+         ORDER BY PERIOD DESC LIMIT 1`,
+        { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" }
+      )
+      if (t.length) targetPerDay = num(t[0].V)
+    } catch {
+      // Financials table may not exist yet / no upload — leave target null.
+    }
+
+    return NextResponse.json({ channels, hasData: channels.length > 0, targetPerDay })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/spot-report/okr] error:", message)

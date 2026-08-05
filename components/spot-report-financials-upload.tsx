@@ -11,7 +11,7 @@ export function SpotReportFinancialsUpload() {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ rows: number; periods: number } | null>(null)
+  const [result, setResult] = useState<{ rows: number; perSheet: Record<string, number> } | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -51,7 +51,7 @@ export function SpotReportFinancialsUpload() {
       const r = await fetch("/api/spot-report/financials-upload", { method: "POST", body: fd })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Upload failed (${r.status})`)
-      setResult({ rows: d.rows, periods: d.periods })
+      setResult({ rows: d.rows, perSheet: d.perSheet ?? {} })
       setFile(null)
       if (inputRef.current) inputRef.current.value = ""
       loadStatus()
@@ -141,8 +141,14 @@ export function SpotReportFinancialsUpload() {
         </div>
       )}
       {result && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
-          <CheckCircle2 className="h-4 w-4" /> Stored {result.rows.toLocaleString()} values across {result.periods} months.
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Stored {result.rows.toLocaleString()} values.{" "}
+            {Object.entries(result.perSheet)
+              .map(([s, n]) => `${s}: ${n.toLocaleString()}`)
+              .join(" · ")}
+          </span>
         </div>
       )}
     </div>
