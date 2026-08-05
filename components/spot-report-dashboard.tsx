@@ -111,7 +111,7 @@ function renderNative(key: string): React.ReactNode {
         <SpotReportPlaceholder
           title="Pargo Collections"
           subtitle="Parcel collections via Pargo pickup points."
-          note="Pargo logistics data isn't available via the current data connection — there's no Snowflake source or feed for it yet. Charts will populate once a Pargo integration lands."
+          note="Not wired live yet. The source view UCONNECT_DW.ANALYTICS.VW_PARGO_COLLECTIONS exists but isn't granted to the app role — grant it (scripts/spot-report.sql) and this page can read parcel collections live."
           kpis={["Parcels sent MTD", "Parcels collected MTD", "Collection rate %", "Avg days to collect"]}
           charts={["Monthly collections trend", "Sent vs collected by month", "Collections by tenant", "Aged uncollected parcels"]}
         />
