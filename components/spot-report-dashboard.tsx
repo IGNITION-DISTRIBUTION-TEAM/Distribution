@@ -21,13 +21,33 @@ import {
 } from "@/components/ui/sidebar"
 import { ArrowLeft, LogOut, RefreshCw } from "lucide-react"
 import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
+import { SpotReportSimActivations } from "@/components/spot-report-sim-activations"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
 // sidebar (portal design); the selected report renders in the content area.
 // `page` is the file under public/spot-report/pages/, or null for a pending
 // (not-yet-built) report.
-type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: boolean }
+// `native` is a key selecting an in-app React page; when unset the page is
+// shown via the static iframe.
+type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: string }
+
+function renderNative(key: string): React.ReactNode {
+  switch (key) {
+    case "sales-trends":
+      return <SpotReportSalesTrends />
+    case "sim-1":
+      return <SpotReportSimActivations file="11_sim_activations_1.json" part="1" />
+    case "sim-2":
+      return <SpotReportSimActivations file="41_sim_activations_2.json" part="2" />
+    case "sim-3":
+      return <SpotReportSimActivations file="42_sim_activations_3.json" part="3" />
+    case "sim-4":
+      return <SpotReportSimActivations file="43_sim_activations_4.json" part="4" />
+    default:
+      return null
+  }
+}
 type Section = { title: string; items: Report[] }
 
 const SECTIONS: Section[] = [
@@ -47,12 +67,12 @@ const SECTIONS: Section[] = [
   {
     title: "Sales",
     items: [
-      { label: "Sales Trends", page: "01-sales-trends.html", native: true },
+      { label: "Sales Trends", page: "01-sales-trends.html", native: "sales-trends" },
       { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html" },
-      { label: "New SIM Activations & Utilisation 1", page: "11-sim-activations-1.html" },
-      { label: "New SIM Activations & Utilisation 2", page: "41-sim-activations-2.html" },
-      { label: "New SIM Activations & Utilisation 3", page: "42-sim-activations-3.html" },
-      { label: "New SIM Activations & Utilisation 4", page: "43-sim-activations-4.html" },
+      { label: "New SIM Activations & Utilisation 1", page: "11-sim-activations-1.html", native: "sim-1" },
+      { label: "New SIM Activations & Utilisation 2", page: "41-sim-activations-2.html", native: "sim-2" },
+      { label: "New SIM Activations & Utilisation 3", page: "42-sim-activations-3.html", native: "sim-3" },
+      { label: "New SIM Activations & Utilisation 4", page: "43-sim-activations-4.html", native: "sim-4" },
       { label: "Trading Store Trend", page: "12-trading-store-trend.html" },
       { label: "Scorecards", page: null, header: true },
       { label: "Spar", page: "03-spar-scorecard.html", indent: true },
@@ -220,8 +240,8 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
         </header>
 
         {active.native ? (
-          <div className="min-h-0 flex-1 overflow-auto">
-            <SpotReportSalesTrends />
+          <div key={active.native} className="min-h-0 flex-1 overflow-auto">
+            {renderNative(active.native)}
           </div>
         ) : src ? (
           <iframe
