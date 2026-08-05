@@ -3,71 +3,255 @@
 import { useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarFooter,
+  SidebarInset,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
 import { ArrowLeft, ExternalLink, LogOut, RefreshCw } from "lucide-react"
 
-// The Spot Report is the static Telco Retail dashboard rebuild, served from
-// public/spot-report/ and embedded here in an iframe so all its pages, charts,
-// and navigation work exactly as built. Access to the static files is gated by
-// middleware; this department tile is gated by the "spot-report" grant.
-const SITE = "/spot-report/index.html"
+// The Spot Report reports are the static Telco Retail pages served from
+// public/spot-report/pages/ (gated by middleware). Navigation lives in the app
+// sidebar (portal design); the selected report renders in the content area.
+// `page` is the file under public/spot-report/pages/, or null for a pending
+// (not-yet-built) report.
+type Report = { label: string; page: string | null; indent?: boolean; header?: boolean }
+type Section = { title: string; items: Report[] }
+
+const SECTIONS: Section[] = [
+  {
+    title: "Strategy & Book",
+    items: [
+      { label: "Exco Scorecard", page: "33-exco-scorecard.html" },
+      { label: "Spot Connect Book", page: "34-spot-connect-book.html" },
+      { label: "OKR Scorecard", page: "35-okr-scorecard.html" },
+      { label: "OKR Trends", page: "36-okr-trends.html" },
+      { label: "Revenue Trends", page: "37-revenue-trends.html" },
+      { label: "Voice Usage by Tenant", page: "38-voice-usage-tenant.html" },
+      { label: "Data Usage by Tenant", page: "39-data-usage-tenant.html" },
+      { label: "Retain Users via Free Airtime", page: "40-retain-users-airtime.html" },
+    ],
+  },
+  {
+    title: "Sales",
+    items: [
+      { label: "Sales Trends", page: "01-sales-trends.html" },
+      { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html" },
+      { label: "New SIM Activations & Utilisation 1", page: "11-sim-activations-1.html" },
+      { label: "New SIM Activations & Utilisation 2", page: "41-sim-activations-2.html" },
+      { label: "New SIM Activations & Utilisation 3", page: "42-sim-activations-3.html" },
+      { label: "New SIM Activations & Utilisation 4", page: "43-sim-activations-4.html" },
+      { label: "Trading Store Trend", page: "12-trading-store-trend.html" },
+      { label: "Scorecards", page: null, header: true },
+      { label: "Spar", page: "03-spar-scorecard.html", indent: true },
+      { label: "Build It", page: "04-build-it-scorecard.html", indent: true },
+      { label: "Mica", page: "05-mica-scorecard.html", indent: true },
+      { label: "Pet Pool & Home", page: "06-pet-pool-scorecard.html", indent: true },
+      { label: "Aheers", page: "07-aheers-scorecard.html", indent: true },
+      { label: "Fashion Fusion", page: "08-fashion-fusion-scorecard.html", indent: true },
+      { label: "Progas", page: "09-progas-scorecard.html", indent: true },
+      { label: "Midas", page: "10-midas-scorecard.html", indent: true },
+      { label: "Pipeline & Provisional Commissions", page: "13-pipeline-commissions.html" },
+    ],
+  },
+  {
+    title: "Subscriptions",
+    items: [
+      { label: "Telesales", page: "14-subscriptions-telesales.html" },
+      { label: "App", page: "44-subscriptions-app.html" },
+      { label: "WhatsApp", page: "45-subscriptions-whatsapp.html" },
+      { label: "Below the Line", page: "46-subscriptions-below-the-line.html" },
+      { label: "Mobile Store", page: "47-subscriptions-mobile-store.html" },
+      { label: "Mobile Store DigiM VAS", page: "48-subscriptions-digim-vas.html" },
+      { label: "Cohort Analysis", page: "15-subscriptions-cohort.html" },
+    ],
+  },
+  {
+    title: "Commercial",
+    items: [
+      { label: "Commercial Cohort Analysis", page: "16-commercial-cohort.html" },
+      { label: "Wastage", page: "17-wastage.html" },
+      { label: "Pargo Collections", page: "18-pargo-collections.html" },
+    ],
+  },
+  {
+    title: "Recharges",
+    items: [
+      { label: "Recharge Qty Dash", page: "19-recharge-qty-dash.html" },
+      { label: "Recharge Trend by Recharge Type", page: "20-recharge-trend-type.html" },
+      { label: "Recharge Revenue Monthly", page: "21-recharge-revenue-monthly.html" },
+      { label: "Revenue Comparisons", page: "22-revenue-comparisons.html" },
+      { label: "Prepaid Recharge Projection", page: "23-prepaid-recharge-projection.html" },
+    ],
+  },
+  {
+    title: "Financials",
+    items: [
+      { label: "Income Statement", page: null },
+      { label: "Income Statement Summary", page: null },
+      { label: "Revenue Metrics", page: null },
+      { label: "Margin Efficiency Metrics", page: null },
+      { label: "Cost of Sale Metrics", page: null },
+      { label: "Opex Metrics", page: null },
+      { label: "Acquisition Cost Metrics", page: null },
+      { label: "Forward 12 & Trailing 12", page: null },
+      { label: "Value of New Business", page: null },
+    ],
+  },
+]
+
+const FIRST = SECTIONS[1].items[0] // Sales Trends
 
 export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
+  const [active, setActive] = useState<Report>(FIRST)
   const [reloadKey, setReloadKey] = useState(0)
 
+  const src = active.page ? `/spot-report/pages/${active.page}` : null
+
   return (
-    <div className="flex h-screen flex-col bg-background">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
-        <div className="flex items-center gap-3">
-          {onBack && (
+    <SidebarProvider>
+      <Sidebar className="border-r border-border">
+        <SidebarHeader>
+          <div className="flex items-center gap-2 px-2">
+            <span className="text-lg font-bold text-foreground">
+              Spot<sup className="text-[10px]">TM</sup>
+            </span>
+            <span className="text-xs text-muted-foreground">Telco Retail</span>
+          </div>
+        </SidebarHeader>
+        <Separator />
+        <SidebarContent>
+          {SECTIONS.map((section) => (
+            <SidebarGroup key={section.title}>
+              <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {section.items.map((item) =>
+                    item.header ? (
+                      <div
+                        key={item.label}
+                        className="px-2 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                      >
+                        {item.label}
+                      </div>
+                    ) : (
+                      <SidebarMenuItem key={item.label}>
+                        <SidebarMenuButton
+                          onClick={() => item.page && setActive(item)}
+                          isActive={active.label === item.label && active.page === item.page}
+                          disabled={!item.page}
+                          tooltip={item.page ? item.label : `${item.label} (coming soon)`}
+                          className={[
+                            item.indent ? "pl-6" : "",
+                            item.page ? "" : "opacity-50",
+                          ].join(" ")}
+                        >
+                          <span className="truncate">{item.label}</span>
+                          {!item.page && (
+                            <span className="ml-auto text-[10px] text-muted-foreground">soon</span>
+                          )}
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  )}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
+        </SidebarContent>
+        <SidebarFooter>
+          <div className="space-y-3">
+            <div className="px-2 text-sm">
+              <p className="font-medium text-foreground">{user?.name}</p>
+              <p className="text-xs text-muted-foreground">{user?.email}</p>
+            </div>
+            {onBack && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onBack}
+                className="w-full justify-start text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Departments
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
-              onClick={onBack}
-              className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+              onClick={logout}
+              className="w-full justify-start text-muted-foreground hover:text-foreground"
             >
-              <ArrowLeft className="h-4 w-4" />
-              Departments
+              <LogOut className="mr-2 h-4 w-4" />
+              Logout
             </Button>
-          )}
-          <span className="text-sm font-medium text-muted-foreground">Spot Report · Telco Retail</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setReloadKey((k) => k + 1)}
-            aria-label="Reload report"
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Reload
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => window.open(SITE, "_blank")}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            Open in new tab
-          </Button>
-          <div className="hidden text-right text-xs sm:block">
-            <p className="font-medium text-foreground">{user?.name}</p>
-            <p className="text-muted-foreground">{user?.email}</p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Logout
-          </Button>
-        </div>
-      </header>
+        </SidebarFooter>
+      </Sidebar>
 
-      <iframe
-        key={reloadKey}
-        src={SITE}
-        title="Spot Report — Telco Retail"
-        className="min-h-0 w-full flex-1 border-0 bg-white"
-      />
-    </div>
+      <SidebarInset>
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <SidebarTrigger />
+            <span className="truncate text-sm font-medium text-foreground">{active.label}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {src && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Reload
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => window.open(src, "_blank")}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  New tab
+                </Button>
+              </>
+            )}
+          </div>
+        </header>
+
+        {src ? (
+          <iframe
+            key={`${active.page}-${reloadKey}`}
+            src={src}
+            title={active.label}
+            className="min-h-0 w-full flex-1 border-0 bg-white"
+            onLoad={(e) => {
+              // Same-origin: hide each report's own topbar (Spot logo + "Back to
+              // Menu" that would jump to the static landing) so only the report
+              // content shows under the app header.
+              try {
+                const doc = e.currentTarget.contentDocument
+                if (doc && !doc.getElementById("spot-embed-style")) {
+                  const style = doc.createElement("style")
+                  style.id = "spot-embed-style"
+                  style.textContent = ".topbar{display:none!important;}"
+                  doc.head.appendChild(style)
+                }
+              } catch {
+                // Cross-origin (shouldn't happen) — leave the page as-is.
+              }
+            }}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center p-10 text-center text-sm text-muted-foreground">
+            This report hasn&apos;t been built yet.
+          </div>
+        )}
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
