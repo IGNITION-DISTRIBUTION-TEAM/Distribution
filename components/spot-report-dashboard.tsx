@@ -37,6 +37,7 @@ import { SpotReportScorecards } from "@/components/spot-report-scorecards"
 import { SpotReportPipelineCommissions } from "@/components/spot-report-pipeline-commissions"
 import { SpotReportPipelineUpload } from "@/components/spot-report-pipeline-upload"
 import { SpotReportSubscriptions } from "@/components/spot-report-subscriptions"
+import { SpotReportCohort } from "@/components/spot-report-cohort"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -91,6 +92,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportSubscriptions file="47_subscriptions_mobile_store.json" title="Subscriptions — Mobile Store" channel="Mobile Store" liveChannel="Mobile Store" />
     case "subs-digim":
       return <SpotReportSubscriptions file="48_subscriptions_digim_vas.json" title="Subscriptions — Mobile Store DigiM VAS" channel="DigiM VAS" liveChannel="DigiM VAS" />
+    case "subs-cohort":
+      return <SpotReportCohort />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -133,7 +136,7 @@ const SECTIONS: Section[] = [
       { label: "Below the Line", page: "46-subscriptions-below-the-line.html", native: "subs-btl" },
       { label: "Mobile Store", page: "47-subscriptions-mobile-store.html", native: "subs-mobile" },
       { label: "Mobile Store DigiM VAS", page: "48-subscriptions-digim-vas.html", native: "subs-digim" },
-      { label: "Cohort Analysis", page: "15-subscriptions-cohort.html" },
+      { label: "Cohort Analysis", page: "15-subscriptions-cohort.html", native: "subs-cohort" },
     ],
   },
   {
