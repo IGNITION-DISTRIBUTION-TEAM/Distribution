@@ -67,10 +67,16 @@ function rollingAvg(series, window) {
 
 function baseLayout(title) {
   return {
-    title: { text: title, font: { color: PALETTE.zeroWhite, size: 14 }, x: 0 },
+    // Pin the title to the top of the container and leave enough top margin for
+    // a horizontal legend to sit BELOW it (several chart types add a legend at
+    // y ~1.1, which otherwise overlaps the title).
+    title: {
+      text: title, font: { color: PALETTE.zeroWhite, size: 14 },
+      x: 0, xanchor: 'left', y: 0.98, yref: 'container', yanchor: 'top',
+    },
     paper_bgcolor: PALETTE.surface1, plot_bgcolor: PALETTE.surface1,
     font: { color: '#888', size: 11 },
-    margin: { l: 44, r: 8, t: 40, b: 36 },
+    margin: { l: 44, r: 8, t: 66, b: 36 },
     xaxis: { showgrid: false, linecolor: PALETTE.border, tickfont: { size: 10, color: '#888' } },
     yaxis: { showgrid: true, gridcolor: PALETTE.border, linecolor: 'rgba(0,0,0,0)', tickformat: ',' },
     bargap: 0.3,
