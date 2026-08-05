@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
@@ -32,10 +33,23 @@ function rand(n: number): string {
 
 export function SpotReportExco({ override }: { override?: Payload } = {}) {
   const { data, live, loading, error, reload } = useReportData<Payload>(
-    null, // partly Excel/SharePoint sourced — no live endpoint
+    null, // activations/eNPS still snapshot; revenue is overlaid live below
     "/spot-report/data/33_exco_scorecard.json",
     override
   )
+
+  // Revenue overlay from the uploaded income statement (last 14 months).
+  const [rev, setRev] = useState<{ monthly: { month: string; revenue: number }[]; mtd: number | null } | null>(null)
+  useEffect(() => {
+    if (override) return
+    fetch("/api/spot-report/exco-revenue")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.hasData) setRev({ monthly: d.monthly_revenue.slice(-14), mtd: d.rev_mtd })
+      })
+      .catch(() => {})
+  }, [override])
+  const revLive = !!rev
 
   if (loading) {
     return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
@@ -45,7 +59,10 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
   }
 
   const actData = data.monthly_activations.map((r) => ({ month: monthLabel(r.month), Activations: r.activations }))
-  const revData = data.monthly_revenue.map((r) => ({ month: monthLabel(r.month), Revenue: Math.round(r.revenue) }))
+  // Revenue: live income-statement overlay when available, else the snapshot.
+  const revSource = revLive ? rev!.monthly : data.monthly_revenue
+  const revData = revSource.map((r) => ({ month: monthLabel(r.month), Revenue: Math.round(r.revenue) }))
+  const revMtd = revLive && rev!.mtd != null ? rev!.mtd : data.kpis.rev_mtd
   const channelData = [...data.channel_mix].sort((a, b) => b.sims - a.sims).map((r) => ({ channel: r.channel, SIMs: r.sims }))
   const churnData = [...data.churn_reasons].sort((a, b) => b.count - a.count).map((r) => ({ reason: r.reason, Count: r.count }))
   const enpsData = data.enps.map((r) => ({ period: r.period, eNPS: r.pending ? null : r.enps }))
@@ -75,7 +92,12 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
           accent={deltaMtd >= 0 ? "text-emerald-300" : "text-rose-300"}
         />
         <StatTile label="Activations last month" value={fmt(data.kpis.act_lm)} />
-        <StatTile label="Revenue MTD" value={rand(data.kpis.rev_mtd)} />
+        <StatTile
+          label="Revenue MTD"
+          value={rand(revMtd)}
+          sub={revLive ? "live · income statement" : undefined}
+          accent={revLive ? "text-emerald-300" : undefined}
+        />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -91,7 +113,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Monthly revenue" subtitle="Last 14 months (ZAR)">
+        <ChartCard title="Monthly revenue" subtitle={revLive ? "Live · income statement (ZAR)" : "Last 14 months (ZAR) · snapshot"}>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={revData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -146,12 +168,11 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
         </ChartCard>
       )}
 
-      {!live && (
-        <p className="text-xs text-muted-foreground">
-          Showing the baked snapshot. Exco is partly sourced from Excel/SharePoint (finance &amp; eNPS)
-          plus Snowflake activations — full live wiring needs those workbook feeds, which aren&apos;t in the pack.
-        </p>
-      )}
+      <p className="text-xs text-muted-foreground">
+        {revLive
+          ? "Revenue is live from the uploaded income statement (Revenue lines in the Format Is sheet). Activations, channel mix and eNPS are still from the snapshot."
+          : "Showing the baked snapshot. Upload the income statement (Financials → Upload) to make revenue live; activations and eNPS remain snapshot until their sources are wired."}
+      </p>
     </div>
   )
 }
