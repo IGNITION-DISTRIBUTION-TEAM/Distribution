@@ -80,7 +80,7 @@ function renderNative(key: string): React.ReactNode {
     case "pipeline-upload":
       return <SpotReportPipelineUpload />
     case "subs-telesales":
-      return <SpotReportSubscriptions file="14_subscriptions_telesales.json" title="Subscriptions — Telesales" channel="Telesales" />
+      return <SpotReportSubscriptions file="14_subscriptions_telesales.json" title="Subscriptions — Telesales" channel="Telesales" liveChannel="Telesales" />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:

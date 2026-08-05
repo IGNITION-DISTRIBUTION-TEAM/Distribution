@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
@@ -30,18 +30,50 @@ const pct = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? "�
 const asRows = (v: { deal: string; sales: number }[] | number) => (Array.isArray(v) ? v : [])
 const TOP_DEALS = 8
 
+type LiveSales = {
+  hasData: boolean
+  monthly: { month: string; sales: number }[]
+  daily: { date: string; sales: number }[]
+  sales_yday: number; sales_mtd: number; sales_l30: number; sales_l7: number
+}
+
 export function SpotReportSubscriptions({
   file,
   title,
   channel,
+  liveChannel,
   override,
 }: {
   file: string
   title: string
   channel: string
+  liveChannel?: string
   override?: Payload
 }) {
-  const { data, loading, error, reload } = useReportData<Payload>(null, `/spot-report/data/${file}`, override)
+  const { data: snap, loading, error, reload } = useReportData<Payload>(null, `/spot-report/data/${file}`, override)
+
+  // Overlay live subscription SALES (trends + sales KPIs) when derivable for
+  // this channel; book/FTC/Month-2/collected/deals stay on the snapshot.
+  const [liveSales, setLiveSales] = useState<LiveSales | null>(null)
+  useEffect(() => {
+    if (override || !liveChannel) return
+    fetch(`/api/spot-report/subscriptions?channel=${encodeURIComponent(liveChannel)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: LiveSales | null) => { if (d?.hasData && d.monthly?.length) setLiveSales(d) })
+      .catch(() => {})
+  }, [liveChannel, override])
+  const salesLive = !!liveSales
+
+  const data: Payload | null = snap
+    ? {
+        ...snap,
+        monthly: salesLive ? liveSales!.monthly : snap.monthly,
+        daily: salesLive ? liveSales!.daily : snap.daily,
+        kpis: salesLive
+          ? { ...snap.kpis, sales_yday: liveSales!.sales_yday, sales_mtd: liveSales!.sales_mtd, sales_l30: liveSales!.sales_l30, sales_l7: liveSales!.sales_l7 }
+          : snap.kpis,
+      }
+    : null
 
   const collected = useMemo(() => {
     if (!data?.collected?.length) return null
@@ -105,9 +137,11 @@ export function SpotReportSubscriptions({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
-            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${salesLive ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
+              {salesLive ? "● Sales live · Snowflake" : "● Snapshot"}
+            </span>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{channel} subscription sales, book and card-collected billings.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{channel} subscription sales{salesLive ? " (live)" : ""}, book and card-collected billings (snapshot).</p>
         </div>
         <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
       </div>
@@ -119,7 +153,7 @@ export function SpotReportSubscriptions({
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <ChartCard title="Monthly new sales" subtitle="Snapshot">
+        <ChartCard title="Monthly new sales" subtitle={salesLive ? "Live · Snowflake" : "Snapshot"}>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={monthlyData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -131,7 +165,7 @@ export function SpotReportSubscriptions({
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Daily new sales" subtitle="Snapshot · recent">
+        <ChartCard title="Daily new sales" subtitle={salesLive ? "Live · Snowflake · recent" : "Snapshot · recent"}>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={dailyData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -178,9 +212,12 @@ export function SpotReportSubscriptions({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Baked snapshot. The underlying billing/cohort views live across several Snowflake schemas
-        (DATAWAREHOUSE.BILLING, SMARTCONNECT_DBO) and the headline measures (book, FTC%, Month-2%) are
-        PBI-defined, so this isn&apos;t wired live yet — see the note in chat for what a live version needs.
+        {salesLive
+          ? "Sales trends and sales KPIs are live from Snowflake (VW_SILVER_SURFER_SALES_SIM_INFO, same source as OKR). "
+          : "Sales are on the snapshot. "}
+        Book, FTC% and Month-2% (cohort measures from DATAWAREHOUSE.BILLING.COHORTSUCONNECT) and the card-collected billing
+        (SMARTCONNECT_DBO.SUBSCRIBERBILLINGHISTORY) stay on the snapshot — the collected query is defined in the map but its
+        schema isn&apos;t granted, and the book/FTC/Month-2 measures are PBI-defined.
       </p>
     </div>
   )
