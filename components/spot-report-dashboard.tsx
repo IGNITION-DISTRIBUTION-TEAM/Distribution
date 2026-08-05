@@ -169,23 +169,29 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
                         {item.label}
                       </div>
                     ) : (
+                      (() => {
+                        // Selectable if it has a static page OR a native React view.
+                        const selectable = !!(item.page || item.native)
+                        return (
                       <SidebarMenuItem key={item.label}>
                         <SidebarMenuButton
-                          onClick={() => item.page && setActive(item)}
-                          isActive={active.label === item.label && active.page === item.page}
-                          disabled={!item.page}
-                          tooltip={item.page ? item.label : `${item.label} (coming soon)`}
+                          onClick={() => selectable && setActive(item)}
+                          isActive={active.label === item.label && active.native === item.native && active.page === item.page}
+                          disabled={!selectable}
+                          tooltip={selectable ? item.label : `${item.label} (coming soon)`}
                           className={[
                             item.indent ? "pl-6" : "",
-                            item.page ? "" : "opacity-50",
+                            selectable ? "" : "opacity-50",
                           ].join(" ")}
                         >
                           <span className="truncate">{item.label}</span>
-                          {!item.page && (
+                          {!selectable && (
                             <span className="ml-auto text-[10px] text-muted-foreground">soon</span>
                           )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
+                        )
+                      })()
                     )
                   )}
                 </SidebarMenu>
