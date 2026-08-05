@@ -24,6 +24,11 @@ GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_UC_USAGE                      TO R
 -- retentions sub-wallet / free-airtime bundle benefits):
 GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_SC_TRANSACTION_REPORT         TO ROLE SVC_VERCEL_APP_ROLE;
 
+-- Subscriptions Cohort Analysis (cohort retention / billed-by-channel). Needed
+-- to wire this page live; after granting, share the view's columns and the
+-- cohort heatmap + channel chart can read from it instead of the snapshot.
+GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_COHORT_OVERALL_SALES_WITH_AGING_ON_MEASURES TO ROLE SVC_VERCEL_APP_ROLE;
+
 -- Convenience for porting more pages (broad — grant per-object instead if you
 -- prefer least privilege):
 -- GRANT SELECT ON ALL TABLES  IN SCHEMA UCONNECT_DW.ANALYTICS TO ROLE SVC_VERCEL_APP_ROLE;
