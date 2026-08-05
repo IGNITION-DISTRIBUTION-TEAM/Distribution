@@ -20,6 +20,10 @@ GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_SILVER_SURFER_SALES_SIM_INFO  TO R
 -- Voice / Data Usage by Tenant (per-account CDR usage: MINUTES_USED, MEGS_USED):
 GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_UC_USAGE                      TO ROLE SVC_VERCEL_APP_ROLE;
 
+-- Retain Users via Free Airtime (monthly reward qty & value from the
+-- retentions sub-wallet / free-airtime bundle benefits):
+GRANT SELECT ON VIEW UCONNECT_DW.ANALYTICS.VW_SC_TRANSACTION_REPORT         TO ROLE SVC_VERCEL_APP_ROLE;
+
 -- Convenience for porting more pages (broad — grant per-object instead if you
 -- prefer least privilege):
 -- GRANT SELECT ON ALL TABLES  IN SCHEMA UCONNECT_DW.ANALYTICS TO ROLE SVC_VERCEL_APP_ROLE;

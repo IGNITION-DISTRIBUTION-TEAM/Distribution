@@ -30,6 +30,7 @@ import { SpotReportOkrTrends } from "@/components/spot-report-okr-trends"
 import { SpotReportRevenueTrends } from "@/components/spot-report-revenue-trends"
 import { SpotReportVoiceUsage } from "@/components/spot-report-voice-usage"
 import { SpotReportDataUsage } from "@/components/spot-report-data-usage"
+import { SpotReportRetainUsers } from "@/components/spot-report-retain-users"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -60,6 +61,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportVoiceUsage />
     case "data-usage":
       return <SpotReportDataUsage />
+    case "retain-users":
+      return <SpotReportRetainUsers />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -79,7 +82,7 @@ const SECTIONS: Section[] = [
       { label: "Revenue Trends", page: "37-revenue-trends.html", native: "revenue-trends" },
       { label: "Voice Usage by Tenant", page: "38-voice-usage-tenant.html", native: "voice-usage" },
       { label: "Data Usage by Tenant", page: "39-data-usage-tenant.html", native: "data-usage" },
-      { label: "Retain Users via Free Airtime", page: "40-retain-users-airtime.html" },
+      { label: "Retain Users via Free Airtime", page: "40-retain-users-airtime.html", native: "retain-users" },
     ],
   },
   {
