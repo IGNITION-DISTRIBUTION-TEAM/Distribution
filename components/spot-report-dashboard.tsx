@@ -19,7 +19,7 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { ArrowLeft, ExternalLink, LogOut, RefreshCw } from "lucide-react"
+import { ArrowLeft, LogOut, RefreshCw } from "lucide-react"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -209,16 +209,10 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {src && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Reload
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => window.open(src, "_blank")}>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  New tab
-                </Button>
-              </>
+              <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Reload
+              </Button>
             )}
           </div>
         </header>
