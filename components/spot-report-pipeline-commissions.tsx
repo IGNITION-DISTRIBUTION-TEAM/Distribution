@@ -1,0 +1,177 @@
+"use client"
+
+import { useMemo } from "react"
+import {
+  Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer,
+  Tooltip as RTooltip, XAxis, YAxis,
+} from "recharts"
+import { AlertCircle, Info, Loader2, RefreshCw } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { SERIES, BLUE, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
+
+type Row = { stage: string; sort: number; category: string; count: number }
+type Payload = { snapshot_date: string; rows: Row[] }
+
+const WON = "Live and Trading"
+const LOST = "Not interested or deal lost"
+
+export function SpotReportPipelineCommissions({ override }: { override?: Payload } = {}) {
+  const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/13_pipeline_commissions.json", override)
+
+  const model = useMemo(() => {
+    if (!data) return null
+    const rows = data.rows
+    const stageSort = new Map<string, number>()
+    const stageTotal = new Map<string, number>()
+    const catTotal = new Map<string, number>()
+    for (const r of rows) {
+      stageSort.set(r.stage, r.sort)
+      stageTotal.set(r.stage, (stageTotal.get(r.stage) ?? 0) + r.count)
+      catTotal.set(r.category, (catTotal.get(r.category) ?? 0) + r.count)
+    }
+    const stagesAsc = Array.from(stageTotal.keys()).sort((a, b) => (stageSort.get(a)! - stageSort.get(b)!))
+    const cats = Array.from(catTotal.keys()).sort((a, b) => (catTotal.get(b)! - catTotal.get(a)!))
+
+    const total = rows.reduce((a, r) => a + r.count, 0)
+    const won = stageTotal.get(WON) ?? 0
+    const lost = stageTotal.get(LOST) ?? 0
+    const active = total - won - lost
+    const winRate = won + lost ? (won / (won + lost)) * 100 : 0
+
+    // Pipeline by stage (funnel order).
+    const byStage = stagesAsc.map((s) => ({ stage: s, count: stageTotal.get(s) ?? 0 }))
+    // Pipeline by category.
+    const byCat = cats.map((c) => ({ category: c, count: catTotal.get(c) ?? 0 }))
+    // Stage x category stacked (stages as rows).
+    const cell = new Map<string, number>()
+    for (const r of rows) cell.set(`${r.stage}|${r.category}`, r.count)
+    const stacked = stagesAsc.map((s) => {
+      const row: Record<string, string | number> = { stage: s }
+      for (const c of cats) row[c] = cell.get(`${s}|${c}`) ?? 0
+      return row
+    })
+    // Win rate by category (won / won+lost).
+    const winByCat = cats
+      .map((c) => {
+        const w = cell.get(`${WON}|${c}`) ?? 0
+        const l = cell.get(`${LOST}|${c}`) ?? 0
+        return { category: c, won: w, lost: l, rate: w + l ? Math.round((w / (w + l)) * 1000) / 10 : null }
+      })
+      .filter((r) => r.rate != null)
+      .sort((a, b) => (b.rate! - a.rate!)) as { category: string; won: number; lost: number; rate: number }[]
+
+    return { total, won, lost, active, winRate, byStage, byCat, cats, stacked, winByCat }
+  }, [data])
+
+  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (error || !data || !model) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
+
+  return (
+    <div className="flex flex-col gap-5 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold text-foreground">Pipeline &amp; Provisional Commissions</h2>
+            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">BDM new-business pipeline by stage and category — counts only.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+      </div>
+
+      <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          Hand-maintained BDM pipeline tracker (SharePoint), one-time snapshot dated <b>{data.snapshot_date}</b> — not a live
+          connection. <b>Provisional commissions aren&apos;t shown</b>: this workbook has no Rand-value or commission column,
+          only pipeline-stage counts.
+        </span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile label="Total pipeline" value={fmt(model.total)} sub="this snapshot" />
+        <StatTile label="Active (in progress)" value={fmt(model.active)} sub="excl. won & lost" />
+        <StatTile label="Live and trading (won)" value={fmt(model.won)} accent="text-emerald-300" />
+        <StatTile label="Win rate" value={`${model.winRate.toFixed(1)}%`} sub={`${fmt(model.won)} won / ${fmt(model.lost)} lost`} accent={model.winRate >= 50 ? "text-emerald-300" : "text-amber-300"} />
+      </div>
+
+      <ChartCard title="Pipeline by stage" subtitle="Funnel order · initial contact → live and trading">
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={model.byStage} layout="vertical" margin={{ top: 4, right: 40, bottom: 0, left: 8 }}>
+            <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+            <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="stage" tick={axisTick} axisLine={false} tickLine={false} width={230} />
+            <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+            <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
+              <LabelList dataKey="count" position="right" style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+              {model.byStage.map((r) => (
+                <Cell key={r.stage} fill={r.stage === WON ? SERIES[1] : r.stage === LOST ? SERIES[4] : BLUE} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <ChartCard title="Pipeline by category" subtitle="All stages">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={model.byCat} layout="vertical" margin={{ top: 4, right: 40, bottom: 0, left: 8 }}>
+              <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+              <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="category" tick={axisTick} axisLine={false} tickLine={false} width={130} />
+              <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+              <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
+                <LabelList dataKey="count" position="right" style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                {model.byCat.map((r, i) => (
+                  <Cell key={r.category} fill={SERIES[i % SERIES.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Win rate by category" subtitle="Won ÷ (won + lost)">
+          {model.winByCat.length ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={model.winByCat} layout="vertical" margin={{ top: 4, right: 44, bottom: 0, left: 8 }}>
+                <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                <XAxis type="number" domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                <YAxis type="category" dataKey="category" tick={axisTick} axisLine={false} tickLine={false} width={130} />
+                <RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+                <Bar dataKey="rate" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
+                  <LabelList dataKey="rate" position="right" formatter={(v: unknown) => `${Number(v).toFixed(0)}%`} style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                  {model.winByCat.map((r) => (
+                    <Cell key={r.category} fill={r.rate >= 50 ? SERIES[1] : SERIES[2]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">No won/lost outcomes recorded yet.</div>
+          )}
+        </ChartCard>
+      </div>
+
+      <ChartCard title="Stage by category" subtitle="Stacked · where each category sits in the funnel">
+        <ResponsiveContainer width="100%" height={360}>
+          <BarChart data={model.stacked} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
+            <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+            <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="stage" tick={axisTick} axisLine={false} tickLine={false} width={230} />
+            <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+            {model.cats.map((c, i) => (
+              <Bar key={c} dataKey={c} stackId="s" fill={SERIES[i % SERIES.length]} isAnimationActive={false} maxBarSize={26} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+        <Legend items={model.cats.map((c, i) => ({ label: c, color: SERIES[i % SERIES.length] }))} />
+      </ChartCard>
+
+      <p className="text-xs text-muted-foreground">
+        Baked snapshot from the SharePoint BDM tracker — a one-time pull, already stale, and counts only (no decision-maker
+        details, no commission values). The map lists this source as a SharePoint workbook, not a Snowflake object, so it
+        can&apos;t be wired live from here.
+      </p>
+    </div>
+  )
+}

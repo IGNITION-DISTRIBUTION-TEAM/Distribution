@@ -34,6 +34,7 @@ import { SpotReportRetainUsers } from "@/components/spot-report-retain-users"
 import { SpotReportQualityOfSales } from "@/components/spot-report-quality-of-sales"
 import { SpotReportTradingStoreTrend } from "@/components/spot-report-trading-store-trend"
 import { SpotReportScorecards } from "@/components/spot-report-scorecards"
+import { SpotReportPipelineCommissions } from "@/components/spot-report-pipeline-commissions"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -72,6 +73,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportTradingStoreTrend />
     case "scorecards":
       return <SpotReportScorecards />
+    case "pipeline-commissions":
+      return <SpotReportPipelineCommissions />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -102,7 +105,7 @@ const SECTIONS: Section[] = [
       { label: "New SIM Activations & Utilisation", page: "11-sim-activations-1.html", native: "sim" },
       { label: "Trading Store Trend", page: "12-trading-store-trend.html", native: "trading-store-trend" },
       { label: "Store Scorecards", page: null, native: "scorecards" },
-      { label: "Pipeline & Provisional Commissions", page: "13-pipeline-commissions.html" },
+      { label: "Pipeline & Provisional Commissions", page: "13-pipeline-commissions.html", native: "pipeline-commissions" },
     ],
   },
   {
