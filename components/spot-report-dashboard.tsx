@@ -19,7 +19,7 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { ArrowLeft, LogOut, RefreshCw } from "lucide-react"
+import { ArrowLeft, ChevronRight, LogOut, RefreshCw } from "lucide-react"
 import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
 import { SpotReportSimActivations } from "@/components/spot-report-sim-activations"
 import { SpotReportExco } from "@/components/spot-report-exco"
@@ -213,6 +213,15 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
   const [active, setActive] = useState<Report>(FIRST)
   const [reloadKey, setReloadKey] = useState(0)
+  // Collapsible sidebar sections — all collapsed by default.
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set())
+  const toggleSection = (title: string) =>
+    setOpenSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(title)) next.delete(title)
+      else next.add(title)
+      return next
+    })
 
   // Native React pages render in-app; only non-native pages use the iframe.
   const src = active.page && !active.native ? `/spot-report/pages/${active.page}` : null
@@ -229,14 +238,30 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
           </div>
         </SidebarHeader>
         <Separator />
-        <SidebarContent>
-          {SECTIONS.map((section) => (
-            <SidebarGroup key={section.title}>
-              <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
-              <SidebarGroupContent>
+        <SidebarContent className="gap-0.5">
+          {SECTIONS.map((section) => {
+            const visibleItems = section.items.filter((item) => !item.adminOnly || user?.isSuperAdmin)
+            if (visibleItems.length === 0) return null
+            const isOpen = openSections.has(section.title)
+            const hasActive = visibleItems.some(
+              (it) => it.label === active.label && it.native === active.native && it.page === active.page
+            )
+            return (
+            <SidebarGroup key={section.title} className="py-0.5">
+              <button
+                type="button"
+                onClick={() => toggleSection(section.title)}
+                aria-expanded={isOpen}
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+              >
+                <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`} />
+                <span className="flex-1 truncate text-left">{section.title}</span>
+                {hasActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
+              </button>
+              {isOpen && (
+              <SidebarGroupContent className="pl-1.5">
                 <SidebarMenu>
-                  {section.items
-                    .filter((item) => !item.adminOnly || user?.isSuperAdmin)
+                  {visibleItems
                     .map((item) =>
                     item.header ? (
                       <div
@@ -273,8 +298,10 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
                   )}
                 </SidebarMenu>
               </SidebarGroupContent>
+              )}
             </SidebarGroup>
-          ))}
+            )
+          })}
         </SidebarContent>
         <SidebarFooter>
           <div className="space-y-3">
