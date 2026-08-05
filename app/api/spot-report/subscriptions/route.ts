@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const rows = await executeSnowflakeQuery<{ D: string; N: string | number }>(
-      `SELECT CAST(SALESDATE AS DATE) AS D, COUNT(*) AS N
+      `SELECT TO_VARCHAR(CAST(SALESDATE AS DATE), 'YYYY-MM-DD') AS D, COUNT(*) AS N
        FROM UCONNECT_DW.ANALYTICS.VW_SILVER_SURFER_SALES_SIM_INFO
        WHERE ${predicate}
          AND CAST(SALESDATE AS DATE) >= DATEADD('month', -13, DATE_TRUNC('month', CURRENT_DATE()))
