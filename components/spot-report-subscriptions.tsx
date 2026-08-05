@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { SERIES, BLUE, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 
 type Kpis = {
-  book_size: number; ftc_pct: number | null; month2_pct: number | null
+  book_size: number; ftc_pct: number | null; month2_pct?: number | null; active_users?: number
   sales_yday: number; sales_mtd: number; sales_l30: number; sales_l7: number
 }
 type Payload = {
@@ -42,12 +42,14 @@ export function SpotReportSubscriptions({
   title,
   channel,
   liveChannel,
+  variant = "billing",
   override,
 }: {
   file: string
   title: string
   channel: string
   liveChannel?: string
+  variant?: "billing" | "app"
   override?: Payload
 }) {
   const { data: snap, loading, error, reload } = useReportData<Payload>(null, `/spot-report/data/${file}`, override)
@@ -147,9 +149,19 @@ export function SpotReportSubscriptions({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatTile label="Subscription book" value={fmt(k.book_size)} />
-        <StatTile label="FTC %" value={pct(k.ftc_pct)} sub="first-time collection" />
-        <StatTile label="Month 2 %" value={pct(k.month2_pct)} sub="retained to month 2" />
+        {variant === "app" ? (
+          <>
+            <StatTile label="Active registered app users" value={fmt(k.active_users ?? 0)} />
+            <StatTile label="Subscription book" value={fmt(k.book_size)} />
+            <StatTile label="FTC %" value={pct(k.ftc_pct)} sub="first-time collection" />
+          </>
+        ) : (
+          <>
+            <StatTile label="Subscription book" value={fmt(k.book_size)} />
+            <StatTile label="FTC %" value={pct(k.ftc_pct)} sub="first-time collection" />
+            <StatTile label="Month 2 %" value={pct(k.month2_pct)} sub="retained to month 2" />
+          </>
+        )}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -178,7 +190,21 @@ export function SpotReportSubscriptions({
         </ChartCard>
       </div>
 
-      {collected && (
+      {variant === "app" && dealsL30.length > 0 && (
+        <ChartCard title="Top products — last 30 days" subtitle="By sales · snapshot">
+          <ResponsiveContainer width="100%" height={Math.max(220, Math.min(dealsL30.length, 12) * 28 + 30)}>
+            <BarChart data={[...dealsL30].sort((a, b) => b.sales - a.sales).slice(0, 12)} layout="vertical" margin={{ top: 4, right: 40, bottom: 0, left: 8 }}>
+              <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+              <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="deal" tick={axisTick} axisLine={false} tickLine={false} width={220} />
+              <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+              <Bar dataKey="sales" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={20} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      {variant === "billing" && collected && (
         <ChartCard title="Collected book trend via card" subtitle={`Billed by deal, by month · top ${TOP_DEALS} deals · snapshot`}>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={collected.rows} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>

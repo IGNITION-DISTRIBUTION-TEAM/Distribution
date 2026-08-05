@@ -81,6 +81,16 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportPipelineUpload />
     case "subs-telesales":
       return <SpotReportSubscriptions file="14_subscriptions_telesales.json" title="Subscriptions — Telesales" channel="Telesales" liveChannel="Telesales" />
+    case "subs-app":
+      return <SpotReportSubscriptions file="44_subscriptions_app.json" title="Subscriptions — App" channel="App" liveChannel="App" variant="app" />
+    case "subs-whatsapp":
+      return <SpotReportSubscriptions file="45_subscriptions_whatsapp.json" title="Subscriptions — WhatsApp" channel="WhatsApp" liveChannel="Whatsapp" />
+    case "subs-btl":
+      return <SpotReportSubscriptions file="46_subscriptions_below_the_line.json" title="Subscriptions — Below the Line" channel="Below-the-line" />
+    case "subs-mobile":
+      return <SpotReportSubscriptions file="47_subscriptions_mobile_store.json" title="Subscriptions — Mobile Store" channel="Mobile Store" liveChannel="Mobile Store" />
+    case "subs-digim":
+      return <SpotReportSubscriptions file="48_subscriptions_digim_vas.json" title="Subscriptions — Mobile Store DigiM VAS" channel="DigiM VAS" liveChannel="DigiM VAS" />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -118,11 +128,11 @@ const SECTIONS: Section[] = [
     title: "Subscriptions",
     items: [
       { label: "Telesales", page: "14-subscriptions-telesales.html", native: "subs-telesales" },
-      { label: "App", page: "44-subscriptions-app.html" },
-      { label: "WhatsApp", page: "45-subscriptions-whatsapp.html" },
-      { label: "Below the Line", page: "46-subscriptions-below-the-line.html" },
-      { label: "Mobile Store", page: "47-subscriptions-mobile-store.html" },
-      { label: "Mobile Store DigiM VAS", page: "48-subscriptions-digim-vas.html" },
+      { label: "App", page: "44-subscriptions-app.html", native: "subs-app" },
+      { label: "WhatsApp", page: "45-subscriptions-whatsapp.html", native: "subs-whatsapp" },
+      { label: "Below the Line", page: "46-subscriptions-below-the-line.html", native: "subs-btl" },
+      { label: "Mobile Store", page: "47-subscriptions-mobile-store.html", native: "subs-mobile" },
+      { label: "Mobile Store DigiM VAS", page: "48-subscriptions-digim-vas.html", native: "subs-digim" },
       { label: "Cohort Analysis", page: "15-subscriptions-cohort.html" },
     ],
   },

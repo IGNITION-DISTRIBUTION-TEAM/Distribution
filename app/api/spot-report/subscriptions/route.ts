@@ -14,10 +14,20 @@ export const maxDuration = 60
 // PBI-defined, so those stay on the page's snapshot.
 const SF_OPTS = { database: "UCONNECT_DW", schema: "ANALYTICS" } as const
 
-// channel key → SQL predicate over VW_SILVER_SURFER_SALES_SIM_INFO (SALESDATE,
-// CAMPAIGNNAME). Only channels with a known classification are supported.
-const CHANNEL_SQL: Record<string, string> = {
-  Telesales: "(CAMPAIGNNAME IN ('Uconnect Upsell', 'UConnect Triplesave') OR CAMPAIGNNAME ILIKE '%Breakfree%')",
+const SILVER = "UCONNECT_DW.ANALYTICS.VW_SILVER_SURFER_SALES_SIM_INFO"
+const SUBS = "UCONNECT_DW.ANALYTICS.VW_UCONNECT_SUBSCRIPTIONS"
+
+// channel key → { source, date column, count expr, WHERE predicate }, mirroring
+// the classification CASE in the PBI map (and the OKR route). Only channels the
+// map actually classifies are supported; "Below the Line" has no channel in the
+// CASE, so it isn't offered here and stays on the page snapshot.
+type ChannelCfg = { src: string; date: string; count: string; where: string }
+const CHANNELS: Record<string, ChannelCfg> = {
+  Telesales: { src: SILVER, date: "SALESDATE", count: "COUNT(*)", where: "(CAMPAIGNNAME IN ('Uconnect Upsell', 'UConnect Triplesave') OR CAMPAIGNNAME ILIKE '%Breakfree%')" },
+  Whatsapp: { src: SILVER, date: "SALESDATE", count: "COUNT(*)", where: "CAMPAIGNNAME = 'Digital UConnect Upsell'" },
+  "Mobile Store": { src: SILVER, date: "SALESDATE", count: "COUNT(*)", where: "CAMPAIGNNAME ILIKE '%Mobile Store%'" },
+  "DigiM VAS": { src: SILVER, date: "SALESDATE", count: "COUNT(*)", where: "CAMPAIGNNAME IN ('DigiM Resells')" },
+  App: { src: SUBS, date: "ACTIVATIONDATE", count: "COUNT(DISTINCT MANDATEREFERENCE)", where: "MANDATETYPE = 'App' AND COALESCE(POSITION('RETAIL_PROMOTIONS' IN EXTERNALREFERENCE), 0) = 0" },
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v ?? "0"), 10) || 0)
@@ -27,16 +37,16 @@ export async function GET(request: NextRequest) {
   if (guard instanceof NextResponse) return guard
 
   const channel = request.nextUrl.searchParams.get("channel") ?? ""
-  const predicate = CHANNEL_SQL[channel]
-  if (!predicate) return NextResponse.json({ hasData: false, error: `No live classification for '${channel}'` }, { status: 404 })
+  const cfg = CHANNELS[channel]
+  if (!cfg) return NextResponse.json({ hasData: false, error: `No live classification for '${channel}'` }, { status: 404 })
 
   try {
     const rows = await executeSnowflakeQuery<{ D: string; N: string | number }>(
-      `SELECT TO_VARCHAR(CAST(SALESDATE AS DATE), 'YYYY-MM-DD') AS D, COUNT(*) AS N
-       FROM UCONNECT_DW.ANALYTICS.VW_SILVER_SURFER_SALES_SIM_INFO
-       WHERE ${predicate}
-         AND CAST(SALESDATE AS DATE) >= DATEADD('month', -13, DATE_TRUNC('month', CURRENT_DATE()))
-         AND CAST(SALESDATE AS DATE) < DATE_TRUNC('month', DATEADD('month', 1, CURRENT_DATE()))
+      `SELECT TO_VARCHAR(CAST(${cfg.date} AS DATE), 'YYYY-MM-DD') AS D, ${cfg.count} AS N
+       FROM ${cfg.src}
+       WHERE ${cfg.where}
+         AND CAST(${cfg.date} AS DATE) >= DATEADD('month', -13, DATE_TRUNC('month', CURRENT_DATE()))
+         AND CAST(${cfg.date} AS DATE) < DATE_TRUNC('month', DATEADD('month', 1, CURRENT_DATE()))
        GROUP BY 1
        ORDER BY 1`,
       SF_OPTS
