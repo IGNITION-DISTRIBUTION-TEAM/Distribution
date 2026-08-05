@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import {
-  Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -25,6 +25,37 @@ function rand(n: number): string {
   if (Math.abs(n) >= 1_000_000) return `R ${(n / 1_000_000).toFixed(1)}M`
   if (Math.abs(n) >= 1_000) return `R ${(n / 1_000).toFixed(0)}K`
   return `R ${Math.round(n).toLocaleString()}`
+}
+
+// Donut for a composition-of-a-whole mix, with a legend showing share.
+function MixDonut({ title, subtitle, data }: { title: string; subtitle: string; data: { name: string; value: number }[] }) {
+  const total = data.reduce((a, d) => a + d.value, 0)
+  return (
+    <ChartCard title={title} subtitle={subtitle}>
+      <div className="flex items-center gap-4">
+        <ResponsiveContainer width="50%" height={200}>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={2} stroke="hsl(var(--card))" strokeWidth={2} isAnimationActive={false}>
+              {data.map((_, i) => <Cell key={i} fill={SERIES[i % SERIES.length]} />)}
+            </Pie>
+            <RTooltip content={<ChartTip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        <ul className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm">
+          {data.map((d, i) => (
+            <li key={d.name} className="flex items-center gap-2">
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ background: SERIES[i % SERIES.length] }} />
+              <span className="min-w-0 truncate text-foreground">{d.name}</span>
+              <span className="ml-auto shrink-0 font-mono text-muted-foreground">
+                {fmt(d.value)}
+                <span className="ml-1.5 text-xs">{total > 0 ? `${((d.value / total) * 100).toFixed(0)}%` : ""}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </ChartCard>
+  )
 }
 
 export function SpotReportConnectBook({ override }: { override?: Payload } = {}) {
@@ -117,33 +148,16 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="SIM grouping mix" subtitle="SIMs by product grouping">
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={groupingData} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
-              <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
-              <XAxis type="number" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
-              <YAxis type="category" dataKey="grouping" tick={axisTick} tickLine={false} axisLine={false} width={90} />
-              <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="SIMs" radius={[0, 3, 3, 0]} isAnimationActive={false}>
-                {groupingData.map((_, i) => <Cell key={i} fill={SERIES[i % SERIES.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Channel mix" subtitle="SIMs by acquisition channel">
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={channelData} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
-              <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
-              <XAxis type="number" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
-              <YAxis type="category" dataKey="channel" tick={axisTick} tickLine={false} axisLine={false} width={90} />
-              <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="SIMs" radius={[0, 3, 3, 0]} isAnimationActive={false}>
-                {channelData.map((_, i) => <Cell key={i} fill={SERIES[i % SERIES.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        <MixDonut
+          title="SIM grouping mix"
+          subtitle="SIMs by product grouping"
+          data={groupingData.map((r) => ({ name: r.grouping, value: r.SIMs }))}
+        />
+        <MixDonut
+          title="Channel mix"
+          subtitle="SIMs by acquisition channel"
+          data={channelData.map((r) => ({ name: r.channel, value: r.SIMs }))}
+        />
       </div>
 
       {!revLive && (
