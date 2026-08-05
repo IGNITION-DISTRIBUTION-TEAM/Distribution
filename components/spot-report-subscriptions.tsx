@@ -7,7 +7,7 @@ import {
 } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { SERIES, BLUE, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
+import { SERIES, BLUE, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 
 type Kpis = {
   book_size: number; ftc_pct: number | null; month2_pct?: number | null; active_users?: number
@@ -77,16 +77,21 @@ export function SpotReportSubscriptions({
       }
     : null
 
+  const monthOpts = useMemo(() => (data ? Array.from(new Set((data.monthly ?? []).map((r) => String(r.month)))).sort() : []), [data])
+  const { range, setRange, inRange } = useMonthRange(monthOpts)
+  const monthKey = (d: string) => `${d.slice(0, 7)}-01`
+
   const collected = useMemo(() => {
     if (!data?.collected?.length) return null
-    const months = Array.from(new Set(data.collected.map((r) => r.month))).sort()
+    const src = data.collected.filter((r) => inRange(String(r.month)))
+    const months = Array.from(new Set(src.map((r) => r.month))).sort()
     const dealTotal = new Map<string, number>()
-    for (const r of data.collected) dealTotal.set(r.deal, (dealTotal.get(r.deal) ?? 0) + r.billed)
+    for (const r of src) dealTotal.set(r.deal, (dealTotal.get(r.deal) ?? 0) + r.billed)
     const ranked = Array.from(dealTotal.entries()).sort((a, b) => b[1] - a[1])
     const top = ranked.slice(0, TOP_DEALS).map(([deal]) => deal)
     const topSet = new Set(top)
     const cell = new Map<string, number>()
-    for (const r of data.collected) {
+    for (const r of src) {
       const key = topSet.has(r.deal) ? r.deal : "Other"
       cell.set(`${r.month}|${key}`, (cell.get(`${r.month}|${key}`) ?? 0) + r.billed)
     }
@@ -98,14 +103,14 @@ export function SpotReportSubscriptions({
       return row
     })
     return { rows, series }
-  }, [data])
+  }, [data, inRange])
 
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
 
   const k = data.kpis
-  const monthlyData = data.monthly.map((r) => ({ label: monthLabel(r.month), Sales: r.sales }))
-  const dailyData = data.daily.map((r) => ({ label: shortDay(r.date), Sales: r.sales }))
+  const monthlyData = data.monthly.filter((r) => inRange(String(r.month))).map((r) => ({ label: monthLabel(r.month), Sales: r.sales }))
+  const dailyData = data.daily.filter((r) => inRange(monthKey(String(r.date)))).map((r) => ({ label: shortDay(r.date), Sales: r.sales }))
   const dealsYday = asRows(data.deals_yday)
   const dealsL30 = asRows(data.deals_l30)
 
@@ -145,7 +150,10 @@ export function SpotReportSubscriptions({
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{channel} subscription sales{salesLive ? " (live)" : ""}, book and card-collected billings (snapshot).</p>
         </div>
-        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={monthOpts} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">

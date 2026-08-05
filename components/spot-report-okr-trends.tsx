@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
 import { AlertCircle, Info, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { BLUE, AMBER, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend } from "@/components/spot-report-kit"
+import { BLUE, AMBER, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 
 type Row = { month: string; actual: number | null; target: number | null }
@@ -34,6 +34,8 @@ export function SpotReportOkrTrends() {
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
+  const months = useMemo(() => (series ? Array.from(new Set(series.map((r) => String(r.month)))).sort() : []), [series])
+  const { range, setRange, inRange } = useMonthRange(months)
 
   if (loading) {
     return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
@@ -55,15 +57,16 @@ export function SpotReportOkrTrends() {
     )
   }
 
-  const chart = series.map((r) => ({
+  const fs = series.filter((r) => inRange(String(r.month)))
+  const chart = fs.map((r) => ({
     month: monthLabel(r.month),
     Actual: r.actual,
     Target: r.target,
   }))
-  const withBoth = series.filter((r) => r.actual != null && r.target != null)
+  const withBoth = fs.filter((r) => r.actual != null && r.target != null)
   const onTarget = withBoth.filter((r) => (r.actual as number) >= (r.target as number)).length
-  const latest = [...series].reverse().find((r) => r.actual != null)
-  const latestTarget = [...series].reverse().find((r) => r.target != null)?.target ?? null
+  const latest = [...fs].reverse().find((r) => r.actual != null)
+  const latestTarget = [...fs].reverse().find((r) => r.target != null)?.target ?? null
 
   return (
     <div className="flex flex-col gap-5 p-6">
@@ -75,7 +78,10 @@ export function SpotReportOkrTrends() {
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Average subscription sales per day — actual vs target.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={load}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={months} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
 
       <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">

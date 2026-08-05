@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { BLUE, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
+import { BLUE, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 
 type Row = { tenant: string; month: string; megs: number; activeUsers: number }
@@ -46,6 +46,8 @@ export function SpotReportDataUsage() {
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
+  const monthOpts = useMemo(() => data?.months ?? [], [data])
+  const { range, setRange, inRange } = useMonthRange(monthOpts)
 
   if (loading) {
     return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
@@ -67,11 +69,12 @@ export function SpotReportDataUsage() {
     )
   }
 
-  const months = data.months
+  const months = data.months.filter((m) => inRange(m))
   const latest = months[months.length - 1]
+  const rows = data.rows.filter((r) => inRange(r.month))
 
   // Latest-month totals per tenant.
-  const latestRows = data.rows.filter((r) => r.month === latest)
+  const latestRows = rows.filter((r) => r.month === latest)
   const byTenant = new Map<string, { megs: number; users: number }>()
   for (const r of latestRows) {
     const t = byTenant.get(r.tenant) ?? { megs: 0, users: 0 }
@@ -104,7 +107,7 @@ export function SpotReportDataUsage() {
 
   // Total data volume by month (trend), in GB.
   const trendMap = new Map<string, number>()
-  for (const r of data.rows) trendMap.set(r.month, (trendMap.get(r.month) ?? 0) + r.megs)
+  for (const r of rows) trendMap.set(r.month, (trendMap.get(r.month) ?? 0) + r.megs)
   const trend = months.map((m) => ({ month: monthLabel(m), "Data (GB)": Math.round(toGB(trendMap.get(m) ?? 0)) }))
 
   const tenantAxisWidth = 130
@@ -124,7 +127,10 @@ export function SpotReportDataUsage() {
             </p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={load}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={monthOpts} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

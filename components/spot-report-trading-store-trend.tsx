@@ -6,7 +6,7 @@ import {
 } from "recharts"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { BLUE, SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, useReportData } from "@/components/spot-report-kit"
+import { BLUE, SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 
 type MRow = { month: string; channel: string; cnt: number }
 type WRow = { week: string; channel: string; cnt: number }
@@ -50,6 +50,8 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
     return [...ordered, ...extra]
   }, [data])
 
+  const monthOpts = useMemo(() => (data ? Array.from(new Set(data.monthly_by_channel.map((r) => String(r.month)))).sort() : []), [data])
+  const { range, setRange, inRange } = useMonthRange(monthOpts)
   const [active, setActive] = useState<Set<string>>(() => new Set(CHANNEL_ORDER))
   const toggle = (c: string) => {
     setActive((prev) => {
@@ -63,8 +65,9 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
 
-  const monthly = aggregate(data.monthly_by_channel, "month", active)
-  const weekly = aggregate(data.weekly_by_channel, "week", active).slice(-26)
+  const mKey = (d: string) => `${d.slice(0, 7)}-01`
+  const monthly = aggregate(data.monthly_by_channel.filter((r) => inRange(r.month)), "month", active)
+  const weekly = aggregate(data.weekly_by_channel.filter((r) => inRange(mKey(r.week))), "week", active).slice(-26)
   const monthlyData = monthly.map((r) => ({ label: monthLabel(r.period), Activations: r.cnt }))
   const weeklyData = weekly.map((r) => ({ label: shortDay(r.period), Activations: r.cnt }))
 
@@ -95,7 +98,10 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Trading-store activations by sales channel — monthly, weekly, and top stores.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          <MonthRangeControl months={monthOpts} range={range} onChange={setRange} />
+          <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
