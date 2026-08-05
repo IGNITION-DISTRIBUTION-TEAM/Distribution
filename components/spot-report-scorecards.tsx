@@ -67,9 +67,18 @@ function dailyWithRolling(daily: { date: string; activations: number }[]) {
   })
 }
 
+// Live activation overlay (per store group) from Snowflake.
+type Live = {
+  hasData: boolean
+  monthly: { month: string; activations: number }[]
+  daily: { date: string; activations: number }[]
+  stores: { tenant: string; this_month: number; last_month: number }[]
+}
+
 export function SpotReportScorecards({ overrides }: { overrides?: Record<string, Scorecard> } = {}) {
   const [store, setStore] = useState(STORES[0].label)
   const [cache, setCache] = useState<Record<string, Scorecard>>(overrides ?? {})
+  const [live, setLive] = useState<Record<string, Live>>({})
   const [loading, setLoading] = useState(!overrides)
   const [error, setError] = useState<string | null>(null)
 
@@ -91,7 +100,28 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
   }
   useEffect(load, [store]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const data = cache[store]
+  // Overlay live activation volume for the selected group (snapshot fallback).
+  useEffect(() => {
+    if (overrides) return
+    if (live[store]) return
+    fetch(`/api/spot-report/scorecard?group=${encodeURIComponent(store)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: Live | null) => { if (d?.hasData && d.monthly?.length) setLive((c) => ({ ...c, [store]: d })) })
+      .catch(() => {})
+  }, [store, overrides]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const snap = cache[store]
+  const liveData = live[store]
+  // Merge: activations/daily/stores from live when present, quality/ros/wastage always snapshot.
+  const data = snap
+    ? {
+        ...snap,
+        monthly: liveData?.monthly?.length ? liveData.monthly : snap.monthly,
+        daily: liveData?.daily?.length ? liveData.daily : snap.daily,
+        stores: liveData?.stores?.length ? liveData.stores : snap.stores,
+      }
+    : undefined
+  const activationsLive = !!liveData
 
   const dailyData = useMemo(() => {
     if (!data) return []
@@ -126,11 +156,13 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
       <div>
         <div className="flex items-center gap-2">
           <h2 className="text-2xl font-semibold text-foreground">Store Scorecards</h2>
-          <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${activationsLive ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
+            {activationsLive ? "● Activations live · Snowflake" : "● Snapshot"}
+          </span>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">Activation volume and SIM quality per store group.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Activation volume{activationsLive ? " (live)" : ""} and SIM quality (snapshot) per store group.</p>
       </div>
-      <Button variant="outline" size="sm" onClick={() => { setCache((c) => { const n = { ...c }; delete n[store]; return n }); }}>
+      <Button variant="outline" size="sm" onClick={() => { setCache((c) => { const n = { ...c }; delete n[store]; return n }); setLive((c) => { const n = { ...c }; delete n[store]; return n }); }}>
         <RefreshCw className="mr-2 h-4 w-4" /> Refresh
       </Button>
     </div>
@@ -183,7 +215,7 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <ChartCard title={`Daily activations & 7-day avg — ${data.name}`} subtitle="Last 90 days · snapshot">
+        <ChartCard title={`Daily activations & 7-day avg — ${data.name}`} subtitle={`Last 90 days · ${activationsLive ? "live" : "snapshot"}`}>
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={dailyData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -196,7 +228,7 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title={`Monthly activations — ${data.name}`} subtitle="Last 13 months · snapshot">
+        <ChartCard title={`Monthly activations — ${data.name}`} subtitle={`Last 13 months · ${activationsLive ? "live" : "snapshot"}`}>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={monthlyData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -244,9 +276,10 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
       </ChartCard>
 
       <p className="text-xs text-muted-foreground">
-        Baked snapshot per store group. Activation volume, Active-1%, SIMs-never-used and ROS come from the snapshot; the
-        original per-store QoS/ROS/voucher columns and cohort-revenue panels were never wired to a source, so they&apos;re
-        omitted rather than shown as empty placeholders.
+        Activation volume (monthly, daily, and the store table) is {activationsLive ? "live from Snowflake" : "on the snapshot"}
+        {" "}(UCONNECT_MAY_MERGE, same source as Sales Trends). SIM quality (Active-1%, SIMs-never-used, QoS proxy), ROS target
+        and wastage rate stay on the snapshot — those aren&apos;t cleanly derivable from the map. The original per-store
+        QoS/ROS/voucher columns and cohort-revenue panels were never wired to a source, so they&apos;re omitted.
       </p>
     </div>
   )
