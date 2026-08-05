@@ -297,6 +297,64 @@ export async function executeSnowflakeQueryWithMeta(
   return { columns, rows }
 }
 
+function sfHeaders(jwt: string) {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${jwt}`,
+    Accept: "application/json",
+    "User-Agent": "DataPlatform/1.0",
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+  }
+}
+
+/**
+ * Submits a statement asynchronously (SQL API ?async=true) and returns its
+ * statement handle immediately, without waiting for completion. Use for heavy
+ * statements (e.g. a CTAS that materialises a slow view) so the HTTP request
+ * doesn't block for minutes — poll getSnowflakeStatementStatus(handle) instead.
+ */
+export async function submitSnowflakeStatementAsync(
+  sql: string,
+  opts: { database?: string; schema?: string } = {}
+): Promise<string> {
+  const config = getSnowflakeConfig()
+  const jwt = generateSnowflakeJWT(config)
+  const url = `https://${config.account}.snowflakecomputing.com/api/v2/statements?async=true`
+  const body = {
+    statement: sql,
+    database: opts.database ?? config.database,
+    schema: opts.schema ?? config.schema,
+    warehouse: config.warehouse,
+    role: config.role || "ACCOUNTADMIN",
+  }
+  const response = await fetch(url, { method: "POST", headers: sfHeaders(jwt), body: JSON.stringify(body) })
+  const text = await response.text()
+  if (!response.ok && response.status !== 202) {
+    throw new Error(`Snowflake async submit failed (${response.status}): ${text}`)
+  }
+  const parsed = JSON.parse(text) as { statementHandle?: string; statementHandles?: string[] }
+  const handle = parsed.statementHandle ?? parsed.statementHandles?.[0]
+  if (!handle) throw new Error(`Snowflake async submit returned no statement handle: ${text}`)
+  return handle
+}
+
+/**
+ * Polls the status of an async statement. Returns "running" while the SQL API
+ * responds 202, "done" on 200, or "error" with a message on failure.
+ */
+export async function getSnowflakeStatementStatus(
+  handle: string
+): Promise<{ status: "running" | "done" | "error"; error?: string }> {
+  const config = getSnowflakeConfig()
+  const jwt = generateSnowflakeJWT(config)
+  const url = `https://${config.account}.snowflakecomputing.com/api/v2/statements/${encodeURIComponent(handle)}`
+  const response = await fetch(url, { method: "GET", headers: sfHeaders(jwt) })
+  if (response.status === 202) return { status: "running" }
+  if (response.ok) return { status: "done" }
+  const text = await response.text()
+  return { status: "error", error: `Snowflake status ${response.status}: ${text}` }
+}
+
 /**
  * Executes a SELECT statement against Snowflake via the SQL API and returns
  * an array of plain objects keyed by column name.
