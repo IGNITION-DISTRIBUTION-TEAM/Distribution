@@ -36,14 +36,8 @@ function renderNative(key: string): React.ReactNode {
   switch (key) {
     case "sales-trends":
       return <SpotReportSalesTrends />
-    case "sim-1":
-      return <SpotReportSimActivations file="11_sim_activations_1.json" part="1" />
-    case "sim-2":
-      return <SpotReportSimActivations file="41_sim_activations_2.json" part="2" />
-    case "sim-3":
-      return <SpotReportSimActivations file="42_sim_activations_3.json" part="3" />
-    case "sim-4":
-      return <SpotReportSimActivations file="43_sim_activations_4.json" part="4" />
+    case "sim":
+      return <SpotReportSimActivations />
     default:
       return null
   }
@@ -69,10 +63,7 @@ const SECTIONS: Section[] = [
     items: [
       { label: "Sales Trends", page: "01-sales-trends.html", native: "sales-trends" },
       { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html" },
-      { label: "New SIM Activations & Utilisation 1", page: "11-sim-activations-1.html", native: "sim-1" },
-      { label: "New SIM Activations & Utilisation 2", page: "41-sim-activations-2.html", native: "sim-2" },
-      { label: "New SIM Activations & Utilisation 3", page: "42-sim-activations-3.html", native: "sim-3" },
-      { label: "New SIM Activations & Utilisation 4", page: "43-sim-activations-4.html", native: "sim-4" },
+      { label: "New SIM Activations & Utilisation", page: "11-sim-activations-1.html", native: "sim" },
       { label: "Trading Store Trend", page: "12-trading-store-trend.html" },
       { label: "Scorecards", page: null, header: true },
       { label: "Spar", page: "03-spar-scorecard.html", indent: true },

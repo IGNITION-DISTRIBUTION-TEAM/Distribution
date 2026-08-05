@@ -18,15 +18,34 @@ import {
 type GroupDaily = { date: string; activations: number; active1_pct: number }
 type Payload = { groups: { label: string; daily: GroupDaily[] }[] }
 
-export function SpotReportSimActivations({ file, part, override }: { file: string; part: string; override?: Payload }) {
+// The four SIM-activation sets, selectable via the in-page dropdown.
+const PARTS = [
+  { n: "1", file: "11_sim_activations_1.json", tenants: "Spar, Build It, Pet Pool & Home, Fashion Fusion" },
+  { n: "2", file: "41_sim_activations_2.json", tenants: "The Unlimited, OnAir, NRP, OnAir Non Sales" },
+  { n: "3", file: "42_sim_activations_3.json", tenants: "uConnect App, All Life, Mobile Store, Other" },
+  { n: "4", file: "43_sim_activations_4.json", tenants: "Aheers, Mica" },
+]
+
+const selectCls =
+  "h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
+
+export function SpotReportSimActivations({ override }: { override?: Payload } = {}) {
+  const [partIdx, setPartIdx] = useState(0)
+  const part = PARTS[partIdx]
   const { data, live, loading, error, reload } = useReportData<Payload>(
     null, // no live endpoint yet — needs the original activations/active-1 query
-    `/spot-report/data/${file}`,
+    `/spot-report/data/${part.file}`,
     override
   )
   const [selected, setSelected] = useState<Set<string> | null>(null)
   const [range, setRange] = useState<DateRange | undefined>(undefined)
   const [calOpen, setCalOpen] = useState(false)
+
+  // Switching sets changes the tenant list — reset the tenant/date filters.
+  useEffect(() => {
+    setSelected(null)
+    setRange(undefined)
+  }, [partIdx])
 
   const groups = useMemo(() => (data ? data.groups.map((g) => g.label) : []), [data])
   const active = selected ?? new Set(groups)
@@ -120,8 +139,20 @@ export function SpotReportSimActivations({ file, part, override }: { file: strin
     <div className="flex flex-col gap-5 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">New SIM Activations &amp; Utilisation {part}</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-2xl font-semibold text-foreground">New SIM Activations &amp; Utilisation</h2>
+            <select
+              className={selectCls}
+              value={partIdx}
+              onChange={(e) => setPartIdx(Number(e.target.value))}
+              aria-label="Select report set"
+            >
+              {PARTS.map((p, i) => (
+                <option key={p.n} value={i}>
+                  Set {p.n} — {p.tenants}
+                </option>
+              ))}
+            </select>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${live ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
               {live ? "● Live · Snowflake" : "● Snapshot"}
             </span>
