@@ -23,6 +23,7 @@ import { ArrowLeft, LogOut, RefreshCw } from "lucide-react"
 import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
 import { SpotReportSimActivations } from "@/components/spot-report-sim-activations"
 import { SpotReportExco } from "@/components/spot-report-exco"
+import { SpotReportFinancialsUpload } from "@/components/spot-report-financials-upload"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -31,7 +32,7 @@ import { SpotReportExco } from "@/components/spot-report-exco"
 // (not-yet-built) report.
 // `native` is a key selecting an in-app React page; when unset the page is
 // shown via the static iframe.
-type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: string }
+type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: string; adminOnly?: boolean }
 
 function renderNative(key: string): React.ReactNode {
   switch (key) {
@@ -41,6 +42,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportSimActivations />
     case "exco":
       return <SpotReportExco />
+    case "financials-upload":
+      return <SpotReportFinancialsUpload />
     default:
       return null
   }
@@ -113,6 +116,7 @@ const SECTIONS: Section[] = [
   {
     title: "Financials",
     items: [
+      { label: "Upload income statement", page: null, native: "financials-upload", adminOnly: true },
       { label: "Income Statement", page: null },
       { label: "Income Statement Summary", page: null },
       { label: "Revenue Metrics", page: null },
@@ -154,7 +158,9 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
               <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {section.items.map((item) =>
+                  {section.items
+                    .filter((item) => !item.adminOnly || user?.isSuperAdmin)
+                    .map((item) =>
                     item.header ? (
                       <div
                         key={item.label}
