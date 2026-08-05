@@ -20,13 +20,14 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { ArrowLeft, LogOut, RefreshCw } from "lucide-react"
+import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
 // sidebar (portal design); the selected report renders in the content area.
 // `page` is the file under public/spot-report/pages/, or null for a pending
 // (not-yet-built) report.
-type Report = { label: string; page: string | null; indent?: boolean; header?: boolean }
+type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: boolean }
 type Section = { title: string; items: Report[] }
 
 const SECTIONS: Section[] = [
@@ -46,7 +47,7 @@ const SECTIONS: Section[] = [
   {
     title: "Sales",
     items: [
-      { label: "Sales Trends", page: "01-sales-trends.html" },
+      { label: "Sales Trends", page: "01-sales-trends.html", native: true },
       { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html" },
       { label: "New SIM Activations & Utilisation 1", page: "11-sim-activations-1.html" },
       { label: "New SIM Activations & Utilisation 2", page: "41-sim-activations-2.html" },
@@ -118,7 +119,8 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
   const [active, setActive] = useState<Report>(FIRST)
   const [reloadKey, setReloadKey] = useState(0)
 
-  const src = active.page ? `/spot-report/pages/${active.page}` : null
+  // Native React pages render in-app; only non-native pages use the iframe.
+  const src = active.page && !active.native ? `/spot-report/pages/${active.page}` : null
 
   return (
     <SidebarProvider>
@@ -217,7 +219,11 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
           </div>
         </header>
 
-        {src ? (
+        {active.native ? (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <SpotReportSalesTrends />
+          </div>
+        ) : src ? (
           <iframe
             key={`${active.page}-${reloadKey}`}
             src={src}
