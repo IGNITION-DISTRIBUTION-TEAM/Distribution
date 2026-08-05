@@ -23,22 +23,35 @@ export async function GET(request: NextRequest) {
   if (guard instanceof NextResponse) return guard
 
   try {
-    // Per tenant per month over the last 13 months (matches the page's rolling
-    // 13-month range). Active voice user = an account with any voice minutes in
-    // the month. Minutes are summed; users are distinct accounts.
+    // Per tenant per month over the last 6 months. VW_UC_USAGE is CDR-level
+    // (one row per usage event) and voice minutes only appear on MOC records —
+    // most rows (PDP data) have MINUTES_USED = NULL. So pre-aggregate to
+    // account x month with a MINUTES_USED > 0 filter FIRST (that filter alone
+    // discards every data-only row), then join the tiny result to the tenant
+    // table. This keeps the expensive per-account distinct off the raw CDR feed
+    // and shrinks the join by orders of magnitude vs joining the full table.
+    // Active voice user = an account with any voice minutes in the month.
     const rows = await executeSnowflakeQuery<{
       TENANT: string | null; M: string; MINUTES: string | number; ACTIVE_USERS: string | number
     }>(
-      `SELECT m.TENANT AS TENANT,
-              TO_VARCHAR(DATE_TRUNC('month', u.USAGE_DATE), 'YYYY-MM-DD') AS M,
-              SUM(u.MINUTES_USED) AS MINUTES,
-              COUNT(DISTINCT CASE WHEN u.MINUTES_USED > 0 THEN u.ACCOUNT_NUMBER END) AS ACTIVE_USERS
-       FROM ${USAGE} AS u
-       LEFT JOIN ${MERGE} AS m ON m.ACCOUNT_NUMBER = u.ACCOUNT_NUMBER
-       WHERE CAST(u.USAGE_DATE AS DATE) >= DATE_TRUNC('month', DATEADD('month', -12, CURRENT_DATE()))
-         AND m.MASTER_TENANT = 'uConnect'
-       GROUP BY m.TENANT, DATE_TRUNC('month', u.USAGE_DATE)
-       HAVING SUM(u.MINUTES_USED) > 0`,
+      `WITH acct AS (
+         SELECT ACCOUNT_NUMBER,
+                DATE_TRUNC('month', USAGE_DATE) AS M,
+                SUM(MINUTES_USED) AS MINUTES
+         FROM ${USAGE}
+         WHERE MINUTES_USED > 0
+           AND CAST(USAGE_DATE AS DATE) >= DATE_TRUNC('month', DATEADD('month', -5, CURRENT_DATE()))
+         GROUP BY ACCOUNT_NUMBER, DATE_TRUNC('month', USAGE_DATE)
+       )
+       SELECT m.TENANT AS TENANT,
+              TO_VARCHAR(a.M, 'YYYY-MM-DD') AS M,
+              SUM(a.MINUTES) AS MINUTES,
+              COUNT(DISTINCT a.ACCOUNT_NUMBER) AS ACTIVE_USERS
+       FROM acct AS a
+       JOIN ${MERGE} AS m ON m.ACCOUNT_NUMBER = a.ACCOUNT_NUMBER
+       WHERE m.MASTER_TENANT = 'uConnect'
+       GROUP BY m.TENANT, a.M
+       HAVING SUM(a.MINUTES) > 0`,
       SF_OPTS
     )
 

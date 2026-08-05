@@ -58,7 +58,7 @@ export function SpotReportVoiceUsage() {
         subtitle="Voice minutes and active voice users by tenant."
         note="No voice usage returned. This reads VW_UC_USAGE (per-account CDR usage) joined to UCONNECT_MAY_MERGE. If it stays empty, the app's Snowflake role likely needs SELECT on UCONNECT_DW.ANALYTICS.VW_UC_USAGE — see scripts/spot-report.sql."
         kpis={["Total voice minutes", "Active voice users", "Avg minutes / user", "Tenants with usage"]}
-        charts={["Voice minutes by tenant", "Active voice users by tenant", "Voice usage trend (13 months)", "Minutes per user by tenant"]}
+        charts={["Voice minutes by tenant", "Active voice users by tenant", "Voice usage trend (6 months)", "Minutes per user by tenant"]}
       />
     )
   }
@@ -156,7 +156,7 @@ export function SpotReportVoiceUsage() {
         </ChartCard>
       </div>
 
-      <ChartCard title="Voice usage trend" subtitle="Total voice minutes by month (rolling 13 months)">
+      <ChartCard title="Voice usage trend" subtitle="Total voice minutes by month (rolling 6 months)">
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={trend} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
             <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
