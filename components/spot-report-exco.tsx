@@ -39,13 +39,24 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
   )
 
   // Revenue overlay from the uploaded income statement (last 14 months).
-  const [rev, setRev] = useState<{ monthly: { month: string; revenue: number }[]; mtd: number | null } | null>(null)
+  const [rev, setRev] = useState<{
+    monthly: { month: string; revenue: number }[]
+    mtd: number | null
+    dataThrough: string | null
+    uploadedAt: string | null
+  } | null>(null)
   useEffect(() => {
     if (override) return
     fetch("/api/spot-report/exco-revenue")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.hasData) setRev({ monthly: d.monthly_revenue.slice(-14), mtd: d.rev_mtd })
+        if (d?.hasData)
+          setRev({
+            monthly: d.monthly_revenue.slice(-14),
+            mtd: d.rev_mtd,
+            dataThrough: d.dataThrough ?? null,
+            uploadedAt: d.uploadedAt ?? null,
+          })
       })
       .catch(() => {})
   }, [override])
@@ -79,6 +90,13 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
             </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Executive summary — activations, revenue, channel mix and eNPS.</p>
+          {revLive && rev!.dataThrough && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Income statement: data through{" "}
+              <span className="font-medium text-foreground">{monthLabel(rev!.dataThrough)}</span>
+              {rev!.uploadedAt ? ` · uploaded ${rev!.uploadedAt}` : ""}
+            </p>
+          )}
         </div>
         <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
       </div>
@@ -113,7 +131,14 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Monthly revenue" subtitle={revLive ? "Live · income statement (ZAR)" : "Last 14 months (ZAR) · snapshot"}>
+        <ChartCard
+          title="Monthly revenue"
+          subtitle={
+            revLive
+              ? `Live · income statement (ZAR)${rev!.dataThrough ? ` · through ${monthLabel(rev!.dataThrough)}` : ""}`
+              : "Last 14 months (ZAR) · snapshot"
+          }
+        >
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={revData} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}>
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />

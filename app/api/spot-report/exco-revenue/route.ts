@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { executeSnowflakeQuery } from "@/lib/snowflake"
+import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 
 export const dynamic = "force-dynamic"
@@ -31,10 +31,24 @@ export async function GET(request: NextRequest) {
       revenue: typeof r.REV === "number" ? r.REV : parseFloat(String(r.REV)) || 0,
     }))
     const rev_mtd = monthly_revenue.length ? monthly_revenue[monthly_revenue.length - 1].revenue : null
+
+    // Freshness: latest month of data in the sheet (incl. any forecast) and the
+    // last upload time, so the dashboard can show whether it's current.
+    const { rows: meta } = await executeSnowflakeQueryWithMeta(
+      `SELECT TO_VARCHAR(MAX(PERIOD), 'YYYY-MM-DD') AS MAX_PERIOD,
+              TO_VARCHAR(MAX(UPLOADED_AT), 'YYYY-MM-DD HH24:MI') AS UPLOADED_AT
+       FROM ${TABLE} WHERE SHEET = 'Format Is'`,
+      SF_OPTS
+    )
+    const m = meta[0] ?? []
+
     return NextResponse.json({
       monthly_revenue,
       rev_mtd,
       hasData: monthly_revenue.length > 0,
+      dataThrough: monthly_revenue.length ? monthly_revenue[monthly_revenue.length - 1].month : null,
+      maxPeriod: m[0] != null ? String(m[0]) : null,
+      uploadedAt: m[1] != null ? String(m[1]) : null,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
