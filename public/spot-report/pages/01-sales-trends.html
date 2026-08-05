@@ -23,6 +23,10 @@
   <h2 style="font-family:var(--font-header); margin:10px 0 0;">Sales Trends</h2>
   <hr class="spot-rule">
 
+  <!-- TEMP: data-source indicator (live Snowflake vs baked snapshot) -->
+  <div id="dataSourceBadge" style="display:none; align-items:center; gap:8px; margin:0 0 14px;
+       font-size:12px; font-weight:600; padding:6px 12px; border-radius:20px; width:fit-content;"></div>
+
   <div class="kpi-row" id="kpiRow"></div>
 
   <div class="filter-row" id="filterRow">
@@ -167,6 +171,21 @@ Promise.all([
     }
     const asOf = document.getElementById('asOfBadge');
     if (asOf) asOf.textContent = live ? 'Live · Snowflake' : 'Snapshot';
+    const badge = document.getElementById('dataSourceBadge');
+    if (badge) {
+      badge.style.display = 'inline-flex';
+      if (live) {
+        badge.textContent = '● Live — pulled from Snowflake';
+        badge.style.color = '#0ca30c';
+        badge.style.background = 'rgba(12,163,12,0.12)';
+        badge.style.border = '1px solid rgba(12,163,12,0.35)';
+      } else {
+        badge.textContent = '● Snapshot — static baked data (live source unavailable)';
+        badge.style.color = '#c98500';
+        badge.style.background = 'rgba(201,133,0,0.12)';
+        badge.style.border = '1px solid rgba(201,133,0,0.35)';
+      }
+    }
     return data;
   })
   .then(data => {
