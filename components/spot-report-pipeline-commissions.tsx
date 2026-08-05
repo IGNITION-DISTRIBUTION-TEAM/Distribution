@@ -10,14 +10,14 @@ import { Button } from "@/components/ui/button"
 import { SERIES, BLUE, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 
 type Row = { stage: string; sort: number; category: string; count: number }
-type Payload = { snapshot_date: string; rows: Row[] }
+type Payload = { snapshot_date: string; rows: Row[]; uploadedAt?: string | null; uploadedBy?: string | null }
 
 const WON = "Live and Trading"
 const LOST = "Not interested or deal lost"
 
 
 export function SpotReportPipelineCommissions({ override }: { override?: Payload } = {}) {
-  const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/13_pipeline_commissions.json", override)
+  const { data, live, loading, error, reload } = useReportData<Payload>("/api/spot-report/pipeline", "/spot-report/data/13_pipeline_commissions.json", override)
 
   const model = useMemo(() => {
     if (!data) return null
@@ -78,21 +78,34 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-semibold text-foreground">Pipeline &amp; Provisional Commissions</h2>
-            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${live ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
+              {live ? "● Uploaded · Snowflake" : "● Snapshot"}
+            </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">BDM new-business pipeline by stage and category — counts only.</p>
         </div>
         <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
       </div>
 
-      <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>
-          Hand-maintained BDM pipeline tracker (SharePoint), one-time snapshot dated <b>{data.snapshot_date}</b> — not a live
-          connection. <b>Provisional commissions aren&apos;t shown</b>: this workbook has no Rand-value or commission column,
-          only pipeline-stage counts.
-        </span>
-      </div>
+      {live ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            From the uploaded BDM pipeline workbook{data.uploadedAt ? <> · uploaded <b>{data.uploadedAt}</b></> : null}
+            {data.uploadedBy ? ` by ${data.uploadedBy}` : ""}. <b>Provisional commissions still aren&apos;t shown</b> — the
+            workbook has no Rand-value or commission column, only pipeline-stage counts.
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Baked snapshot dated <b>{data.snapshot_date}</b> — no workbook uploaded yet. An admin can upload the current
+            Pipeline.xlsx (Financials → Upload pipeline) to make this live. <b>Provisional commissions aren&apos;t shown</b>:
+            this workbook has no Rand-value or commission column, only pipeline-stage counts.
+          </span>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Total pipeline" value={fmt(model.total)} sub="this snapshot" />
@@ -178,9 +191,9 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
       </ChartCard>
 
       <p className="text-xs text-muted-foreground">
-        Baked snapshot from the SharePoint BDM tracker — a one-time pull, already stale, and counts only (no decision-maker
-        details, no commission values). The map lists this source as a SharePoint workbook, not a Snowflake object, so it
-        can&apos;t be wired live from here.
+        {live
+          ? "Read from the uploaded BDM pipeline workbook (stored in Snowflake). Counts only — no decision-maker details, and the workbook carries no commission values."
+          : "Baked snapshot — the source is a hand-maintained SharePoint workbook with no Snowflake feed, so it's kept current by admin upload (Financials → Upload pipeline) rather than a live query."}
       </p>
     </div>
   )

@@ -35,6 +35,7 @@ import { SpotReportQualityOfSales } from "@/components/spot-report-quality-of-sa
 import { SpotReportTradingStoreTrend } from "@/components/spot-report-trading-store-trend"
 import { SpotReportScorecards } from "@/components/spot-report-scorecards"
 import { SpotReportPipelineCommissions } from "@/components/spot-report-pipeline-commissions"
+import { SpotReportPipelineUpload } from "@/components/spot-report-pipeline-upload"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -75,6 +76,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportScorecards />
     case "pipeline-commissions":
       return <SpotReportPipelineCommissions />
+    case "pipeline-upload":
+      return <SpotReportPipelineUpload />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -142,6 +145,7 @@ const SECTIONS: Section[] = [
     title: "Financials",
     items: [
       { label: "Upload income statement", page: null, native: "financials-upload", adminOnly: true },
+      { label: "Upload pipeline", page: null, native: "pipeline-upload", adminOnly: true },
       { label: "Income Statement", page: null },
       { label: "Income Statement Summary", page: null },
       { label: "Revenue Metrics", page: null },
