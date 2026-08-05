@@ -32,6 +32,7 @@ import { SpotReportVoiceUsage } from "@/components/spot-report-voice-usage"
 import { SpotReportDataUsage } from "@/components/spot-report-data-usage"
 import { SpotReportRetainUsers } from "@/components/spot-report-retain-users"
 import { SpotReportQualityOfSales } from "@/components/spot-report-quality-of-sales"
+import { SpotReportTradingStoreTrend } from "@/components/spot-report-trading-store-trend"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -66,6 +67,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportRetainUsers />
     case "quality-of-sales":
       return <SpotReportQualityOfSales />
+    case "trading-store-trend":
+      return <SpotReportTradingStoreTrend />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -94,7 +97,7 @@ const SECTIONS: Section[] = [
       { label: "Sales Trends", page: "01-sales-trends.html", native: "sales-trends" },
       { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html", native: "quality-of-sales" },
       { label: "New SIM Activations & Utilisation", page: "11-sim-activations-1.html", native: "sim" },
-      { label: "Trading Store Trend", page: "12-trading-store-trend.html" },
+      { label: "Trading Store Trend", page: "12-trading-store-trend.html", native: "trading-store-trend" },
       { label: "Scorecards", page: null, header: true },
       { label: "Spar", page: "03-spar-scorecard.html", indent: true },
       { label: "Build It", page: "04-build-it-scorecard.html", indent: true },
