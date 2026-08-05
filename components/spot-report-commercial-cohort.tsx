@@ -1,11 +1,12 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { AlertCircle, DatabaseZap, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useAuth } from "@/lib/auth-context"
 import { SERIES, BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 
 type Payload = {
@@ -13,12 +14,34 @@ type Payload = {
   revenue_per_cohort: { month: string; revenue: number; accounts: number }[]
   channel_by_month: { month: string; channel: string; count: number }[]
   cohort_aging: { cohort_month: string; age_months: number; acquired: number; active: number; revenue: number }[]
+  refreshedAt?: string | null
 }
 const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTHS[Number(m) - 1]} ${y.slice(2)}` }
 const rand = (n: number) => (Math.abs(n) >= 1e6 ? `R ${(n / 1e6).toFixed(1)}M` : Math.abs(n) >= 1e3 ? `R ${(n / 1e3).toFixed(0)}K` : `R ${Math.round(n)}`)
 
 export function SpotReportCommercialCohort({ override }: { override?: Payload } = {}) {
-  const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/16_commercial_cohort.json", override)
+  const { user } = useAuth()
+  const { data, live, loading, error, reload } = useReportData<Payload>("/api/spot-report/commercial-cohort", "/spot-report/data/16_commercial_cohort.json", override)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
+
+  const rebuild = async () => {
+    setRefreshing(true); setRefreshMsg("Starting rebuild…")
+    try {
+      const r = await fetch("/api/spot-report/cohort-refresh", { method: "POST" })
+      const d = await r.json()
+      if (!r.ok || !d.handle) throw new Error(d.error || `Could not start (${r.status})`)
+      setRefreshMsg("Rebuilding cohort table in Snowflake… (~1–2 min, in the background)")
+      for (let i = 0; i < 90; i++) {
+        await new Promise((res) => setTimeout(res, 5000))
+        const sr = await fetch(`/api/spot-report/cohort-refresh?handle=${encodeURIComponent(d.handle)}`)
+        const sd = await sr.json()
+        if (sd.status === "done") { setRefreshMsg("Done — loading latest…"); reload(); setRefreshing(false); setRefreshMsg(null); return }
+        if (sd.status === "error") throw new Error(sd.error || "Refresh failed")
+      }
+      throw new Error("Timed out waiting for the rebuild")
+    } catch (e) { setRefreshMsg(e instanceof Error ? e.message : String(e)); setRefreshing(false) }
+  }
 
   const model = useMemo(() => {
     if (!data) return null
@@ -50,12 +73,29 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-semibold text-foreground">Commercial Cohort Analysis</h2>
-            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${live ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
+              {live ? "● Live · Snowflake" : "● Snapshot"}
+            </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">SIM acquisition, retention and revenue by cohort month.</p>
+          {live && data.refreshedAt && <p className="mt-1 text-xs text-muted-foreground">Data as of <span className="font-medium text-foreground">{data.refreshedAt}</span></p>}
         </div>
-        <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        <div className="flex items-center gap-2">
+          {user?.isSuperAdmin && (
+            <Button variant="outline" size="sm" onClick={rebuild} disabled={refreshing}>
+              {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DatabaseZap className="mr-2 h-4 w-4" />}
+              {live ? "Rebuild" : "Build live"}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={reload}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
+        </div>
       </div>
+      {refreshMsg && (
+        <div className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-sm text-sky-200">
+          {refreshing ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+          <span>{refreshMsg}</span>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <StatTile label="Total acquired" value={fmt(model.totalAcq)} />
@@ -135,7 +175,11 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
         </div>
       </ChartCard>
 
-      <p className="text-xs text-muted-foreground">Baked snapshot. Cohort/revenue data comes from the billing cohort layer (not granted, PBI-defined measures), so it isn&apos;t wired live.</p>
+      <p className="text-xs text-muted-foreground">
+        {live
+          ? "Live from Snowflake — materialised from the cohort view (VW_COHORT_OVERALL_SALES_WITH_AGING_ON_MEASURES) into SPOT_COHORT on rebuild, shared with the subscriptions cohort page."
+          : "Snapshot. Runs off the same cohort source as the subscriptions cohort — an admin can “Build live” to materialise it in the background."}
+      </p>
     </div>
   )
 }
