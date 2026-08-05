@@ -33,6 +33,7 @@ import { SpotReportDataUsage } from "@/components/spot-report-data-usage"
 import { SpotReportRetainUsers } from "@/components/spot-report-retain-users"
 import { SpotReportQualityOfSales } from "@/components/spot-report-quality-of-sales"
 import { SpotReportTradingStoreTrend } from "@/components/spot-report-trading-store-trend"
+import { SpotReportScorecards } from "@/components/spot-report-scorecards"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -69,6 +70,8 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportQualityOfSales />
     case "trading-store-trend":
       return <SpotReportTradingStoreTrend />
+    case "scorecards":
+      return <SpotReportScorecards />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -98,15 +101,7 @@ const SECTIONS: Section[] = [
       { label: "Quality of Sales by Tenant & Store", page: "02-quality-of-sales.html", native: "quality-of-sales" },
       { label: "New SIM Activations & Utilisation", page: "11-sim-activations-1.html", native: "sim" },
       { label: "Trading Store Trend", page: "12-trading-store-trend.html", native: "trading-store-trend" },
-      { label: "Scorecards", page: null, header: true },
-      { label: "Spar", page: "03-spar-scorecard.html", indent: true },
-      { label: "Build It", page: "04-build-it-scorecard.html", indent: true },
-      { label: "Mica", page: "05-mica-scorecard.html", indent: true },
-      { label: "Pet Pool & Home", page: "06-pet-pool-scorecard.html", indent: true },
-      { label: "Aheers", page: "07-aheers-scorecard.html", indent: true },
-      { label: "Fashion Fusion", page: "08-fashion-fusion-scorecard.html", indent: true },
-      { label: "Progas", page: "09-progas-scorecard.html", indent: true },
-      { label: "Midas", page: "10-midas-scorecard.html", indent: true },
+      { label: "Store Scorecards", page: null, native: "scorecards" },
       { label: "Pipeline & Provisional Commissions", page: "13-pipeline-commissions.html" },
     ],
   },
