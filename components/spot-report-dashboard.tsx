@@ -38,6 +38,14 @@ import { SpotReportPipelineCommissions } from "@/components/spot-report-pipeline
 import { SpotReportPipelineUpload } from "@/components/spot-report-pipeline-upload"
 import { SpotReportSubscriptions } from "@/components/spot-report-subscriptions"
 import { SpotReportCohort } from "@/components/spot-report-cohort"
+import { SpotReportCommercialCohort } from "@/components/spot-report-commercial-cohort"
+import { SpotReportWastage } from "@/components/spot-report-wastage"
+import { SpotReportRechargeQty } from "@/components/spot-report-recharge-qty"
+import { SpotReportRechargeTrend } from "@/components/spot-report-recharge-trend"
+import { SpotReportRechargeRevenue } from "@/components/spot-report-recharge-revenue"
+import { SpotReportRevenueComparisons } from "@/components/spot-report-revenue-comparisons"
+import { SpotReportPrepaidProjection } from "@/components/spot-report-prepaid-projection"
+import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 
 // The Spot Report reports are the static Telco Retail pages served from
 // public/spot-report/pages/ (gated by middleware). Navigation lives in the app
@@ -94,6 +102,30 @@ function renderNative(key: string): React.ReactNode {
       return <SpotReportSubscriptions file="48_subscriptions_digim_vas.json" title="Subscriptions — Mobile Store DigiM VAS" channel="DigiM VAS" liveChannel="DigiM VAS" />
     case "subs-cohort":
       return <SpotReportCohort />
+    case "commercial-cohort":
+      return <SpotReportCommercialCohort />
+    case "wastage":
+      return <SpotReportWastage />
+    case "pargo":
+      return (
+        <SpotReportPlaceholder
+          title="Pargo Collections"
+          subtitle="Parcel collections via Pargo pickup points."
+          note="Pargo logistics data isn't available via the current data connection — there's no Snowflake source or feed for it yet. Charts will populate once a Pargo integration lands."
+          kpis={["Parcels sent MTD", "Parcels collected MTD", "Collection rate %", "Avg days to collect"]}
+          charts={["Monthly collections trend", "Sent vs collected by month", "Collections by tenant", "Aged uncollected parcels"]}
+        />
+      )
+    case "recharge-qty":
+      return <SpotReportRechargeQty />
+    case "recharge-trend":
+      return <SpotReportRechargeTrend />
+    case "recharge-revenue":
+      return <SpotReportRechargeRevenue />
+    case "revenue-comparisons":
+      return <SpotReportRevenueComparisons />
+    case "prepaid-projection":
+      return <SpotReportPrepaidProjection />
     case "financials-upload":
       return <SpotReportFinancialsUpload />
     default:
@@ -142,19 +174,19 @@ const SECTIONS: Section[] = [
   {
     title: "Commercial",
     items: [
-      { label: "Commercial Cohort Analysis", page: "16-commercial-cohort.html" },
-      { label: "Wastage", page: "17-wastage.html" },
-      { label: "Pargo Collections", page: "18-pargo-collections.html" },
+      { label: "Commercial Cohort Analysis", page: "16-commercial-cohort.html", native: "commercial-cohort" },
+      { label: "Wastage", page: "17-wastage.html", native: "wastage" },
+      { label: "Pargo Collections", page: "18-pargo-collections.html", native: "pargo" },
     ],
   },
   {
     title: "Recharges",
     items: [
-      { label: "Recharge Qty Dash", page: "19-recharge-qty-dash.html" },
-      { label: "Recharge Trend by Recharge Type", page: "20-recharge-trend-type.html" },
-      { label: "Recharge Revenue Monthly", page: "21-recharge-revenue-monthly.html" },
-      { label: "Revenue Comparisons", page: "22-revenue-comparisons.html" },
-      { label: "Prepaid Recharge Projection", page: "23-prepaid-recharge-projection.html" },
+      { label: "Recharge Qty Dash", page: "19-recharge-qty-dash.html", native: "recharge-qty" },
+      { label: "Recharge Trend by Recharge Type", page: "20-recharge-trend-type.html", native: "recharge-trend" },
+      { label: "Recharge Revenue Monthly", page: "21-recharge-revenue-monthly.html", native: "recharge-revenue" },
+      { label: "Revenue Comparisons", page: "22-revenue-comparisons.html", native: "revenue-comparisons" },
+      { label: "Prepaid Recharge Projection", page: "23-prepaid-recharge-projection.html", native: "prepaid-projection" },
     ],
   },
   {
