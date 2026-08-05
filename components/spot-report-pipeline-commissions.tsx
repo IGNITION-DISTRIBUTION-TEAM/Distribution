@@ -15,6 +15,7 @@ type Payload = { snapshot_date: string; rows: Row[] }
 const WON = "Live and Trading"
 const LOST = "Not interested or deal lost"
 
+
 export function SpotReportPipelineCommissions({ override }: { override?: Payload } = {}) {
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/13_pipeline_commissions.json", override)
 
@@ -38,8 +39,13 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
     const active = total - won - lost
     const winRate = won + lost ? (won / (won + lost)) * 100 : 0
 
-    // Pipeline by stage (funnel order).
-    const byStage = stagesAsc.map((s) => ({ stage: s, count: stageTotal.get(s) ?? 0 }))
+    // Pipeline by stage, drawn as a centered CSS funnel (bar width ∝ count,
+    // centred) in progression order. fill: won green, lost red, else blue.
+    const maxStage = Math.max(1, ...stagesAsc.map((s) => stageTotal.get(s) ?? 0))
+    const byStage = stagesAsc.map((s) => {
+      const value = stageTotal.get(s) ?? 0
+      return { name: s, value, fill: s === WON ? SERIES[1] : s === LOST ? SERIES[4] : BLUE }
+    })
     // Pipeline by category.
     const byCat = cats.map((c) => ({ category: c, count: catTotal.get(c) ?? 0 }))
     // Stage x category stacked (stages as rows).
@@ -60,7 +66,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
       .filter((r) => r.rate != null)
       .sort((a, b) => (b.rate! - a.rate!)) as { category: string; won: number; lost: number; rate: number }[]
 
-    return { total, won, lost, active, winRate, byStage, byCat, cats, stacked, winByCat }
+    return { total, won, lost, active, winRate, byStage, maxStage, byCat, cats, stacked, winByCat }
   }, [data])
 
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
@@ -95,21 +101,25 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
         <StatTile label="Win rate" value={`${model.winRate.toFixed(1)}%`} sub={`${fmt(model.won)} won / ${fmt(model.lost)} lost`} accent={model.winRate >= 50 ? "text-emerald-300" : "text-amber-300"} />
       </div>
 
-      <ChartCard title="Pipeline by stage" subtitle="Funnel order · initial contact → live and trading">
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={model.byStage} layout="vertical" margin={{ top: 4, right: 40, bottom: 0, left: 8 }}>
-            <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
-            <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
-            <YAxis type="category" dataKey="stage" tick={axisTick} axisLine={false} tickLine={false} width={230} />
-            <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
-              <LabelList dataKey="count" position="right" style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-              {model.byStage.map((r) => (
-                <Cell key={r.stage} fill={r.stage === WON ? SERIES[1] : r.stage === LOST ? SERIES[4] : BLUE} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+      <ChartCard title="Pipeline by stage" subtitle="Funnel · initial contact → live and trading (won green, lost red)">
+        <div className="flex flex-col gap-1.5 py-1">
+          {model.byStage.map((s) => (
+            <div key={s.name} className="flex items-center gap-3" title={`${s.name}: ${fmt(s.value)}`}>
+              <div className="w-52 shrink-0 text-right text-xs leading-tight text-muted-foreground">{s.name}</div>
+              <div className="flex-1">
+                <div
+                  className="mx-auto flex h-7 items-center justify-end rounded"
+                  style={{ width: `${Math.max((s.value / model.maxStage) * 100, 1.5)}%`, backgroundColor: s.fill }}
+                />
+              </div>
+              <div className="w-10 shrink-0 font-mono text-xs text-muted-foreground">{fmt(s.value)}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Point-in-time stage occupancy (deals currently at each stage), not a cumulative conversion funnel — so widths
+          don&apos;t strictly narrow, and &ldquo;not interested / lost&rdquo; can exceed earlier stages.
+        </p>
       </ChartCard>
 
       <div className="grid gap-5 lg:grid-cols-2">
