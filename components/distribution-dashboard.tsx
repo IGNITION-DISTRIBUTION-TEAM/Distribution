@@ -190,7 +190,9 @@ async function runStepwiseAt(
     }
   }
 
-  const summary = views.map((v) => `${v.step}: ${v.status}`).join(" | ")
+  const summary = views
+    .map((v) => `${v.step}: ${v.status}${v.status === "error" && v.message ? ` — ${v.message}` : ""}`)
+    .join(" | ")
   await fetch(`${base}/record`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
