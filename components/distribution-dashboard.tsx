@@ -5576,6 +5576,25 @@ function CampaignSettingsPanel() {
     setUpdateHllProcs((prev) => [...prev, p])
     setNewHllProc("")
   }
+  // One-click import from the old shared TSK_HLL_UPDATE_PROCEDURES list, so the
+  // procedures that used to live there can be pulled into this campaign's list.
+  const importLegacyProcs = async () => {
+    try {
+      const res = await fetch("/api/hll-procedures", { cache: "no-store" })
+      const data = await res.json()
+      const names = ((data.rows as { PROC_NAME: string }[]) || []).map((r) => r.PROC_NAME).filter(Boolean)
+      if (!names.length) { toast("No procedures found in the old shared list to import."); return }
+      let added = 0
+      setUpdateHllProcs((prev) => {
+        const merged = [...prev]
+        for (const n of names) if (!merged.includes(n)) { merged.push(n); added++ }
+        return merged
+      })
+      toast.success(`Imported ${added} procedure(s) from the shared list — review, then Save.`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -6172,6 +6191,9 @@ function CampaignSettingsPanel() {
                     />
                     <Button type="button" variant="outline" onClick={addHllProc}>
                       <Plus className="mr-1 h-3.5 w-3.5" /> Add
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={importLegacyProcs} title="Pull procedures from the old shared list">
+                      Import old list
                     </Button>
                   </div>
                   {updateHllProcs.length === 0 ? (
