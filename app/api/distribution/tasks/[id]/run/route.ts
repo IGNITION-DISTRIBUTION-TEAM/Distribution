@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { TABLE, SF_OPTS, sqlStr, IDENT_COL } from "../../route"
+import { TABLE, SF_OPTS, sqlStr, IDENT_COL, STANDALONE_PROC_IDENT } from "../../route"
 import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
 import {
   HLL_TABLE,
@@ -40,10 +40,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (taskId === null) return NextResponse.json({ error: "Invalid task id" }, { status: 400 })
 
   // Read the task's source / campaign config.
-  let task: { CAMPAIGN_ID: string | null; PROC_KIND: string | null; SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null }
+  let task: { CAMPAIGN_ID: string | null; PROC_KIND: string | null; SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null; STANDALONE_PROC: string | null }
   try {
     const rows = await executeSnowflakeQuery<typeof task>(
-      `SELECT CAMPAIGN_ID, PROC_KIND, SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON FROM ${TABLE} WHERE ID = ${taskId}`,
+      `SELECT CAMPAIGN_ID, PROC_KIND, SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC FROM ${TABLE} WHERE ID = ${taskId}`,
       SF_OPTS
     )
     if (!rows.length) return NextResponse.json({ error: "Task not found" }, { status: 404 })
@@ -51,6 +51,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ error: message }, { status: 500 })
+  }
+
+  // Highest priority: a standalone procedure — CALL it directly.
+  const standaloneProc = (task.STANDALONE_PROC ?? "").trim()
+  if (standaloneProc) {
+    if (!STANDALONE_PROC_IDENT.test(standaloneProc)) {
+      await recordRun(taskId, "Error", `Standalone procedure is invalid: ${standaloneProc}`)
+      return NextResponse.json({ error: `Standalone procedure is invalid: ${standaloneProc}` }, { status: 400 })
+    }
+    const head = standaloneProc.split("(")[0]
+    const [database, schema] = head.split(".")
+    const callSql = standaloneProc.includes("(") ? `CALL ${standaloneProc}` : `CALL ${standaloneProc}()`
+    try {
+      await executeSnowflakeQuery(callSql, { database, schema })
+      const msg = `Ran ${standaloneProc}`
+      await recordRun(taskId, "Success", msg)
+      return NextResponse.json({ ok: true, ran: [standaloneProc], message: msg })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await recordRun(taskId, "Error", `Failed at ${standaloneProc}: ${message}`)
+      return NextResponse.json({ error: message }, { status: 500 })
+    }
   }
 
   // Preferred path: lead-source → HLL (proc-fills-table or view), mapped.

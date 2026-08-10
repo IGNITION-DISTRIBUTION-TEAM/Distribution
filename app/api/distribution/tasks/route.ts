@@ -29,6 +29,13 @@ export function normSourceKind(raw: unknown): string {
   return (SOURCE_KINDS as readonly string[]).includes(s) ? s : "none"
 }
 export const IDENT_COL = /^[A-Za-z0-9_]+$/
+// A standalone procedure reference: DATABASE.SCHEMA.PROC with optional (args).
+export const STANDALONE_PROC_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s']*\))?$/
+export function validateStandaloneProc(raw: unknown): string | null {
+  const s = typeof raw === "string" ? raw.trim() : ""
+  if (!s) return null
+  return STANDALONE_PROC_IDENT.test(s) ? s : null
+}
 // Validate a { hllColumn: sourceColumn } mapping; returns a JSON string or null.
 export function validateMapping(raw: unknown): string | null {
   if (raw == null || typeof raw !== "object") return null
@@ -60,6 +67,7 @@ export type TaskRow = {
   SOURCE_OBJECT: string | null
   SOURCE_TABLE: string | null
   MAPPING_JSON: string | null
+  STANDALONE_PROC: string | null
   LAST_RUN_AT: string | null
   LAST_RUN_STATUS: string | null
   LAST_RUN_MESSAGE: string | null
@@ -100,6 +108,7 @@ export async function ensureTable(): Promise<void> {
        STATUS VARCHAR, SCHEDULE VARCHAR,
        CAMPAIGN_ID VARCHAR, CAMPAIGN_TITLE VARCHAR, PROC_KIND VARCHAR,
        SOURCE_KIND VARCHAR, SOURCE_OBJECT VARCHAR, SOURCE_TABLE VARCHAR, MAPPING_JSON VARCHAR,
+       STANDALONE_PROC VARCHAR,
        LAST_RUN_AT TIMESTAMP_NTZ, LAST_RUN_STATUS VARCHAR, LAST_RUN_MESSAGE VARCHAR,
        CREATED_BY VARCHAR,
        CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -111,6 +120,7 @@ export async function ensureTable(): Promise<void> {
   const addCols = [
     "CAMPAIGN_ID VARCHAR", "CAMPAIGN_TITLE VARCHAR", "PROC_KIND VARCHAR",
     "SOURCE_KIND VARCHAR", "SOURCE_OBJECT VARCHAR", "SOURCE_TABLE VARCHAR", "MAPPING_JSON VARCHAR",
+    "STANDALONE_PROC VARCHAR",
     "LAST_RUN_AT TIMESTAMP_NTZ", "LAST_RUN_STATUS VARCHAR", "LAST_RUN_MESSAGE VARCHAR",
   ]
   for (const col of addCols) {
@@ -131,7 +141,7 @@ export async function GET(request: NextRequest) {
     const rows = await executeSnowflakeQuery<TaskRow>(
       `SELECT ID, NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE,
               CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
-              SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON,
+              SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC,
               TO_VARCHAR(LAST_RUN_AT, 'YYYY-MM-DD HH24:MI') AS LAST_RUN_AT,
               LAST_RUN_STATUS, LAST_RUN_MESSAGE, CREATED_BY,
               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
@@ -160,17 +170,22 @@ export async function POST(request: NextRequest) {
   const name = validateName(body.name)
   if (typeof name !== "string") return NextResponse.json(name, { status: 400 })
 
+  const standaloneProc = validateStandaloneProc(body.standaloneProc)
+  if (body.standaloneProc && !standaloneProc) {
+    return NextResponse.json({ error: 'Standalone procedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }, { status: 400 })
+  }
+
   try {
     await ensureTable()
     const mapping = validateMapping(body.mapping)
     await executeSnowflakeQuery(
       `INSERT INTO ${TABLE} (NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE, CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
-                             SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, CREATED_BY)
+                             SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC, CREATED_BY)
        VALUES (${sqlStr(name)}, ${sqlNullable(body.description)}, ${sqlStr(normType(body.type))},
                ${sqlNullable(body.target)}, ${sqlStr(normStatus(body.status))}, ${sqlNullable(body.schedule)},
                ${sqlNullable(body.campaignId)}, ${sqlNullable(body.campaignTitle)}, ${sqlStr(normProcKind(body.procKind))},
                ${sqlStr(normSourceKind(body.sourceKind))}, ${sqlNullable(body.sourceObject)}, ${sqlNullable(body.sourceTable)},
-               ${mapping ? sqlStr(mapping) : "NULL"}, ${sqlStr(guard.email)})`,
+               ${mapping ? sqlStr(mapping) : "NULL"}, ${standaloneProc ? sqlStr(standaloneProc) : "NULL"}, ${sqlStr(guard.email)})`,
       SF_OPTS
     )
     return NextResponse.json({ ok: true })

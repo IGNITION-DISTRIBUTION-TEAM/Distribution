@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus, normProcKind, normSourceKind, validateMapping } from "../route"
+import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus, normProcKind, normSourceKind, validateMapping, validateStandaloneProc } from "../route"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -44,6 +44,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.sourceObject !== undefined) sets.push(`SOURCE_OBJECT = ${sqlNullable(body.sourceObject)}`)
   if (body.sourceTable !== undefined) sets.push(`SOURCE_TABLE = ${sqlNullable(body.sourceTable)}`)
   if (body.mapping !== undefined) { const m = validateMapping(body.mapping); sets.push(`MAPPING_JSON = ${m ? sqlStr(m) : "NULL"}`) }
+  if (body.standaloneProc !== undefined) {
+    const sp = validateStandaloneProc(body.standaloneProc)
+    if (body.standaloneProc && !sp) return NextResponse.json({ error: 'Standalone procedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }, { status: 400 })
+    sets.push(`STANDALONE_PROC = ${sp ? sqlStr(sp) : "NULL"}`)
+  }
   if (sets.length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
   sets.push("UPDATED_AT = CURRENT_TIMESTAMP()")
 

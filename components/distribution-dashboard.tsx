@@ -2261,6 +2261,7 @@ type AutomationTask = {
   SOURCE_OBJECT: string | null
   SOURCE_TABLE: string | null
   MAPPING_JSON: string | null
+  STANDALONE_PROC: string | null
   LAST_RUN_AT: string | null
   LAST_RUN_STATUS: string | null
   LAST_RUN_MESSAGE: string | null
@@ -2285,8 +2286,8 @@ const PROC_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "full", label: "Full run (all configured)" },
 ]
 const procKindLabel = (k: string | null) => PROC_KIND_OPTIONS.find((o) => o.value === (k ?? "none"))?.label ?? "—"
-type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string; sourceKind: string; sourceObject: string; sourceTable: string; mapping: Record<string, string> }
-const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none", sourceKind: "none", sourceObject: "", sourceTable: "", mapping: {} }
+type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string; sourceKind: string; sourceObject: string; sourceTable: string; mapping: Record<string, string>; standaloneProc: string }
+const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none", sourceKind: "none", sourceObject: "", sourceTable: "", mapping: {}, standaloneProc: "" }
 
 function taskStatusClass(s: string): string {
   switch (s) {
@@ -2399,7 +2400,7 @@ function AutomationContent() {
   const openEdit = (t: AutomationTask) => {
     let mapping: Record<string, string> = {}
     try { mapping = t.MAPPING_JSON ? JSON.parse(t.MAPPING_JSON) : {} } catch { mapping = {} }
-    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none", sourceKind: t.SOURCE_KIND ?? "none", sourceObject: t.SOURCE_OBJECT ?? "", sourceTable: t.SOURCE_TABLE ?? "", mapping })
+    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none", sourceKind: t.SOURCE_KIND ?? "none", sourceObject: t.SOURCE_OBJECT ?? "", sourceTable: t.SOURCE_TABLE ?? "", mapping, standaloneProc: t.STANDALONE_PROC ?? "" })
     setHllCols([]); setSrcCols([]); setColsMsg(null)
     setEditing(t)
   }
@@ -2532,6 +2533,19 @@ function AutomationContent() {
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>{PROC_KIND_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
               </Select>
+            </div>
+            <div className="md:col-span-2">
+              <Label htmlFor="task-standalone">Standalone procedure</Label>
+              <Input
+                id="task-standalone"
+                className="mt-1 font-mono text-xs"
+                value={form.standaloneProc}
+                onChange={(e) => setF("standaloneProc", e.target.value)}
+                placeholder="DATAWAREHOUSE.SCHEMA.SP_NAME(608)"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Optional. A fully-qualified procedure to run on its own (with optional args), independent of a campaign — e.g. a cleanup or maintenance proc. If set, <span className="font-medium text-foreground">Run now</span> calls it directly.
+              </p>
             </div>
             <div className="md:col-span-2">
               <Label htmlFor="task-desc">Description</Label>
@@ -2679,12 +2693,12 @@ function AutomationContent() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {((t.CAMPAIGN_ID && t.PROC_KIND && t.PROC_KIND !== "none") || t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view") && (
+                        {(t.STANDALONE_PROC || (t.CAMPAIGN_ID && t.PROC_KIND && t.PROC_KIND !== "none") || t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view") && (
                           <Button
                             variant="ghost" size="icon" className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
                             onClick={() => runNow(t)} disabled={runningId === t.ID}
                             aria-label="Run now"
-                            title={t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view" ? "Run source → HLL" : `Run ${procKindLabel(t.PROC_KIND)} for ${t.CAMPAIGN_TITLE ?? "campaign"}`}
+                            title={t.STANDALONE_PROC ? `Run ${t.STANDALONE_PROC}` : t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view" ? "Run source → HLL" : `Run ${procKindLabel(t.PROC_KIND)} for ${t.CAMPAIGN_TITLE ?? "campaign"}`}
                           >
                             {runningId === t.ID ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
                           </Button>
