@@ -6,9 +6,13 @@ export const dynamic = "force-dynamic"
 export const TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_AUTOMATION_CONFIG"
 export const SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 
-// Fully-qualified DATABASE.SCHEMA.NAME, A-Z/0-9/_ only — used for both the
-// upload target table and the sync procedure name.
+// Fully-qualified DATABASE.SCHEMA.NAME, A-Z/0-9/_ only — used for the upload
+// target table.
 const QUALIFIED_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
+// A procedure reference: DATABASE.SCHEMA.PROC, optionally with a call-argument
+// list of digits / identifiers / commas (e.g. SP_ONAIR_NEW_POOL_BR(1) or
+// PROC(campaignid)). Only safe chars inside the parens — no quotes/semicolons.
+const PROC_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
 
 export function escapeSqlString(s: string): string {
   return s.replace(/'/g, "''")
@@ -73,20 +77,20 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
   const loadHistoryProcedure = body.loadHistoryProcedure
     ? String(body.loadHistoryProcedure).trim()
     : ""
-  if (loadHistoryProcedure && !QUALIFIED_IDENT.test(loadHistoryProcedure)) {
-    return { error: 'loadHistoryProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+  if (loadHistoryProcedure && !PROC_IDENT.test(loadHistoryProcedure)) {
+    return { error: 'loadHistoryProcedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }
   }
 
   const updateHllProcedure = body.updateHllProcedure
     ? String(body.updateHllProcedure).trim()
     : ""
-  if (updateHllProcedure && !QUALIFIED_IDENT.test(updateHllProcedure)) {
-    return { error: 'updateHllProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+  if (updateHllProcedure && !PROC_IDENT.test(updateHllProcedure)) {
+    return { error: 'updateHllProcedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }
   }
 
   const syncProcedure = body.syncProcedure ? String(body.syncProcedure).trim() : ""
-  if (syncProcedure && !QUALIFIED_IDENT.test(syncProcedure)) {
-    return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+  if (syncProcedure && !PROC_IDENT.test(syncProcedure)) {
+    return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP_X(1)' }
   }
 
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
