@@ -27,9 +27,18 @@ export function sqlStr(v: unknown): string {
   return `'${escapeSqlString(s)}'`
 }
 
+// How a campaign's leads arrive. Distinct from sourceKind (proc/view), which
+// only applies within the "snowflake" method.
+export const LEAD_SOURCES = ["file", "sftp", "snowflake"] as const
+export function normLeadSource(raw: unknown): string {
+  const s = String(raw ?? "").trim().toLowerCase()
+  return (LEAD_SOURCES as readonly string[]).includes(s) ? s : "file"
+}
+
 export type CampaignConfigInput = {
   campaignId: number
   campaignTitle?: string
+  leadSource?: string
   sftpHost?: string
   sftpPort?: number
   sftpUsername?: string
@@ -137,6 +146,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
   return {
     campaignId,
     campaignTitle: str(body.campaignTitle),
+    leadSource: normLeadSource(body.leadSource),
     sourceKind,
     sourceObject,
     sourceMappingJson,
@@ -187,6 +197,7 @@ export async function GET() {
 const CONFIG_COLUMNS: [string, string][] = [
   ["CAMPAIGNID", "NUMBER"],
   ["CAMPAIGN_TITLE", "VARCHAR"],
+  ["LEAD_SOURCE", "VARCHAR"],
   ["SFTP_HOST", "VARCHAR"], ["SFTP_PORT", "NUMBER"], ["SFTP_USERNAME", "VARCHAR"],
   ["SFTP_PASSWORD", "VARCHAR"], ["SFTP_PRIVATE_KEY", "VARCHAR"], ["SFTP_REMOTE_PATH", "VARCHAR"],
   ["SFTP_AUTH_TYPE", "VARCHAR"], ["UPLOAD_TARGET_TABLE", "VARCHAR"],
@@ -277,6 +288,7 @@ export async function POST(request: NextRequest) {
   // Column/value pairs shared between the UPDATE and INSERT branches.
   const cols: [string, string][] = [
     ["CAMPAIGN_TITLE", sqlStr(parsed.campaignTitle)],
+    ["LEAD_SOURCE", sqlStr(parsed.leadSource ?? "file")],
     ["SFTP_HOST", sqlStr(parsed.sftpHost)],
     ["SFTP_PORT", String(port)],
     ["SFTP_USERNAME", sqlStr(parsed.sftpUsername)],

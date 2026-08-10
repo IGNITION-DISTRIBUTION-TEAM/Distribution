@@ -225,6 +225,23 @@ function ManualContent() {
 
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
 
+  // When a campaign is picked, default the lead source to whatever's saved for
+  // it in Settings (file / sftp / snowflake). The user can still switch.
+  useEffect(() => {
+    if (!campaignId) { setSource(null); return }
+    let cancelled = false
+    setSource(null)
+    fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return
+        const ls = (data?.config?.LEAD_SOURCE as string | undefined)?.toLowerCase()
+        setSource(ls === "sftp" || ls === "snowflake" ? ls : "file")
+      })
+      .catch(() => { if (!cancelled) setSource("file") })
+    return () => { cancelled = true }
+  }, [campaignId])
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -5365,6 +5382,7 @@ type HllProc = { PROC_INDEX: number | string; PROC_NAME: string; CREATED_AT?: st
 const NONE_PROC = "__none__"
 
 type CampaignConfig = {
+  LEAD_SOURCE?: string | null
   SFTP_HOST?: string | null
   SFTP_PORT?: number | string | null
   SFTP_USERNAME?: string | null
@@ -5396,6 +5414,8 @@ function CampaignSettingsPanel() {
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
 
   // --- Config form ---
+  // How this campaign's leads arrive: file (default) / sftp / snowflake.
+  const [leadSource, setLeadSource] = useState<"file" | "sftp" | "snowflake">("file")
   const [host, setHost] = useState("")
   const [port, setPort] = useState("22")
   const [username, setUsername] = useState("")
@@ -5521,6 +5541,7 @@ function CampaignSettingsPanel() {
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
 
   const resetForm = useCallback(() => {
+    setLeadSource("file")
     setHost("")
     setPort("22")
     setUsername("")
@@ -5562,6 +5583,7 @@ function CampaignSettingsPanel() {
         if (!res.ok) throw new Error(data.error || `Failed to load config (${res.status})`)
         const c = data.config as CampaignConfig | null
         if (c) {
+          setLeadSource((c.LEAD_SOURCE as "file" | "sftp" | "snowflake") || "file")
           setHost(c.SFTP_HOST ?? "")
           setPort(c.SFTP_PORT != null ? String(c.SFTP_PORT) : "22")
           setUsername(c.SFTP_USERNAME ?? "")
@@ -5615,6 +5637,7 @@ function CampaignSettingsPanel() {
         body: JSON.stringify({
           campaignId,
           campaignTitle: selectedCampaign?.title ?? null,
+          leadSource,
           sftpHost: host,
           sftpPort: port,
           sftpUsername: username,
@@ -5763,6 +5786,35 @@ function CampaignSettingsPanel() {
           )}
 
           <div className="flex flex-col gap-5">
+            <div>
+              <h4 className="mb-3 text-sm font-medium text-foreground">Lead source</h4>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">How this campaign gets its leads</Label>
+                  <Select value={leadSource} onValueChange={(v) => setLeadSource(v as "file" | "sftp" | "snowflake")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="file">Upload a file (default)</SelectItem>
+                      <SelectItem value="sftp">SFTP</SelectItem>
+                      <SelectItem value="snowflake">Snowflake (stored proc / view)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end">
+                  <p className="text-xs text-muted-foreground">
+                    Pre-selects the source on the Manual Distribution page.{" "}
+                    {leadSource === "sftp"
+                      ? "Configure the SFTP connection below."
+                      : leadSource === "snowflake"
+                      ? "Configure the initial source, mapping and procedures below."
+                      : "Leads are uploaded as a CSV / Excel / JSON file."}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
             <div>
               <h4 className="mb-3 text-sm font-medium text-foreground">SFTP source</h4>
               <div className="grid gap-4 sm:grid-cols-2">
