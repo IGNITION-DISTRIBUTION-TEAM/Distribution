@@ -130,24 +130,12 @@ type LeadSource = "file" | "sftp" | "snowflake"
 // A step's live state in the run UI.
 type StepView = { step: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string }
 
-// Submit the sync step to Snowflake and return immediately (fire-and-forget) —
-// the sync can run for hours, so we don't wait/poll. The handle is remembered
-// server-side so its status can be checked later.
+// Fire the sync fire-and-forget. Snowflake runs a scripting block that records
+// its outcome in the SYNC_RUNS marker table, so we don't wait for the ~2h sync.
 async function submitSyncFireAndForget(configId: number | string): Promise<{ ok: boolean; error?: string }> {
-  const subRes = await fetch(`/api/distribution/configs/${configId}/run/step`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key: "sync" }),
-  })
-  const sub = await subRes.json().catch(() => ({}))
-  if ((sub as { error?: string }).error) return { ok: false, error: (sub as { error: string }).error }
-  const handle = (sub as { handle?: string }).handle
-  if (!handle) return { ok: false, error: "No statement handle returned" }
-  await fetch(`/api/distribution/configs/${configId}/sync`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ handle }),
-  }).catch(() => {})
+  const res = await fetch(`/api/distribution/configs/${configId}/sync`, { method: "POST" })
+  const data = await res.json().catch(() => ({}))
+  if ((data as { error?: string }).error) return { ok: false, error: (data as { error: string }).error }
   return { ok: true }
 }
 
@@ -5626,7 +5614,7 @@ function CampaignSettingsPanel() {
   // Per-step run: the saved config's plan + each step's transient status.
   const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
   const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
-  const [syncBg, setSyncBg] = useState<{ status: string; at?: string | null; error?: string } | null>(null)
+  const [syncBg, setSyncBg] = useState<{ status: string; at?: string | null; finishedAt?: string | null; error?: string } | null>(null)
 
   // Run history is shown for the whole campaign (all its configs).
   const loadHistory = useCallback(async (cid: string) => {
@@ -6523,7 +6511,9 @@ function CampaignSettingsPanel() {
                   }>
                     {syncBg.status === "running" ? "still running…" : syncBg.status}
                   </span>
-                  {syncBg.at && <span className="text-muted-foreground">· submitted {syncBg.at}</span>}
+                  {syncBg.at && <span className="text-muted-foreground">· started {syncBg.at}</span>}
+                  {syncBg.finishedAt && <span className="text-muted-foreground">· finished {syncBg.finishedAt}</span>}
+                  {syncBg.status === "error" && syncBg.error && <span className="text-rose-400">· {syncBg.error}</span>}
                   <Button type="button" variant="ghost" size="sm" onClick={() => checkSyncStatus(configId)}>Refresh</Button>
                 </div>
               )}

@@ -73,6 +73,48 @@ export async function ensureConfigsTable(): Promise<void> {
   } catch { /* introspection best-effort */ }
 }
 
+// Completion-marker table for the fire-and-forget sync. The submitted Snowflake
+// Scripting block writes 'running' at the start and 'done'/'error' at the end,
+// so the app knows the sync finished independent of the browser / handle TTL.
+export const SYNC_RUNS_TABLE = `${CONFIG_SF_OPTS.database}.${CONFIG_SF_OPTS.schema}.TSK_DISTRIBUTION_SYNC_RUNS`
+
+export async function ensureSyncRunsTable(): Promise<void> {
+  await executeSnowflakeQuery(
+    `CREATE TABLE IF NOT EXISTS ${SYNC_RUNS_TABLE} (
+       ID NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+       CONFIG_ID NUMBER, CAMPAIGNID NUMBER, RUN_TOKEN VARCHAR,
+       STATUS VARCHAR, MESSAGE VARCHAR,
+       STARTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(), FINISHED_AT TIMESTAMP_NTZ
+     )`,
+    CONFIG_SF_OPTS
+  )
+}
+
+// Build the Snowflake Scripting block that runs the sync and records its
+// outcome in SYNC_RUNS, keyed by a caller-supplied token. `token` must be a
+// safe string (a UUID). Returns the block + execution context.
+export async function buildSyncBlock(
+  config: RunConfigRow,
+  configId: number,
+  campaignId: number,
+  token: string
+): Promise<{ sql: string; database: string; schema: string }> {
+  const { sql: callSql } = await buildStepSql(config, campaignId, "sync")
+  const t = token.replace(/'/g, "''")
+  const sql = `BEGIN
+  INSERT INTO ${SYNC_RUNS_TABLE} (CONFIG_ID, CAMPAIGNID, RUN_TOKEN, STATUS) VALUES (${configId}, ${campaignId}, '${t}', 'running');
+  ${callSql};
+  UPDATE ${SYNC_RUNS_TABLE} SET STATUS = 'done', FINISHED_AT = CURRENT_TIMESTAMP() WHERE RUN_TOKEN = '${t}';
+  RETURN 'done';
+EXCEPTION
+  WHEN OTHER THEN
+    LET errmsg VARCHAR := SQLERRM;
+    UPDATE ${SYNC_RUNS_TABLE} SET STATUS = 'error', MESSAGE = :errmsg, FINISHED_AT = CURRENT_TIMESTAMP() WHERE RUN_TOKEN = '${t}';
+    RETURN 'error';
+END;`
+  return { sql, database: CONFIG_SF_OPTS.database, schema: CONFIG_SF_OPTS.schema }
+}
+
 // Read one config by its CONFIG_ID.
 export async function readConfigById(configId: number): Promise<RunConfigRow | null> {
   const rows = await executeSnowflakeQuery<RunConfigRow>(
