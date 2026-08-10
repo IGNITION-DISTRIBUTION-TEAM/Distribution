@@ -88,6 +88,8 @@ import {
   Loader2,
   Check,
   ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
   Files,
   PlayCircle,
   Upload,
@@ -128,16 +130,22 @@ type LeadSource = "file" | "sftp" | "snowflake"
 // A step's live state in the run UI.
 type StepView = { step: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string }
 
+// Run a specific saved config, step-by-step. Thin wrapper over runStepwiseAt.
+async function runConfigStepwise(
+  configId: number | string,
+  setSteps: (steps: StepView[]) => void
+): Promise<{ ok: boolean; ran: number }> {
+  return runStepwiseAt(`/api/distribution/configs/${configId}/run`, setSteps)
+}
+
 // Client-orchestrated run: fetch the plan, then submit each step to Snowflake
 // asynchronously and poll it to completion — each HTTP request is short, so a
 // slow procedure can't hang or time out the page. Calls setSteps as state
 // changes. Throws on plan errors (no config / inactive).
-async function runDistributionStepwise(
-  campaignId: string,
-  setSteps: (steps: StepView[]) => void,
-  campaignTitle?: string
+async function runStepwiseAt(
+  base: string,
+  setSteps: (steps: StepView[]) => void
 ): Promise<{ ok: boolean; ran: number }> {
-  const base = `/api/distribution/campaigns/${campaignId}/run`
   const planRes = await fetch(`${base}/plan`, { cache: "no-store" })
   const planData = await planRes.json().catch(() => ({}))
   if (!planRes.ok) throw new Error((planData as { error?: string }).error || `Failed to plan run (${planRes.status})`)
@@ -186,7 +194,7 @@ async function runDistributionStepwise(
   await fetch(`${base}/record`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ok: !failed, summary, ran, steps: views, campaignTitle: campaignTitle ?? null }),
+    body: JSON.stringify({ ok: !failed, summary, ran, steps: views }),
   }).catch(() => {})
 
   return { ok: !failed, ran }
@@ -208,6 +216,10 @@ function ManualContent() {
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
   const [source, setSource] = useState<LeadSource | null>(null)
+  // A campaign can have many configs; the Manual page runs one at a time.
+  const [configs, setConfigs] = useState<CampaignConfig[]>([])
+  const [configId, setConfigId] = useState<number | null>(null)
+  const [configsLoading, setConfigsLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -239,22 +251,40 @@ function ManualContent() {
 
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
 
-  // When a campaign is picked, default the lead source to whatever's saved for
-  // it in Settings (file / sftp / snowflake). The user can still switch.
+  const selectedConfig = configs.find((c) => Number(c.CONFIG_ID) === configId)
+  const sourceOfConfig = (c: CampaignConfig | undefined): LeadSource => {
+    const ls = (c?.LEAD_SOURCE as string | undefined)?.toLowerCase()
+    return ls === "sftp" || ls === "snowflake" ? ls : "file"
+  }
+
+  // When a campaign is picked, load its automation configs; default to the
+  // first, and set the lead source from that config.
   useEffect(() => {
-    if (!campaignId) { setSource(null); return }
+    if (!campaignId) { setConfigs([]); setConfigId(null); setSource(null); return }
     let cancelled = false
-    setSource(null)
-    fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
+    setConfigsLoading(true); setSource(null); setConfigId(null)
+    fetch(`/api/campaign-configs?campaignId=${campaignId}`, { cache: "no-store" })
+      .then((r) => r.json())
       .then((data) => {
         if (cancelled) return
-        const ls = (data?.config?.LEAD_SOURCE as string | undefined)?.toLowerCase()
-        setSource(ls === "sftp" || ls === "snowflake" ? ls : "file")
+        const list = (data?.configs as CampaignConfig[]) || []
+        setConfigs(list)
+        if (list.length > 0) {
+          const first = list[0]
+          setConfigId(Number(first.CONFIG_ID))
+          setSource(sourceOfConfig(first))
+        }
       })
-      .catch(() => { if (!cancelled) setSource("file") })
+      .catch(() => { if (!cancelled) setConfigs([]) })
+      .finally(() => { if (!cancelled) setConfigsLoading(false) })
     return () => { cancelled = true }
   }, [campaignId])
+
+  // Switch the active config (updates the shown lead source too).
+  const selectConfig = (id: number) => {
+    setConfigId(id)
+    setSource(sourceOfConfig(configs.find((c) => Number(c.CONFIG_ID) === id)))
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -342,33 +372,57 @@ function ManualContent() {
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               2
             </span>
-            <h3 className="font-medium text-foreground">Lead source</h3>
+            <h3 className="font-medium text-foreground">Automation &amp; lead source</h3>
           </div>
 
-          {/* Only the source configured for this campaign in Settings is shown. */}
-          {source === null ? (
-            <p className="text-sm text-muted-foreground">Loading the campaign&apos;s configured source…</p>
+          {configsLoading ? (
+            <p className="text-sm text-muted-foreground">Loading this campaign&apos;s automations…</p>
+          ) : configs.length === 0 ? (
+            <p className="text-sm text-amber-400">
+              No automations configured for this campaign yet. Set one up in{" "}
+              <span className="font-medium text-foreground">Settings → Campaign automation</span>.
+            </p>
           ) : (
-            <div className="grid gap-3 md:grid-cols-3">
-              {source === "file" && (
-                <SourceCard active onClick={() => {}} icon={<Upload className="h-5 w-5" />} title="Upload a file" description="CSV, Excel, or JSON" />
+            <>
+              {/* Pick which saved automation config to use. */}
+              <div className="mb-4 max-w-md">
+                <Label className="mb-1.5 block text-xs text-muted-foreground">Automation config</Label>
+                <Select value={configId != null ? String(configId) : ""} onValueChange={(v) => selectConfig(Number(v))}>
+                  <SelectTrigger><SelectValue placeholder="Select a config…" /></SelectTrigger>
+                  <SelectContent>
+                    {configs.map((c) => (
+                      <SelectItem key={String(c.CONFIG_ID)} value={String(c.CONFIG_ID)}>
+                        {c.CONFIG_NAME || "Automation"}{c.IS_ACTIVE === false ? " (inactive)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* The lead source is defined by the chosen config. */}
+              {source && (
+                <div className="grid gap-3 md:grid-cols-3">
+                  {source === "file" && (
+                    <SourceCard active onClick={() => {}} icon={<Upload className="h-5 w-5" />} title="Upload a file" description="CSV, Excel, or JSON" />
+                  )}
+                  {source === "sftp" && (
+                    <SourceCard active onClick={() => {}} icon={<Server className="h-5 w-5" />} title="SFTP" description="Pull from a remote server" />
+                  )}
+                  {source === "snowflake" && (
+                    <SourceCard active onClick={() => {}} icon={<Database className="h-5 w-5" />} title="Snowflake" description="Run the saved distribution" />
+                  )}
+                </div>
               )}
-              {source === "sftp" && (
-                <SourceCard active onClick={() => {}} icon={<Server className="h-5 w-5" />} title="SFTP" description="Pull from a remote server" />
-              )}
-              {source === "snowflake" && (
-                <SourceCard active onClick={() => {}} icon={<Database className="h-5 w-5" />} title="Snowflake" description="Run the saved distribution" />
-              )}
-            </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Lead source is set per config in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
+              </p>
+            </>
           )}
-          <p className="mt-3 text-xs text-muted-foreground">
-            Set in <span className="font-medium text-foreground">Settings → Campaign automation → Lead source</span>. Change it there to use a different source.
-          </p>
         </div>
       )}
 
       {/* Step 3 — source-specific config */}
-      {selectedCampaign && source && (
+      {selectedCampaign && source && configId != null && (
         <div className="rounded-xl border border-border bg-card p-6">
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
@@ -383,7 +437,7 @@ function ManualContent() {
 
           {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} />}
           {source === "sftp" && <SftpSourcePanel />}
-          {source === "snowflake" && <SnowflakeSourcePanel campaignId={selectedCampaign.id} campaignTitle={selectedCampaign.title} />}
+          {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} />}
         </div>
       )}
     </div>
@@ -1958,26 +2012,21 @@ function SftpSourcePanel() {
   )
 }
 
-// Runs the campaign's saved full-distribution config (Step 1 source → load
-// history → update HLL → sync) via the orchestrator. The config itself is
-// edited in Settings → Campaign automation.
-function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: string; campaignTitle: string }) {
+// Runs one saved automation config (Step 1 source → load history → update HLL
+// → sync) via the config orchestrator. The config is edited in Settings.
+function SnowflakeSourcePanel({ configId, configName }: { configId: number; configName: string }) {
   const [running, setRunning] = useState(false)
   const [steps, setSteps] = useState<StepView[]>([])
-  const [noConfig, setNoConfig] = useState(false)
 
   const run = async () => {
     setRunning(true)
     setSteps([])
-    setNoConfig(false)
     try {
-      const res = await runDistributionStepwise(campaignId, setSteps, campaignTitle)
+      const res = await runConfigStepwise(configId, setSteps)
       if (res.ok) toast.success(`Distribution complete — ${res.ran} step(s) ran`)
       else toast.error("Distribution failed — see steps below")
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (/no campaign config/i.test(msg)) setNoConfig(true)
-      toast.error(msg)
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
     }
@@ -1986,25 +2035,15 @@ function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: strin
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        Runs the <span className="font-medium text-foreground">saved distribution config</span> for{" "}
-        <span className="font-medium text-foreground">{campaignTitle}</span> in order — Initial source → Load into
-        history → Update HLL → Sync — stopping at the first failure. Edit the config (source, mapping, procedures,
-        batch name, lead expiry) in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
+        Runs the <span className="font-medium text-foreground">{configName}</span> automation in order — Initial
+        source → Load into history → Update HLL → Sync — stopping at the first failure. Edit the config (source,
+        mapping, procedures, batch name, lead expiry) in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
       </div>
 
       <Button onClick={run} disabled={running}>
         {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
         {running ? "Running…" : "Run full distribution"}
       </Button>
-
-      {noConfig && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            <span>No saved configuration for this campaign yet. Set it up in Settings → Campaign automation, then run it here.</span>
-          </div>
-        </div>
-      )}
 
       {steps.length > 0 && (
         <ul className="flex flex-col gap-1.5">
@@ -5387,6 +5426,8 @@ type HllProc = { PROC_INDEX: number | string; PROC_NAME: string; CREATED_AT?: st
 const NONE_PROC = "__none__"
 
 type CampaignConfig = {
+  CONFIG_ID?: number | string | null
+  CONFIG_NAME?: string | null
   LEAD_SOURCE?: string | null
   SFTP_HOST?: string | null
   SFTP_PORT?: number | string | null
@@ -5427,6 +5468,12 @@ function CampaignSettingsPanel() {
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
 
+  // --- Multi-config: a campaign can have many named automation configs ---
+  const [configs, setConfigs] = useState<CampaignConfig[]>([])
+  const [configId, setConfigId] = useState<number | null>(null) // null = new/unsaved
+  const [configName, setConfigName] = useState("Automation")
+  const [settingsOpen, setSettingsOpen] = useState(true)
+
   // --- Config form ---
   // How this campaign's leads arrive: file (default) / sftp / snowflake.
   const [leadSource, setLeadSource] = useState<"file" | "sftp" | "snowflake">("file")
@@ -5462,10 +5509,10 @@ function CampaignSettingsPanel() {
   const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
   const [history, setHistory] = useState<RunHistoryRow[]>([])
 
-  const loadHistory = useCallback(async (cid: string) => {
-    if (!cid) { setHistory([]); return }
+  const loadHistory = useCallback(async (cfgId: number | null) => {
+    if (cfgId == null) { setHistory([]); return }
     try {
-      const res = await fetch(`/api/distribution/campaigns/${cid}/history`, { cache: "no-store" })
+      const res = await fetch(`/api/distribution/configs/${cfgId}/history`, { cache: "no-store" })
       const data = await res.json()
       setHistory(Array.isArray(data.rows) ? (data.rows as RunHistoryRow[]) : [])
     } catch { setHistory([]) }
@@ -5564,9 +5611,6 @@ function CampaignSettingsPanel() {
 
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
 
-  // Load this campaign's run history when it's selected.
-  useEffect(() => { loadHistory(campaignId) }, [campaignId, loadHistory])
-
   const resetForm = useCallback(() => {
     setLeadSource("file")
     setHost("")
@@ -5592,103 +5636,107 @@ function CampaignSettingsPanel() {
     setLastRunAt(null); setLastRunStatus(null); setLastRunMessage(null)
   }, [])
 
-  // Load the selected campaign's saved config (if any) into the form.
-  useEffect(() => {
-    if (!campaignId) {
-      resetForm()
-      setLoadError(null)
-      return
-    }
-    let cancelled = false
-    const load = async () => {
-      setConfigLoading(true)
-      setLoadError(null)
-      try {
-        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
-        const data = await res.json()
-        if (cancelled) return
-        if (!res.ok) throw new Error(data.error || `Failed to load config (${res.status})`)
-        const c = data.config as CampaignConfig | null
-        if (c) {
-          setLeadSource((c.LEAD_SOURCE as "file" | "sftp" | "snowflake") || "file")
-          setHost(c.SFTP_HOST ?? "")
-          setPort(c.SFTP_PORT != null ? String(c.SFTP_PORT) : "22")
-          setUsername(c.SFTP_USERNAME ?? "")
-          setAuthType(c.SFTP_AUTH_TYPE === "privateKey" ? "privateKey" : "password")
-          setPassword(c.SFTP_PASSWORD ?? "")
-          setPrivateKey(c.SFTP_PRIVATE_KEY ?? "")
-          setRemotePath(c.SFTP_REMOTE_PATH ?? "")
-          setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
-          setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
-          setUpdateHllProc(c.UPDATE_HLL_PROCEDURE ?? "")
-          setSyncProcedure(c.SYNC_PROCEDURE ?? "")
-          setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
-          setSourceObject(c.SOURCE_OBJECT ?? "")
-          try {
-            const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
-            // These are auto-filled, not stored source mappings.
-            for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]) delete parsedMap[a]
-            setSourceMapping(parsedMap)
-          } catch { setSourceMapping({}) }
-          setLeadExpiryDays(c.LEAD_EXPIRY_DAYS != null ? String(c.LEAD_EXPIRY_DAYS) : "45")
-          setBatchTemplate(c.BATCH_NAME_TEMPLATE ?? "BATCH_ONAIR_ULTRA5{date}")
-          setHllCols([]); setViewCols([]); setColsMsg(null)
-          setIsActive(c.IS_ACTIVE !== false)
-          setRunSteps([])
-          setLastRunAt(c.LAST_RUN_AT ?? null)
-          setLastRunStatus(c.LAST_RUN_STATUS ?? null)
-          setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
-          setConfigExists(true)
-        } else {
-          resetForm()
-        }
-      } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
-      } finally {
-        if (!cancelled) setConfigLoading(false)
+  // Fill the whole form from a config row.
+  const loadConfigIntoForm = useCallback((c: CampaignConfig) => {
+    setConfigId(c.CONFIG_ID != null ? Number(c.CONFIG_ID) : null)
+    setConfigName(c.CONFIG_NAME ?? "Automation")
+    setLeadSource((c.LEAD_SOURCE as "file" | "sftp" | "snowflake") || "file")
+    setHost(c.SFTP_HOST ?? "")
+    setPort(c.SFTP_PORT != null ? String(c.SFTP_PORT) : "22")
+    setUsername(c.SFTP_USERNAME ?? "")
+    setAuthType(c.SFTP_AUTH_TYPE === "privateKey" ? "privateKey" : "password")
+    setPassword(c.SFTP_PASSWORD ?? "")
+    setPrivateKey(c.SFTP_PRIVATE_KEY ?? "")
+    setRemotePath(c.SFTP_REMOTE_PATH ?? "")
+    setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
+    setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
+    setUpdateHllProc(c.UPDATE_HLL_PROCEDURE ?? "")
+    setSyncProcedure(c.SYNC_PROCEDURE ?? "")
+    setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
+    setSourceObject(c.SOURCE_OBJECT ?? "")
+    try {
+      const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
+      for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]) delete parsedMap[a]
+      setSourceMapping(parsedMap)
+    } catch { setSourceMapping({}) }
+    setLeadExpiryDays(c.LEAD_EXPIRY_DAYS != null ? String(c.LEAD_EXPIRY_DAYS) : "45")
+    setBatchTemplate(c.BATCH_NAME_TEMPLATE ?? "BATCH_ONAIR_ULTRA5{date}")
+    setHllCols([]); setViewCols([]); setColsMsg(null)
+    setIsActive(c.IS_ACTIVE !== false)
+    setRunSteps([])
+    setLastRunAt(c.LAST_RUN_AT ?? null)
+    setLastRunStatus(c.LAST_RUN_STATUS ?? null)
+    setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
+    setConfigExists(c.CONFIG_ID != null)
+    setSettingsOpen(true)
+    loadHistory(c.CONFIG_ID != null ? Number(c.CONFIG_ID) : null)
+  }, [loadHistory])
+
+  // Load all configs for a campaign; select one (default first / "last" / by id).
+  const loadConfigs = useCallback(async (cid: string, selectId?: number | "last") => {
+    setConfigLoading(true); setLoadError(null)
+    try {
+      const res = await fetch(`/api/campaign-configs?campaignId=${cid}`, { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Failed to load configs (${res.status})`)
+      const list = (data.configs as CampaignConfig[]) || []
+      setConfigs(list)
+      if (list.length === 0) {
+        // No configs — start a fresh, unsaved one.
+        resetForm(); setConfigId(null); setConfigName("Automation 1"); setSettingsOpen(true); setHistory([])
+        return
       }
+      let pick = list[0]
+      if (selectId === "last") pick = list[list.length - 1]
+      else if (typeof selectId === "number") pick = list.find((c) => Number(c.CONFIG_ID) === selectId) ?? list[0]
+      loadConfigIntoForm(pick)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setConfigLoading(false)
     }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [campaignId, resetForm])
+  }, [loadConfigIntoForm, resetForm])
+
+  // Reload configs when the campaign changes.
+  useEffect(() => {
+    if (!campaignId) { setConfigs([]); resetForm(); setConfigId(null); setHistory([]); setLoadError(null); return }
+    loadConfigs(campaignId)
+  }, [campaignId, loadConfigs, resetForm])
+
+  // "New automation" button — a blank, unsaved config.
+  const startNewAutomation = () => {
+    resetForm()
+    setConfigId(null)
+    setConfigName(`Automation ${configs.length + 1}`)
+    setSettingsOpen(true)
+    setHistory([])
+  }
 
   const handleSave = async () => {
     if (!campaignId) return
     setSaving(true)
     try {
-      const res = await fetch("/api/campaign-config", {
+      const res = await fetch("/api/campaign-configs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          campaignId,
-          campaignTitle: selectedCampaign?.title ?? null,
+          configId, name: configName || "Automation",
+          campaignId, campaignTitle: selectedCampaign?.title ?? null,
           leadSource,
-          sftpHost: host,
-          sftpPort: port,
-          sftpUsername: username,
-          sftpAuthType: authType,
-          sftpPassword: password,
-          sftpPrivateKey: privateKey,
-          sftpRemotePath: remotePath,
-          uploadTargetTable: targetTable,
-          loadHistoryProcedure: loadHistoryProc,
-          updateHllProcedure: updateHllProc,
-          syncProcedure,
-          sourceKind,
-          sourceObject,
-          sourceMapping,
-          leadExpiryDays: Number(leadExpiryDays) || 45,
-          batchNameTemplate: batchTemplate,
-          isActive,
+          sftpHost: host, sftpPort: port, sftpUsername: username, sftpAuthType: authType,
+          sftpPassword: password, sftpPrivateKey: privateKey, sftpRemotePath: remotePath,
+          uploadTargetTable: targetTable, loadHistoryProcedure: loadHistoryProc,
+          updateHllProcedure: updateHllProc, syncProcedure,
+          sourceKind, sourceObject, sourceMapping,
+          leadExpiryDays: Number(leadExpiryDays) || 45, batchNameTemplate: batchTemplate, isActive,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`)
       if (data.warning) toast.warning(data.warning)
-      else toast.success("Campaign configuration saved")
-      setConfigExists(true)
+      else toast.success("Automation saved")
+      // Refetch and keep editing (existing id, or the newest on create).
+      await loadConfigs(campaignId, configId ?? "last")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
@@ -5696,14 +5744,28 @@ function CampaignSettingsPanel() {
     }
   }
 
+  const deleteConfig = async () => {
+    if (configId == null) { startNewAutomation(); return }
+    if (typeof window !== "undefined" && !window.confirm("Delete this automation?")) return
+    try {
+      const res = await fetch(`/api/campaign-configs/${configId}`, { method: "DELETE" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((data as { error?: string }).error || `Delete failed (${res.status})`)
+      toast.success("Automation deleted")
+      await loadConfigs(campaignId)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // Run the whole distribution in order: initial source → load history →
   // update HLL → sync. Stops at the first failed step.
   const runFullDistribution = async () => {
-    if (!campaignId) return
+    if (configId == null) { toast.error("Save this automation before running it."); return }
     setRunning(true)
     setRunSteps([])
     try {
-      const res = await runDistributionStepwise(campaignId, setRunSteps, selectedCampaign?.title)
+      const res = await runConfigStepwise(configId, setRunSteps)
       const now = new Date().toISOString().slice(0, 16).replace("T", " ")
       setLastRunAt(now)
       setLastRunStatus(res.ok ? "Success" : "Error")
@@ -5713,7 +5775,7 @@ function CampaignSettingsPanel() {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
-      loadHistory(campaignId) // refresh the history list with this run
+      loadHistory(configId) // refresh the history list with this run
     }
   }
 
@@ -5807,7 +5869,53 @@ function CampaignSettingsPanel() {
             <p className="mb-3 text-xs text-rose-400">Failed to load config: {loadError}</p>
           )}
 
+          {/* This campaign's automations — pick one, or add a new one. */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {configs.map((c) => {
+              const cid = c.CONFIG_ID != null ? Number(c.CONFIG_ID) : null
+              const active = cid === configId
+              return (
+                <button
+                  key={cid ?? "row-new"}
+                  type="button"
+                  onClick={() => cid != null && loadConfigIntoForm(c)}
+                  className={cn(
+                    "rounded-md border px-3 py-1.5 text-xs",
+                    active ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {c.CONFIG_NAME || "Automation"}
+                  {c.IS_ACTIVE === false && <span className="ml-1 text-[10px] text-muted-foreground">(inactive)</span>}
+                </button>
+              )
+            })}
+            {configId === null && (
+              <span className="rounded-md border border-primary bg-primary/10 px-3 py-1.5 text-xs text-foreground">
+                {configName || "New automation"} <span className="text-[10px] text-muted-foreground">(unsaved)</span>
+              </span>
+            )}
+            <Button type="button" variant="outline" size="sm" onClick={startNewAutomation}>
+              <Plus className="mr-1 h-3.5 w-3.5" /> New automation
+            </Button>
+          </div>
+
+          {/* Name + collapse + delete for the current automation. */}
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="min-w-[220px] flex-1">
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Automation name</Label>
+              <Input value={configName} onChange={(e) => setConfigName(e.target.value)} placeholder="Automation" />
+            </div>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSettingsOpen((o) => !o)}>
+              {settingsOpen ? <ChevronDown className="mr-1 h-4 w-4" /> : <ChevronRight className="mr-1 h-4 w-4" />}
+              {settingsOpen ? "Collapse settings" : "Expand settings"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="text-rose-400 hover:text-rose-300" onClick={deleteConfig} disabled={configId == null}>
+              <Trash2 className="mr-1 h-4 w-4" /> Delete
+            </Button>
+          </div>
+
           <div className="flex flex-col gap-5">
+            {settingsOpen && (<>
             <div>
               <h4 className="mb-3 text-sm font-medium text-foreground">Lead source</h4>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -6096,9 +6204,10 @@ function CampaignSettingsPanel() {
               </div>
               <Button onClick={handleSave} disabled={saving || configLoading}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save configuration
+                Save automation
               </Button>
             </div>
+            </>)}
 
             <Separator />
 
@@ -6125,7 +6234,7 @@ function CampaignSettingsPanel() {
                     variant="secondary"
                     onClick={runFullDistribution}
                     disabled={running || saving || configLoading || !configExists}
-                    title={!configExists ? "Save the configuration first" : undefined}
+                    title={!configExists ? "Save this automation first" : undefined}
                   >
                     {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
                     {running ? "Running…" : "Run full distribution"}
@@ -6134,7 +6243,7 @@ function CampaignSettingsPanel() {
               </div>
 
               {!configExists && (
-                <p className="mt-2 text-xs text-amber-400">Save the configuration before running.</p>
+                <p className="mt-2 text-xs text-amber-400">Save this automation before running.</p>
               )}
 
               {runSteps.length > 0 && (
