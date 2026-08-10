@@ -9,7 +9,14 @@ import {
   RUN_PROC_IDENT,
 } from "@/app/api/campaign-config/route"
 import { IDENT_COL } from "@/app/api/distribution/tasks/route"
-import { HLL_TABLE, CAMPAIGN_ID_COL, hllColumnSet, buildHllInsertLists } from "@/lib/hll-insert"
+import {
+  HLL_TABLE,
+  hllColumnSet,
+  buildHllInsertLists,
+  buildAutoExprs,
+  activeAutoExprs,
+  normLeadExpiryDays,
+} from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -49,13 +56,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     LOAD_HISTORY_PROCEDURE: string | null
     UPDATE_HLL_PROCEDURE: string | null
     SYNC_PROCEDURE: string | null
+    LEAD_EXPIRY_DAYS: number | string | null
     IS_ACTIVE: boolean | string | null
   }
   let config: Config
   try {
     const rows = await executeSnowflakeQuery<Config>(
       `SELECT SOURCE_KIND, SOURCE_OBJECT, SOURCE_MAPPING_JSON, UPLOAD_TARGET_TABLE,
-              LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE, IS_ACTIVE
+              LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE, LEAD_EXPIRY_DAYS, IS_ACTIVE
        FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${campaignId}`,
       CONFIG_SF_OPTS
     )
@@ -75,8 +83,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   // ── Step 1: initial source → HLL ────────────────────────────────────────
   const sourceKind = (config.SOURCE_KIND ?? "none").trim().toLowerCase()
+  const expiryDays = normLeadExpiryDays(config.LEAD_EXPIRY_DAYS)
   if (sourceKind === "proc" || sourceKind === "view") {
-    const r = await runInitialSource(sourceKind, config, campaignId)
+    const r = await runInitialSource(sourceKind, config, campaignId, expiryDays)
     results.push(r)
     if (r.status === "error") return finish(campaignId, results)
   } else {
@@ -122,7 +131,8 @@ async function runInitialSource(
     SOURCE_MAPPING_JSON: string | null
     UPLOAD_TARGET_TABLE: string | null
   },
-  campaignId: number
+  campaignId: number,
+  expiryDays: number
 ): Promise<StepResult> {
   const step = "Initial source"
   const object = (config.SOURCE_OBJECT ?? "").trim()
@@ -149,20 +159,21 @@ async function runInitialSource(
   }
   const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s)) as [string, string][]
 
-  // CAMPAIGNID is auto-filled from the known campaign id, so a mapping that only
-  // covers CAMPAIGNID (or is empty because CAMPAIGNID is handled) still needs at
-  // least one real source column to carry data across.
-  const nonIdPairs = pairs.filter(([h]) => h.toUpperCase() !== CAMPAIGN_ID_COL)
-  if (nonIdPairs.length === 0) {
-    return { step, status: "error", message: "Map at least one source column (besides the auto-filled campaign id) into HLL." }
-  }
-
-  // Does the HLL target actually have a CAMPAIGNID column? Default to yes on a
-  // metadata read failure — the campaign id is a required HLL field here.
-  let hllHasCampaignId = true
+  // Resolve which reserved columns (CAMPAIGNID / CREATEDONDATE / LEADEXPIRY)
+  // the HLL target actually has, so we auto-fill only those. On a metadata
+  // read failure, assume all exist — the fixed HLL table is known to have them.
+  let hllColumns: Set<string> | null = null
   try {
-    hllHasCampaignId = (await hllColumnSet()).has(CAMPAIGN_ID_COL)
-  } catch { /* keep the default */ }
+    hllColumns = await hllColumnSet()
+  } catch { /* null → assume all reserved columns exist */ }
+  const autos = activeAutoExprs(buildAutoExprs(campaignId, expiryDays), hllColumns)
+  const autoUpper = new Set(Object.keys(autos).map((c) => c.toUpperCase()))
+
+  // Auto columns are filled by expression; still require a real source column.
+  const realPairs = pairs.filter(([h]) => !autoUpper.has(h.toUpperCase()))
+  if (realPairs.length === 0) {
+    return { step, status: "error", message: "Map at least one source column (besides the auto-filled ones) into HLL." }
+  }
 
   try {
     // 1. If proc, run it to (re)populate its upload/stage table.
@@ -170,8 +181,9 @@ async function runInitialSource(
       const { sql, database, schema } = buildCall(object)
       await executeSnowflakeQuery(sql, { database, schema })
     }
-    // 2. Append mapped rows into HLL, with CAMPAIGNID = this campaign's id.
-    const { hllCols, selectExprs } = buildHllInsertLists(pairs, campaignId, hllHasCampaignId)
+    // 2. Append mapped rows into HLL; CAMPAIGNID/CREATEDONDATE/LEADEXPIRY are
+    //    auto-filled (campaign id, today, today + expiry days).
+    const { hllCols, selectExprs } = buildHllInsertLists(pairs, autos)
     await executeSnowflakeQuery(
       `INSERT INTO ${HLL_TABLE} (${hllCols.join(", ")}) SELECT ${selectExprs.join(", ")} FROM ${readFrom}`,
       { database: HLL_TABLE.split(".")[0], schema: HLL_TABLE.split(".")[1] }

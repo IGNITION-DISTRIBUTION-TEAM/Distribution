@@ -3,7 +3,14 @@ import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { TABLE, SF_OPTS, sqlStr, IDENT_COL } from "../../route"
 import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
-import { HLL_TABLE, CAMPAIGN_ID_COL, hllColumnSet, buildHllInsertLists } from "@/lib/hll-insert"
+import {
+  HLL_TABLE,
+  hllColumnSet,
+  buildHllInsertLists,
+  buildAutoExprs,
+  activeAutoExprs,
+  DEFAULT_LEAD_EXPIRY_DAYS,
+} from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -140,18 +147,21 @@ async function runSourceToHll(
     mapping = {}
   }
   const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s)) as [string, string][]
-  const nonIdPairs = pairs.filter(([h]) => h.toUpperCase() !== CAMPAIGN_ID_COL)
-  if (nonIdPairs.length === 0) {
-    await recordRun(taskId, "Error", "No column mapping is set for this source.")
-    return NextResponse.json({ error: "Map at least one source column (besides the auto-filled campaign id) to an HLL column first." }, { status: 400 })
-  }
 
-  // Auto-fill CAMPAIGNID from the task's campaign when known and HLL has it.
-  let hllHasCampaignId = campaignId != null
-  if (campaignId != null) {
-    try {
-      hllHasCampaignId = (await hllColumnSet()).has(CAMPAIGN_ID_COL)
-    } catch { /* keep the default */ }
+  // Auto-fill reserved HLL columns: CAMPAIGNID (from the task's campaign when
+  // known), CREATEDONDATE (today) and LEADEXPIRY (today + default days). Ad-hoc
+  // tasks carry no per-campaign expiry setting, so the default is used.
+  let hllColumns: Set<string> | null = null
+  try {
+    hllColumns = await hllColumnSet()
+  } catch { /* null → assume the reserved columns exist */ }
+  const autos = activeAutoExprs(buildAutoExprs(campaignId, DEFAULT_LEAD_EXPIRY_DAYS), hllColumns)
+  const autoUpper = new Set(Object.keys(autos).map((c) => c.toUpperCase()))
+
+  const realPairs = pairs.filter(([h]) => !autoUpper.has(h.toUpperCase()))
+  if (realPairs.length === 0) {
+    await recordRun(taskId, "Error", "No column mapping is set for this source.")
+    return NextResponse.json({ error: "Map at least one source column (besides the auto-filled ones) to an HLL column first." }, { status: 400 })
   }
 
   try {
@@ -160,8 +170,8 @@ async function runSourceToHll(
       const [db, schema] = object.split(".")
       await executeSnowflakeQuery(`CALL ${object}()`, { database: db, schema })
     }
-    // 2. Append mapped rows into HLL (CAMPAIGNID = campaign id when known).
-    const { hllCols, selectExprs } = buildHllInsertLists(pairs, campaignId, hllHasCampaignId)
+    // 2. Append mapped rows into HLL with the reserved columns auto-filled.
+    const { hllCols, selectExprs } = buildHllInsertLists(pairs, autos)
     await executeSnowflakeQuery(
       `INSERT INTO ${HLL_TABLE} (${hllCols.join(", ")}) SELECT ${selectExprs.join(", ")} FROM ${readFrom}`,
       { database: HLL_TABLE.split(".")[0], schema: HLL_TABLE.split(".")[1] }

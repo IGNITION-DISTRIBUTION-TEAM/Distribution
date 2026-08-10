@@ -5289,6 +5289,7 @@ type CampaignConfig = {
   SOURCE_KIND?: string | null
   SOURCE_OBJECT?: string | null
   SOURCE_MAPPING_JSON?: string | null
+  LEAD_EXPIRY_DAYS?: number | string | null
   IS_ACTIVE?: boolean | null
   LAST_RUN_AT?: string | null
   LAST_RUN_STATUS?: string | null
@@ -5321,6 +5322,8 @@ function CampaignSettingsPanel() {
   const [sourceKind, setSourceKind] = useState<"none" | "proc" | "view">("none")
   const [sourceObject, setSourceObject] = useState("")
   const [sourceMapping, setSourceMapping] = useState<Record<string, string>>({})
+  // Lead expiry: LEADEXPIRY = today + this many days (default 45).
+  const [leadExpiryDays, setLeadExpiryDays] = useState("45")
   const [hllCols, setHllCols] = useState<{ name: string; type: string }[]>([])
   const [viewCols, setViewCols] = useState<{ name: string; type: string }[]>([])
   const [colsLoading, setColsLoading] = useState(false)
@@ -5351,11 +5354,12 @@ function CampaignSettingsPanel() {
       setHllCols(hc); setViewCols(vc)
       setSourceMapping((m) => {
         const next = { ...m }
-        // CAMPAIGNID is auto-filled with the campaign id — never map it from a
-        // source column (drop any stale entry too).
-        delete next["CAMPAIGNID"]
+        // These HLL columns are auto-filled (campaign id / today / today+N) —
+        // never map them from a source column (drop any stale entries too).
+        const AUTO = ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY"]
+        for (const a of AUTO) delete next[a]
         for (const hcol of hc) {
-          if (hcol.name.toUpperCase() === "CAMPAIGNID") continue
+          if (AUTO.includes(hcol.name.toUpperCase())) continue
           if (next[hcol.name]) continue
           const hit = vc.find((s: { name: string }) => s.name.toLowerCase() === hcol.name.toLowerCase())
           if (hit) next[hcol.name] = hit.name
@@ -5440,6 +5444,7 @@ function CampaignSettingsPanel() {
     setSourceKind("none")
     setSourceObject("")
     setSourceMapping({})
+    setLeadExpiryDays("45")
     setHllCols([]); setViewCols([]); setColsMsg(null)
     setIsActive(true)
     setConfigExists(false)
@@ -5480,9 +5485,11 @@ function CampaignSettingsPanel() {
           setSourceObject(c.SOURCE_OBJECT ?? "")
           try {
             const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
-            delete parsedMap["CAMPAIGNID"] // CAMPAIGNID is auto-filled, not a stored source mapping
+            // These are auto-filled, not stored source mappings.
+            for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY"]) delete parsedMap[a]
             setSourceMapping(parsedMap)
           } catch { setSourceMapping({}) }
+          setLeadExpiryDays(c.LEAD_EXPIRY_DAYS != null ? String(c.LEAD_EXPIRY_DAYS) : "45")
           setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
           setRunResults(null)
@@ -5529,6 +5536,7 @@ function CampaignSettingsPanel() {
           sourceKind,
           sourceObject,
           sourceMapping,
+          leadExpiryDays: Number(leadExpiryDays) || 45,
           isActive,
         }),
       })
@@ -5785,14 +5793,19 @@ function CampaignSettingsPanel() {
                         </thead>
                         <tbody>
                           {hllCols.map((h) => {
-                            const isCampaignId = h.name.toUpperCase() === "CAMPAIGNID"
+                            const up = h.name.toUpperCase()
+                            const autoLabel =
+                              up === "CAMPAIGNID" ? `= campaign id${campaignId ? ` (${campaignId})` : ""} · auto`
+                              : up === "CREATEDONDATE" ? "= today · auto"
+                              : up === "LEADEXPIRY" ? `= today + ${leadExpiryDays || "45"} days · auto`
+                              : null
                             return (
                             <tr key={h.name} className="border-t border-border/50">
                               <td className="px-3 py-1.5"><span className="font-mono text-xs text-foreground">{h.name}</span> <span className="ml-1 text-[10px] text-muted-foreground">{h.type}</span></td>
                               <td className="px-3 py-1.5">
-                                {isCampaignId ? (
-                                  <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-1 font-mono text-xs text-emerald-400" title="Filled automatically with this campaign's id">
-                                    = campaign id {campaignId ? `(${campaignId})` : ""} · auto
+                                {autoLabel ? (
+                                  <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-1 font-mono text-xs text-emerald-400" title="Filled automatically — not mapped from the source">
+                                    {autoLabel}
                                   </span>
                                 ) : (
                                   <Select value={sourceMapping[h.name] ?? "__none__"} onValueChange={(v) => setSrcMap(h.name, v)}>
@@ -5811,6 +5824,21 @@ function CampaignSettingsPanel() {
                       </table>
                     </div>
                   )}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Label htmlFor="lead-expiry" className="text-xs text-muted-foreground">Lead expiry (days after load)</Label>
+                    <Input
+                      id="lead-expiry"
+                      type="number"
+                      min={1}
+                      max={3650}
+                      value={leadExpiryDays}
+                      onChange={(e) => setLeadExpiryDays(e.target.value)}
+                      className="h-8 w-24 text-sm"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      <span className="font-mono">LEADEXPIRY</span> = today + this many days. Default 45.
+                    </span>
+                  </div>
                 </div>
               )}
             </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
+import { normLeadExpiryDays } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 
@@ -45,6 +46,7 @@ export type CampaignConfigInput = {
   sourceKind?: string
   sourceObject?: string
   sourceMappingJson?: string | null
+  leadExpiryDays?: number
   isActive?: boolean
 }
 
@@ -120,6 +122,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     return { error: 'sourceObject must be "DATABASE.SCHEMA.NAME" with optional (args)' }
   }
   const sourceMappingJson = validateSourceMapping(body.sourceMapping)
+  const leadExpiryDays = normLeadExpiryDays(body.leadExpiryDays)
 
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
 
@@ -129,6 +132,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sourceKind,
     sourceObject,
     sourceMappingJson,
+    leadExpiryDays,
     sftpHost: str(body.sftpHost),
     sftpPort,
     sftpUsername: str(body.sftpUsername),
@@ -179,6 +183,7 @@ const CONFIG_COLUMNS: [string, string][] = [
   ["SFTP_AUTH_TYPE", "VARCHAR"], ["UPLOAD_TARGET_TABLE", "VARCHAR"],
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
+  ["LEAD_EXPIRY_DAYS", "NUMBER"],
   ["IS_ACTIVE", "BOOLEAN"],
   // Last full-distribution run outcome (set by the campaign run orchestrator).
   ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
@@ -276,6 +281,7 @@ export async function POST(request: NextRequest) {
     ["SOURCE_KIND", sqlStr(parsed.sourceKind)],
     ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
     ["SOURCE_MAPPING_JSON", parsed.sourceMappingJson ? sqlStr(parsed.sourceMappingJson) : "NULL"],
+    ["LEAD_EXPIRY_DAYS", String(parsed.leadExpiryDays ?? 45)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
 
