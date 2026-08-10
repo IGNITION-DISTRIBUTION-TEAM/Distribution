@@ -5323,18 +5323,20 @@ function CampaignSettingsPanel() {
   const [isActive, setIsActive] = useState(true)
 
   const loadSourceColumns = async () => {
-    if (!sourceObject.trim()) { setColsMsg("Enter the view name first."); return }
+    // Proc source maps FROM the stage/upload target table; view maps FROM the view.
+    const readFrom = sourceKind === "proc" ? targetTable.trim() : sourceObject.trim()
+    if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target table (below) first." : "Enter the view name first."); return }
     setColsLoading(true); setColsMsg(null)
     try {
       const [h, v] = await Promise.all([
         fetch("/api/distribution/columns?object=hll").then((r) => r.json()),
-        fetch(`/api/distribution/columns?object=${encodeURIComponent(sourceObject.trim())}`).then((r) => r.json()),
+        fetch(`/api/distribution/columns?object=${encodeURIComponent(readFrom)}`).then((r) => r.json()),
       ])
       if (h.error) throw new Error(`HLL: ${h.error}`)
-      if (v.error) throw new Error(`View: ${v.error}`)
+      if (v.error) throw new Error(`Source: ${v.error}`)
       const hc = h.columns ?? []
       const vc = v.columns ?? []
-      if (!vc.length) throw new Error("No columns found on the view (check name / grants).")
+      if (!vc.length) throw new Error("No columns found on the source (check name / grants).")
       setHllCols(hc); setViewCols(vc)
       setSourceMapping((m) => {
         const next = { ...m }
@@ -5703,13 +5705,13 @@ function CampaignSettingsPanel() {
                 )}
               </div>
               {sourceKind === "proc" && (
-                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target table</span> set below; the &ldquo;Load into history&rdquo; procedure then moves those rows into HLL.</p>
+                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target table</span> set below. Then map that table&apos;s columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
               )}
-              {sourceKind === "view" && (
+              {sourceKind !== "none" && (
                 <div className="mt-3">
                   <div className="flex items-center gap-3">
                     <Button type="button" variant="outline" size="sm" onClick={loadSourceColumns} disabled={colsLoading}>
-                      {colsLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…</> : <>Load columns &amp; map</>}
+                      {colsLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…</> : <>Load columns &amp; map {sourceKind === "proc" ? "(stage → HLL)" : "(view → HLL)"}</>}
                     </Button>
                     {Object.keys(sourceMapping).length > 0 && <span className="text-xs text-muted-foreground">{Object.keys(sourceMapping).length} column(s) mapped</span>}
                   </div>
@@ -5720,7 +5722,7 @@ function CampaignSettingsPanel() {
                         <thead className="sticky top-0 bg-card">
                           <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                             <th className="px-3 py-2 font-medium">HLL column</th>
-                            <th className="px-3 py-2 font-medium">View column</th>
+                            <th className="px-3 py-2 font-medium">{sourceKind === "proc" ? "Upload table column" : "View column"}</th>
                           </tr>
                         </thead>
                         <tbody>
