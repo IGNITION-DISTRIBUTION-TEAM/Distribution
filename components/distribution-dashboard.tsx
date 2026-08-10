@@ -331,29 +331,25 @@ function ManualContent() {
             <h3 className="font-medium text-foreground">Lead source</h3>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <SourceCard
-              active={source === "file"}
-              onClick={() => setSource("file")}
-              icon={<Upload className="h-5 w-5" />}
-              title="Upload a file"
-              description="CSV, Excel, or JSON"
-            />
-            <SourceCard
-              active={source === "sftp"}
-              onClick={() => setSource("sftp")}
-              icon={<Server className="h-5 w-5" />}
-              title="SFTP"
-              description="Pull from a remote server"
-            />
-            <SourceCard
-              active={source === "snowflake"}
-              onClick={() => setSource("snowflake")}
-              icon={<Database className="h-5 w-5" />}
-              title="Snowflake"
-              description="Run the saved distribution"
-            />
-          </div>
+          {/* Only the source configured for this campaign in Settings is shown. */}
+          {source === null ? (
+            <p className="text-sm text-muted-foreground">Loading the campaign&apos;s configured source…</p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-3">
+              {source === "file" && (
+                <SourceCard active onClick={() => {}} icon={<Upload className="h-5 w-5" />} title="Upload a file" description="CSV, Excel, or JSON" />
+              )}
+              {source === "sftp" && (
+                <SourceCard active onClick={() => {}} icon={<Server className="h-5 w-5" />} title="SFTP" description="Pull from a remote server" />
+              )}
+              {source === "snowflake" && (
+                <SourceCard active onClick={() => {}} icon={<Database className="h-5 w-5" />} title="Snowflake" description="Run the saved distribution" />
+              )}
+            </div>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Set in <span className="font-medium text-foreground">Settings → Campaign automation → Lead source</span>. Change it there to use a different source.
+          </p>
         </div>
       )}
 
