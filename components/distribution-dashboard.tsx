@@ -126,57 +126,69 @@ const navItems: NavItem[] = [
 type LeadSource = "file" | "sftp" | "snowflake"
 
 // A step's live state in the run UI.
-type StepView = { step: string; status: "running" | "success" | "error" | "skipped"; message?: string }
-// One NDJSON event from the run stream.
-type RunStreamEvent =
-  | { type: "step"; step: string; phase: "start" }
-  | { type: "step"; step: string; phase: "end"; status: "success" | "error" | "skipped"; message: string }
-  | { type: "done"; ok: boolean; ran: number; results?: unknown[]; error?: string }
+type StepView = { step: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string }
 
-// Fold a stream event into the current step list (append if the step is new).
-function applyRunEvent(prev: StepView[], ev: RunStreamEvent): StepView[] {
-  if (ev.type !== "step") return prev
-  const idx = prev.findIndex((s) => s.step === ev.step)
-  const row: StepView =
-    ev.phase === "start"
-      ? { step: ev.step, status: "running" }
-      : { step: ev.step, status: ev.status, message: ev.message }
-  const next = [...prev]
-  if (idx >= 0) next[idx] = row
-  else next.push(row)
-  return next
-}
+// Client-orchestrated run: fetch the plan, then submit each step to Snowflake
+// asynchronously and poll it to completion — each HTTP request is short, so a
+// slow procedure can't hang or time out the page. Calls setSteps as state
+// changes. Throws on plan errors (no config / inactive).
+async function runDistributionStepwise(
+  campaignId: string,
+  setSteps: (steps: StepView[]) => void
+): Promise<{ ok: boolean; ran: number }> {
+  const base = `/api/distribution/campaigns/${campaignId}/run`
+  const planRes = await fetch(`${base}/plan`, { cache: "no-store" })
+  const planData = await planRes.json().catch(() => ({}))
+  if (!planRes.ok) throw new Error((planData as { error?: string }).error || `Failed to plan run (${planRes.status})`)
+  const plan = ((planData as { steps?: { key: string; label: string }[] }).steps) || []
 
-// POST the run with streaming and dispatch each NDJSON event. Pre-stream
-// errors (no config / inactive) arrive as a non-OK JSON response and throw.
-async function streamDistribution(campaignId: string, onEvent: (ev: RunStreamEvent) => void): Promise<void> {
-  const res = await fetch(`/api/distribution/campaigns/${campaignId}/run?stream=1`, { method: "POST" })
-  if (!res.ok) {
-    const ct = res.headers.get("content-type") || ""
-    if (!ct.includes("ndjson")) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error((data as { error?: string }).error || `Run failed (${res.status})`)
+  const views: StepView[] = plan.map((s) => ({ step: s.label, status: "pending" }))
+  setSteps([...views])
+  if (!plan.length) return { ok: true, ran: 0 }
+
+  let failed = false
+  let ran = 0
+  for (let i = 0; i < plan.length; i++) {
+    views[i] = { step: plan[i].label, status: "running" }
+    setSteps([...views])
+    try {
+      const subRes = await fetch(`${base}/step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: plan[i].key }),
+      })
+      const sub = await subRes.json().catch(() => ({}))
+      if ((sub as { error?: string }).error) throw new Error((sub as { error: string }).error)
+      const handle = (sub as { handle?: string }).handle
+      if (!handle) throw new Error("No statement handle returned")
+      // Poll the async statement until it completes or errors.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2500))
+        const pr = await fetch(`${base}/step?handle=${encodeURIComponent(handle)}`, { cache: "no-store" })
+        const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
+        if (ps.status === "running") continue
+        if (ps.status === "error") throw new Error(ps.error || "Step failed")
+        break
+      }
+      views[i] = { step: plan[i].label, status: "success", message: "done" }
+      ran++
+      setSteps([...views])
+    } catch (e) {
+      views[i] = { step: plan[i].label, status: "error", message: e instanceof Error ? e.message : String(e) }
+      setSteps([...views])
+      failed = true
+      break
     }
   }
-  if (!res.body) throw new Error("No response stream")
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ""
-  const flushLine = (line: string) => {
-    const t = line.trim()
-    if (t) onEvent(JSON.parse(t) as RunStreamEvent)
-  }
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let nl: number
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      flushLine(buf.slice(0, nl))
-      buf = buf.slice(nl + 1)
-    }
-  }
-  flushLine(buf)
+
+  const summary = views.map((v) => `${v.step}: ${v.status}`).join(" | ")
+  await fetch(`${base}/record`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ok: !failed, summary }),
+  }).catch(() => {})
+
+  return { ok: !failed, ran }
 }
 
 // Icon for a step's state (spinner while running).
@@ -184,6 +196,7 @@ function StepStatusIcon({ status }: { status: StepView["status"] }) {
   if (status === "running") return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-400" />
   if (status === "success") return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
   if (status === "error") return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+  if (status === "pending") return <Clock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
   return <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
 }
 
@@ -1957,14 +1970,9 @@ function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: strin
     setSteps([])
     setNoConfig(false)
     try {
-      await streamDistribution(campaignId, (ev) => {
-        if (ev.type === "step") setSteps((prev) => applyRunEvent(prev, ev))
-        else if (ev.type === "done") {
-          if (ev.error) toast.error(ev.error)
-          else if (ev.ok) toast.success(`Distribution complete — ${ev.ran} step(s) ran`)
-          else toast.error("Distribution failed — see steps below")
-        }
-      })
+      const res = await runDistributionStepwise(campaignId, setSteps)
+      if (res.ok) toast.success(`Distribution complete — ${res.ran} step(s) ran`)
+      else toast.error("Distribution failed — see steps below")
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (/no campaign config/i.test(msg)) setNoConfig(true)
@@ -5672,18 +5680,12 @@ function CampaignSettingsPanel() {
     setRunning(true)
     setRunSteps([])
     try {
-      await streamDistribution(campaignId, (ev) => {
-        if (ev.type === "step") {
-          setRunSteps((prev) => applyRunEvent(prev, ev))
-        } else if (ev.type === "done") {
-          const now = new Date().toISOString().slice(0, 16).replace("T", " ")
-          setLastRunAt(now)
-          setLastRunStatus(ev.error || !ev.ok ? "Error" : "Success")
-          if (ev.error) toast.error(ev.error)
-          else if (ev.ok) toast.success(`Distribution complete — ${ev.ran} step(s) ran`)
-          else toast.error("Distribution failed — see steps below")
-        }
-      })
+      const res = await runDistributionStepwise(campaignId, setRunSteps)
+      const now = new Date().toISOString().slice(0, 16).replace("T", " ")
+      setLastRunAt(now)
+      setLastRunStatus(res.ok ? "Success" : "Error")
+      if (res.ok) toast.success(`Distribution complete — ${res.ran} step(s) ran`)
+      else toast.error("Distribution failed — see steps below")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
