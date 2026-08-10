@@ -246,9 +246,32 @@ export async function executeSnowflakeQueryWithMeta(
     body: JSON.stringify(body),
   })
 
-  const text = await response.text()
-  if (!response.ok) {
+  let text = await response.text()
+  if (!response.ok && response.status !== 202) {
     throw new Error(`Snowflake query failed (${response.status}): ${text}`)
+  }
+
+  // 202 = the statement ran past the SQL API's synchronous wait and is still
+  // executing. We MUST poll to completion before returning — otherwise a slow
+  // statement (e.g. a CALL that populates a table) returns empty/early and the
+  // next statement runs against stale data. Poll the handle until it's done.
+  if (response.status === 202) {
+    const accepted = JSON.parse(text) as { statementHandle?: string; statementHandles?: string[] }
+    const handle = accepted.statementHandle ?? accepted.statementHandles?.[0]
+    if (!handle) throw new Error(`Snowflake returned 202 without a statement handle: ${text}`)
+    const pollUrl = `${statementsUrl}/${encodeURIComponent(handle)}`
+    const deadline = Date.now() + 280_000 // stay under the 300s route budget
+    for (;;) {
+      if (Date.now() > deadline) {
+        throw new Error("Snowflake statement is still running after 280s — it may need to run as a background job.")
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+      const poll = await fetch(pollUrl, { method: "GET", headers })
+      if (poll.status === 202) continue // still running
+      text = await poll.text()
+      if (!poll.ok) throw new Error(`Snowflake query failed (${poll.status}): ${text}`)
+      break // completed (200) — `text` now holds the final result body
+    }
   }
 
   const parsed = JSON.parse(text) as {
