@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus, normProcKind } from "../route"
+import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus, normProcKind, normSourceKind, validateMapping } from "../route"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -40,6 +40,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.campaignId !== undefined) sets.push(`CAMPAIGN_ID = ${sqlNullable(body.campaignId)}`)
   if (body.campaignTitle !== undefined) sets.push(`CAMPAIGN_TITLE = ${sqlNullable(body.campaignTitle)}`)
   if (body.procKind !== undefined) sets.push(`PROC_KIND = ${sqlStr(normProcKind(body.procKind))}`)
+  if (body.sourceKind !== undefined) sets.push(`SOURCE_KIND = ${sqlStr(normSourceKind(body.sourceKind))}`)
+  if (body.sourceObject !== undefined) sets.push(`SOURCE_OBJECT = ${sqlNullable(body.sourceObject)}`)
+  if (body.sourceTable !== undefined) sets.push(`SOURCE_TABLE = ${sqlNullable(body.sourceTable)}`)
+  if (body.mapping !== undefined) { const m = validateMapping(body.mapping); sets.push(`MAPPING_JSON = ${m ? sqlStr(m) : "NULL"}`) }
   if (sets.length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
   sets.push("UPDATED_AT = CURRENT_TIMESTAMP()")
 

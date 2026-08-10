@@ -1920,6 +1920,10 @@ type AutomationTask = {
   CAMPAIGN_ID: string | null
   CAMPAIGN_TITLE: string | null
   PROC_KIND: string | null
+  SOURCE_KIND: string | null
+  SOURCE_OBJECT: string | null
+  SOURCE_TABLE: string | null
+  MAPPING_JSON: string | null
   LAST_RUN_AT: string | null
   LAST_RUN_STATUS: string | null
   LAST_RUN_MESSAGE: string | null
@@ -1928,6 +1932,12 @@ type AutomationTask = {
   UPDATED_AT: string | null
 }
 type ConfiguredCampaign = { id: string; title: string }
+type ColInfo = { name: string; type: string }
+const SOURCE_KIND_OPTIONS: { value: string; label: string }[] = [
+  { value: "none", label: "— No lead source —" },
+  { value: "proc", label: "Stored procedure → table" },
+  { value: "view", label: "View (read directly)" },
+]
 const TASK_TYPES = ["CRM", "Dialling", "Custom"]
 const TASK_STATUSES = ["Draft", "Active", "Paused", "Completed"]
 const PROC_KIND_OPTIONS: { value: string; label: string }[] = [
@@ -1938,8 +1948,8 @@ const PROC_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "full", label: "Full run (all configured)" },
 ]
 const procKindLabel = (k: string | null) => PROC_KIND_OPTIONS.find((o) => o.value === (k ?? "none"))?.label ?? "—"
-type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string }
-const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none" }
+type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string; sourceKind: string; sourceObject: string; sourceTable: string; mapping: Record<string, string> }
+const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none", sourceKind: "none", sourceObject: "", sourceTable: "", mapping: {} }
 
 function taskStatusClass(s: string): string {
   switch (s) {
@@ -1960,6 +1970,50 @@ function AutomationContent() {
   const [deleteTask, setDeleteTask] = useState<AutomationTask | null>(null)
   const [campaigns, setCampaigns] = useState<ConfiguredCampaign[]>([])
   const [runningId, setRunningId] = useState<string | number | null>(null)
+  const [hllCols, setHllCols] = useState<ColInfo[]>([])
+  const [srcCols, setSrcCols] = useState<ColInfo[]>([])
+  const [colsLoading, setColsLoading] = useState(false)
+  const [colsMsg, setColsMsg] = useState<string | null>(null)
+
+  // Load HLL + source columns for the mapping UI, auto-matching by name.
+  const loadColumns = async () => {
+    const readFrom = form.sourceKind === "proc" ? form.sourceTable.trim() : form.sourceObject.trim()
+    if (!readFrom) { setColsMsg(form.sourceKind === "proc" ? "Enter the proc's output table first." : "Enter the view name first."); return }
+    setColsLoading(true); setColsMsg(null)
+    try {
+      const [hllRes, srcRes] = await Promise.all([
+        fetch("/api/distribution/columns?object=hll").then((r) => r.json()),
+        fetch(`/api/distribution/columns?object=${encodeURIComponent(readFrom)}`).then((r) => r.json()),
+      ])
+      if (hllRes.error) throw new Error(`HLL: ${hllRes.error}`)
+      if (srcRes.error) throw new Error(`Source: ${srcRes.error}`)
+      const hll: ColInfo[] = hllRes.columns ?? []
+      const src: ColInfo[] = srcRes.columns ?? []
+      if (!src.length) throw new Error("No columns found on the source (check the name / grants).")
+      setHllCols(hll); setSrcCols(src)
+      // Auto-match by identical column name (case-insensitive), keeping any existing mapping.
+      setForm((f) => {
+        const m = { ...f.mapping }
+        for (const h of hll) {
+          if (m[h.name]) continue
+          const hit = src.find((s) => s.name.toLowerCase() === h.name.toLowerCase())
+          if (hit) m[h.name] = hit.name
+        }
+        return { ...f, mapping: m }
+      })
+    } catch (e) {
+      setColsMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setColsLoading(false)
+    }
+  }
+  const setMap = (hllCol: string, srcCol: string) =>
+    setForm((f) => {
+      const m = { ...f.mapping }
+      if (srcCol === "__none__") delete m[hllCol]
+      else m[hllCol] = srcCol
+      return { ...f, mapping: m }
+    })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -2006,7 +2060,10 @@ function AutomationContent() {
 
   const openNew = (type = "Custom") => { setForm({ ...EMPTY_FORM, type }); setEditing("new") }
   const openEdit = (t: AutomationTask) => {
-    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none" })
+    let mapping: Record<string, string> = {}
+    try { mapping = t.MAPPING_JSON ? JSON.parse(t.MAPPING_JSON) : {} } catch { mapping = {} }
+    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none", sourceKind: t.SOURCE_KIND ?? "none", sourceObject: t.SOURCE_OBJECT ?? "", sourceTable: t.SOURCE_TABLE ?? "", mapping })
+    setHllCols([]); setSrcCols([]); setColsMsg(null)
     setEditing(t)
   }
   const setF = (k: keyof TaskForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -2150,6 +2207,85 @@ function AutomationContent() {
               Save it, then use <span className="font-medium text-foreground">Run now</span> in the table below (or a scheduled trigger) to load leads.
             </p>
           )}
+
+          {/* Lead source → HLL */}
+          <div className="mt-5 rounded-lg border border-border/70 bg-background/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-foreground">Lead source → HLL</h4>
+                <p className="text-xs text-muted-foreground">Run a proc (then read its table) or a view, and map the columns into <span className="font-mono">TM_HLL_HISTORYLEADSLOADED</span> (append).</p>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              <div>
+                <Label>Source type</Label>
+                <Select value={form.sourceKind} onValueChange={(v) => { setF("sourceKind", v); setHllCols([]); setSrcCols([]); setColsMsg(null) }}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SOURCE_KIND_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              {form.sourceKind !== "none" && (
+                <div>
+                  <Label htmlFor="src-obj">{form.sourceKind === "proc" ? "Stored procedure" : "View"} (DB.SCHEMA.NAME)</Label>
+                  <Input id="src-obj" className="mt-1 font-mono text-xs" value={form.sourceObject} onChange={(e) => setF("sourceObject", e.target.value)} placeholder="DATAWAREHOUSE.SCHEMA.NAME" />
+                </div>
+              )}
+              {form.sourceKind === "proc" && (
+                <div>
+                  <Label htmlFor="src-tbl">Output table to read (DB.SCHEMA.TABLE)</Label>
+                  <Input id="src-tbl" className="mt-1 font-mono text-xs" value={form.sourceTable} onChange={(e) => setF("sourceTable", e.target.value)} placeholder="DATAWAREHOUSE.SCHEMA.TABLE" />
+                </div>
+              )}
+            </div>
+
+            {form.sourceKind !== "none" && (
+              <div className="mt-4">
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" size="sm" onClick={loadColumns} disabled={colsLoading}>
+                    {colsLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading columns…</> : <>Load columns &amp; map</>}
+                  </Button>
+                  {Object.keys(form.mapping).length > 0 && <span className="text-xs text-muted-foreground">{Object.keys(form.mapping).length} column(s) mapped</span>}
+                </div>
+                {colsMsg && <p className="mt-2 text-xs text-rose-400">{colsMsg}</p>}
+
+                {hllCols.length > 0 && (
+                  <div className="mt-3 max-h-72 overflow-auto rounded-md border border-border">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-card">
+                        <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                          <th className="px-3 py-2 font-medium">HLL column</th>
+                          <th className="px-3 py-2 font-medium">Source column</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hllCols.map((h) => (
+                          <tr key={h.name} className="border-t border-border/50">
+                            <td className="px-3 py-1.5">
+                              <span className="font-mono text-xs text-foreground">{h.name}</span>
+                              <span className="ml-2 text-[10px] text-muted-foreground">{h.type}</span>
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <Select value={form.mapping[h.name] ?? "__none__"} onValueChange={(v) => setMap(h.name, v)}>
+                                <SelectTrigger className="h-8 w-full"><SelectValue placeholder="— skip —" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">— skip —</SelectItem>
+                                  {srcCols.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {Object.keys(form.mapping).length > 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">On <span className="font-medium text-foreground">Run now</span>, the mapped columns are inserted into the HLL table (append).</p>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="mt-4 flex justify-end">
             <Button onClick={save} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : editing === "new" ? "Create task" : "Save changes"}
@@ -2206,12 +2342,12 @@ function AutomationContent() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {t.CAMPAIGN_ID && t.PROC_KIND && t.PROC_KIND !== "none" && (
+                        {((t.CAMPAIGN_ID && t.PROC_KIND && t.PROC_KIND !== "none") || t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view") && (
                           <Button
                             variant="ghost" size="icon" className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
                             onClick={() => runNow(t)} disabled={runningId === t.ID}
                             aria-label="Run now"
-                            title={`Run ${procKindLabel(t.PROC_KIND)} for ${t.CAMPAIGN_TITLE ?? "campaign"}`}
+                            title={t.SOURCE_KIND === "proc" || t.SOURCE_KIND === "view" ? "Run source → HLL" : `Run ${procKindLabel(t.PROC_KIND)} for ${t.CAMPAIGN_TITLE ?? "campaign"}`}
                           >
                             {runningId === t.ID ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
                           </Button>

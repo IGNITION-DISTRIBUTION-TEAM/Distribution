@@ -21,6 +21,30 @@ export function normProcKind(raw: unknown): string {
   return (PROC_KINDS as readonly string[]).includes(s) ? s : "none"
 }
 
+// Lead-source → HLL model: a task's source is either a stored proc (which fills
+// a table we then read) or a view (read directly), mapped into the HLL table.
+export const SOURCE_KINDS = ["none", "proc", "view"] as const
+export function normSourceKind(raw: unknown): string {
+  const s = String(raw ?? "").trim()
+  return (SOURCE_KINDS as readonly string[]).includes(s) ? s : "none"
+}
+export const IDENT_COL = /^[A-Za-z0-9_]+$/
+// Validate a { hllColumn: sourceColumn } mapping; returns a JSON string or null.
+export function validateMapping(raw: unknown): string | null {
+  if (raw == null || typeof raw !== "object") return null
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const src = typeof v === "string" ? v.trim() : ""
+    if (!src) continue
+    if (!IDENT_COL.test(k) || !IDENT_COL.test(src)) continue
+    out[k] = src
+  }
+  const keys = Object.keys(out)
+  if (keys.length === 0) return null
+  if (keys.length > 500) return null
+  return JSON.stringify(out)
+}
+
 export type TaskRow = {
   ID: number | string
   NAME: string
@@ -32,6 +56,10 @@ export type TaskRow = {
   CAMPAIGN_ID: string | null
   CAMPAIGN_TITLE: string | null
   PROC_KIND: string | null
+  SOURCE_KIND: string | null
+  SOURCE_OBJECT: string | null
+  SOURCE_TABLE: string | null
+  MAPPING_JSON: string | null
   LAST_RUN_AT: string | null
   LAST_RUN_STATUS: string | null
   LAST_RUN_MESSAGE: string | null
@@ -71,6 +99,7 @@ export async function ensureTable(): Promise<void> {
        NAME VARCHAR, DESCRIPTION VARCHAR, TASK_TYPE VARCHAR, TARGET VARCHAR,
        STATUS VARCHAR, SCHEDULE VARCHAR,
        CAMPAIGN_ID VARCHAR, CAMPAIGN_TITLE VARCHAR, PROC_KIND VARCHAR,
+       SOURCE_KIND VARCHAR, SOURCE_OBJECT VARCHAR, SOURCE_TABLE VARCHAR, MAPPING_JSON VARCHAR,
        LAST_RUN_AT TIMESTAMP_NTZ, LAST_RUN_STATUS VARCHAR, LAST_RUN_MESSAGE VARCHAR,
        CREATED_BY VARCHAR,
        CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -81,6 +110,7 @@ export async function ensureTable(): Promise<void> {
   // Upgrade tables created before the campaign/run columns existed.
   const addCols = [
     "CAMPAIGN_ID VARCHAR", "CAMPAIGN_TITLE VARCHAR", "PROC_KIND VARCHAR",
+    "SOURCE_KIND VARCHAR", "SOURCE_OBJECT VARCHAR", "SOURCE_TABLE VARCHAR", "MAPPING_JSON VARCHAR",
     "LAST_RUN_AT TIMESTAMP_NTZ", "LAST_RUN_STATUS VARCHAR", "LAST_RUN_MESSAGE VARCHAR",
   ]
   for (const col of addCols) {
@@ -101,6 +131,7 @@ export async function GET(request: NextRequest) {
     const rows = await executeSnowflakeQuery<TaskRow>(
       `SELECT ID, NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE,
               CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
+              SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON,
               TO_VARCHAR(LAST_RUN_AT, 'YYYY-MM-DD HH24:MI') AS LAST_RUN_AT,
               LAST_RUN_STATUS, LAST_RUN_MESSAGE, CREATED_BY,
               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
@@ -131,12 +162,15 @@ export async function POST(request: NextRequest) {
 
   try {
     await ensureTable()
+    const mapping = validateMapping(body.mapping)
     await executeSnowflakeQuery(
-      `INSERT INTO ${TABLE} (NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE, CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND, CREATED_BY)
+      `INSERT INTO ${TABLE} (NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE, CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
+                             SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, CREATED_BY)
        VALUES (${sqlStr(name)}, ${sqlNullable(body.description)}, ${sqlStr(normType(body.type))},
                ${sqlNullable(body.target)}, ${sqlStr(normStatus(body.status))}, ${sqlNullable(body.schedule)},
                ${sqlNullable(body.campaignId)}, ${sqlNullable(body.campaignTitle)}, ${sqlStr(normProcKind(body.procKind))},
-               ${sqlStr(guard.email)})`,
+               ${sqlStr(normSourceKind(body.sourceKind))}, ${sqlNullable(body.sourceObject)}, ${sqlNullable(body.sourceTable)},
+               ${mapping ? sqlStr(mapping) : "NULL"}, ${sqlStr(guard.email)})`,
       SF_OPTS
     )
     return NextResponse.json({ ok: true })

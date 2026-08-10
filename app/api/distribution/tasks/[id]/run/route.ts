@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { TABLE, SF_OPTS, sqlStr } from "../../route"
+import { TABLE, SF_OPTS, sqlStr, IDENT_COL } from "../../route"
 import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
+
+const HLL_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -31,23 +33,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const taskId = parseId(id)
   if (taskId === null) return NextResponse.json({ error: "Invalid task id" }, { status: 400 })
 
-  // Read the task's campaign + proc kind.
-  let campaignId: string | null = null
-  let procKind = "none"
+  // Read the task's source / campaign config.
+  let task: { CAMPAIGN_ID: string | null; PROC_KIND: string | null; SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null }
   try {
-    const rows = await executeSnowflakeQuery<{ CAMPAIGN_ID: string | null; PROC_KIND: string | null }>(
-      `SELECT CAMPAIGN_ID, PROC_KIND FROM ${TABLE} WHERE ID = ${taskId}`,
+    const rows = await executeSnowflakeQuery<typeof task>(
+      `SELECT CAMPAIGN_ID, PROC_KIND, SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON FROM ${TABLE} WHERE ID = ${taskId}`,
       SF_OPTS
     )
     if (!rows.length) return NextResponse.json({ error: "Task not found" }, { status: 404 })
-    campaignId = rows[0].CAMPAIGN_ID?.trim() || null
-    procKind = (rows[0].PROC_KIND ?? "none").trim() || "none"
+    task = rows[0]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 
-  if (!campaignId) return NextResponse.json({ error: "This task isn't linked to a campaign. Set a campaign and procedure first." }, { status: 400 })
+  // Preferred path: lead-source → HLL (proc-fills-table or view), mapped.
+  const sourceKind = (task.SOURCE_KIND ?? "none").trim()
+  if (sourceKind === "proc" || sourceKind === "view") {
+    return runSourceToHll(taskId, task)
+  }
+
+  const campaignId = task.CAMPAIGN_ID?.trim() || null
+  const procKind = (task.PROC_KIND ?? "none").trim() || "none"
+  if (!campaignId) return NextResponse.json({ error: "This task isn't linked to a campaign or a lead source. Set one first." }, { status: 400 })
   if (procKind === "none") return NextResponse.json({ error: "This task has no procedure selected." }, { status: 400 })
   if (!/^[0-9]+$/.test(campaignId)) return NextResponse.json({ error: "Invalid campaign id on task" }, { status: 400 })
 
@@ -99,6 +107,70 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const okMsg = `Ran ${done.length} procedure(s): ${done.join(", ")}`
   await recordRun(taskId, "Success", okMsg)
   return NextResponse.json({ ok: true, ran: done, message: okMsg })
+}
+
+// Lead source → HLL: (proc) CALL then read its table; (view) read directly;
+// then INSERT the mapped columns into the fixed HLL table (append).
+async function runSourceToHll(
+  taskId: number,
+  task: { SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null }
+): Promise<NextResponse> {
+  const kind = (task.SOURCE_KIND ?? "").trim()
+  const object = (task.SOURCE_OBJECT ?? "").trim()
+  const sourceTable = (task.SOURCE_TABLE ?? "").trim()
+
+  if (!object || !QUALIFIED.test(object)) {
+    await recordRun(taskId, "Error", `Source object is not a valid DATABASE.SCHEMA.NAME: ${object || "(empty)"}`)
+    return NextResponse.json({ error: "Source object must be DATABASE.SCHEMA.NAME." }, { status: 400 })
+  }
+  // What we SELECT from: the proc's output table, or the view itself.
+  const readFrom = kind === "proc" ? sourceTable : object
+  if (kind === "proc" && (!sourceTable || !QUALIFIED.test(sourceTable))) {
+    await recordRun(taskId, "Error", `Source table (for the proc's output) must be DATABASE.SCHEMA.TABLE: ${sourceTable || "(empty)"}`)
+    return NextResponse.json({ error: "For a proc source, set the output table to read from." }, { status: 400 })
+  }
+
+  // Parse + validate the mapping { hllColumn: sourceColumn }.
+  let mapping: Record<string, string>
+  try {
+    mapping = JSON.parse(task.MAPPING_JSON ?? "{}")
+  } catch {
+    mapping = {}
+  }
+  const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s))
+  if (pairs.length === 0) {
+    await recordRun(taskId, "Error", "No column mapping is set for this source.")
+    return NextResponse.json({ error: "Map at least one source column to an HLL column first." }, { status: 400 })
+  }
+
+  try {
+    // 1. If proc, run it to (re)populate its output table.
+    if (kind === "proc") {
+      const [db, schema] = object.split(".")
+      await executeSnowflakeQuery(`CALL ${object}()`, { database: db, schema })
+    }
+    // 2. Append mapped rows into HLL.
+    const hllCols = pairs.map(([h]) => h).join(", ")
+    const srcCols = pairs.map(([, s]) => s).join(", ")
+    await executeSnowflakeQuery(
+      `INSERT INTO ${HLL_TABLE} (${hllCols}) SELECT ${srcCols} FROM ${readFrom}`,
+      { database: HLL_TABLE.split(".")[0], schema: HLL_TABLE.split(".")[1] }
+    )
+    // 3. How many rows landed (best-effort count of the source).
+    let loaded = ""
+    try {
+      const [dbR, schR] = readFrom.split(".")
+      const cnt = await executeSnowflakeQuery<{ N: number | string }>(`SELECT COUNT(*) AS N FROM ${readFrom}`, { database: dbR, schema: schR })
+      loaded = ` (${Number(cnt[0]?.N ?? 0).toLocaleString()} source rows)`
+    } catch { /* count is best-effort */ }
+    const msg = `Loaded ${kind === "proc" ? `${object} → ${readFrom}` : object} into HLL${loaded}`
+    await recordRun(taskId, "Success", msg)
+    return NextResponse.json({ ok: true, message: msg })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    await recordRun(taskId, "Error", `Source→HLL failed: ${message}`)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 }
 
 async function recordRun(taskId: number, status: string, message: string): Promise<void> {
