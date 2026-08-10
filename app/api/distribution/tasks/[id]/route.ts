@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus } from "../route"
+import { TABLE, SF_OPTS, sqlStr, sqlNullable, validateName, normType, normStatus, normProcKind } from "../route"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -37,6 +37,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.target !== undefined) sets.push(`TARGET = ${sqlNullable(body.target)}`)
   if (body.status !== undefined) sets.push(`STATUS = ${sqlStr(normStatus(body.status))}`)
   if (body.schedule !== undefined) sets.push(`SCHEDULE = ${sqlNullable(body.schedule)}`)
+  if (body.campaignId !== undefined) sets.push(`CAMPAIGN_ID = ${sqlNullable(body.campaignId)}`)
+  if (body.campaignTitle !== undefined) sets.push(`CAMPAIGN_TITLE = ${sqlNullable(body.campaignTitle)}`)
+  if (body.procKind !== undefined) sets.push(`PROC_KIND = ${sqlStr(normProcKind(body.procKind))}`)
   if (sets.length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
   sets.push("UPDATED_AT = CURRENT_TIMESTAMP()")
 

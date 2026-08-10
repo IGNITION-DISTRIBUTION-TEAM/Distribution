@@ -1917,14 +1917,29 @@ type AutomationTask = {
   TARGET: string | null
   STATUS: string
   SCHEDULE: string | null
+  CAMPAIGN_ID: string | null
+  CAMPAIGN_TITLE: string | null
+  PROC_KIND: string | null
+  LAST_RUN_AT: string | null
+  LAST_RUN_STATUS: string | null
+  LAST_RUN_MESSAGE: string | null
   CREATED_BY: string | null
   CREATED_AT: string | null
   UPDATED_AT: string | null
 }
+type ConfiguredCampaign = { id: string; title: string }
 const TASK_TYPES = ["CRM", "Dialling", "Custom"]
 const TASK_STATUSES = ["Draft", "Active", "Paused", "Completed"]
-type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string }
-const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "" }
+const PROC_KIND_OPTIONS: { value: string; label: string }[] = [
+  { value: "none", label: "— No procedure —" },
+  { value: "load_history", label: "Load into history" },
+  { value: "update_hll", label: "Update HLL" },
+  { value: "sync", label: "Sync leads" },
+  { value: "full", label: "Full run (all configured)" },
+]
+const procKindLabel = (k: string | null) => PROC_KIND_OPTIONS.find((o) => o.value === (k ?? "none"))?.label ?? "—"
+type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string }
+const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none" }
 
 function taskStatusClass(s: string): string {
   switch (s) {
@@ -1943,6 +1958,8 @@ function AutomationContent() {
   const [form, setForm] = useState<TaskForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [deleteTask, setDeleteTask] = useState<AutomationTask | null>(null)
+  const [campaigns, setCampaigns] = useState<ConfiguredCampaign[]>([])
+  const [runningId, setRunningId] = useState<string | number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1960,9 +1977,36 @@ function AutomationContent() {
   }, [])
   useEffect(() => { load() }, [load])
 
+  // Campaigns that have automation config (with procedures) — for the picker.
+  useEffect(() => {
+    fetch("/api/campaign-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const rows: Record<string, unknown>[] = d?.rows ?? []
+        setCampaigns(rows.map((r) => ({ id: String(r.CAMPAIGNID), title: String(r.CAMPAIGN_TITLE ?? `Campaign ${r.CAMPAIGNID}`) })))
+      })
+      .catch(() => {})
+  }, [])
+
+  const runNow = async (t: AutomationTask) => {
+    setRunningId(t.ID)
+    try {
+      const r = await fetch(`/api/distribution/tasks/${t.ID}/run`, { method: "POST" })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Run failed (${r.status})`)
+      toast.success(d.message || "Procedure(s) ran successfully")
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+      load()
+    } finally {
+      setRunningId(null)
+    }
+  }
+
   const openNew = (type = "Custom") => { setForm({ ...EMPTY_FORM, type }); setEditing("new") }
   const openEdit = (t: AutomationTask) => {
-    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "" })
+    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none" })
     setEditing(t)
   }
   const setF = (k: keyof TaskForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -2072,11 +2116,40 @@ function AutomationContent() {
               <Label htmlFor="task-schedule">Schedule</Label>
               <Input id="task-schedule" className="mt-1" value={form.schedule} onChange={(e) => setF("schedule", e.target.value)} placeholder="e.g. Real-time, Daily 08:00" />
             </div>
+            <div>
+              <Label>Campaign</Label>
+              <Select
+                value={form.campaignId || "none"}
+                onValueChange={(v) => {
+                  if (v === "none") setForm((f) => ({ ...f, campaignId: "", campaignTitle: "" }))
+                  else setForm((f) => ({ ...f, campaignId: v, campaignTitle: campaigns.find((c) => c.id === v)?.title ?? "" }))
+                }}
+              >
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Link a campaign…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— No campaign —</SelectItem>
+                  {campaigns.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Procedure to run</Label>
+              <Select value={form.procKind} onValueChange={(v) => setF("procKind", v)}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{PROC_KIND_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
             <div className="md:col-span-2">
               <Label htmlFor="task-desc">Description</Label>
               <Textarea id="task-desc" className="mt-1" value={form.description} onChange={(e) => setF("description", e.target.value)} placeholder="What this automation does…" rows={3} />
             </div>
           </div>
+          {form.campaignId && form.procKind !== "none" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              This task runs the campaign&apos;s configured <span className="font-medium text-foreground">{procKindLabel(form.procKind)}</span> procedure(s).
+              Save it, then use <span className="font-medium text-foreground">Run now</span> in the table below (or a scheduled trigger) to load leads.
+            </p>
+          )}
           <div className="mt-4 flex justify-end">
             <Button onClick={save} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : editing === "new" ? "Create task" : "Save changes"}
@@ -2106,7 +2179,7 @@ function AutomationContent() {
                   <TableHead>Target</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Schedule</TableHead>
-                  <TableHead>Updated</TableHead>
+                  <TableHead>Last run</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -2121,9 +2194,28 @@ function AutomationContent() {
                     <TableCell className="text-muted-foreground">{t.TARGET || "—"}</TableCell>
                     <TableCell><Badge variant="outline" className={taskStatusClass(t.STATUS)}>{t.STATUS}</Badge></TableCell>
                     <TableCell className="text-muted-foreground">{t.SCHEDULE || "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{t.UPDATED_AT || t.CREATED_AT || "—"}</TableCell>
+                    <TableCell className="text-xs">
+                      {t.LAST_RUN_AT ? (
+                        <div className="flex flex-col gap-0.5" title={t.LAST_RUN_MESSAGE ?? undefined}>
+                          <span className={t.LAST_RUN_STATUS === "Success" ? "font-medium text-emerald-400" : "font-medium text-rose-400"}>{t.LAST_RUN_STATUS ?? "—"}</span>
+                          <span className="text-muted-foreground">{t.LAST_RUN_AT}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Never</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        {t.CAMPAIGN_ID && t.PROC_KIND && t.PROC_KIND !== "none" && (
+                          <Button
+                            variant="ghost" size="icon" className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
+                            onClick={() => runNow(t)} disabled={runningId === t.ID}
+                            aria-label="Run now"
+                            title={`Run ${procKindLabel(t.PROC_KIND)} for ${t.CAMPAIGN_TITLE ?? "campaign"}`}
+                          >
+                            {runningId === t.ID ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(t)} aria-label="Edit"><Pencil className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-400 hover:text-rose-300" onClick={() => setDeleteTask(t)} aria-label="Delete"><Trash2 className="h-4 w-4" /></Button>
                       </div>
