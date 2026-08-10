@@ -169,6 +169,40 @@ export async function GET() {
   }
 }
 
+// Every column the upsert touches, with its type. Used to create the table
+// if absent and to add any missing columns to a pre-existing/partial table.
+const CONFIG_COLUMNS: [string, string][] = [
+  ["CAMPAIGNID", "NUMBER"],
+  ["CAMPAIGN_TITLE", "VARCHAR"],
+  ["SFTP_HOST", "VARCHAR"], ["SFTP_PORT", "NUMBER"], ["SFTP_USERNAME", "VARCHAR"],
+  ["SFTP_PASSWORD", "VARCHAR"], ["SFTP_PRIVATE_KEY", "VARCHAR"], ["SFTP_REMOTE_PATH", "VARCHAR"],
+  ["SFTP_AUTH_TYPE", "VARCHAR"], ["UPLOAD_TARGET_TABLE", "VARCHAR"],
+  ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
+  ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
+  ["IS_ACTIVE", "BOOLEAN"],
+  ["CREATED_BY", "VARCHAR"], ["CREATED_AT", "TIMESTAMP_NTZ"],
+  ["UPDATED_BY", "VARCHAR"], ["UPDATED_AT", "TIMESTAMP_NTZ"],
+]
+
+async function ensureConfigColumns(): Promise<void> {
+  await executeSnowflakeQuery(
+    `CREATE TABLE IF NOT EXISTS ${TABLE} (${CONFIG_COLUMNS.map(([n, t]) => `${n} ${t}`).join(", ")})`,
+    SF_OPTS
+  )
+  const existing = await executeSnowflakeQuery<{ COLUMN_NAME: string }>(
+    `SELECT COLUMN_NAME FROM DATAWAREHOUSE.INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = 'LEADS_DISTRIBUTION' AND TABLE_NAME = 'TSK_CAMPAIGN_AUTOMATION_CONFIG'`,
+    SF_OPTS
+  )
+  const have = new Set(existing.map((r) => String(r.COLUMN_NAME).toUpperCase()))
+  for (const [name, type] of CONFIG_COLUMNS) {
+    if (name === "CAMPAIGNID") continue // the key column must already exist
+    if (!have.has(name)) {
+      await executeSnowflakeQuery(`ALTER TABLE ${TABLE} ADD COLUMN ${name} ${type}`, SF_OPTS)
+    }
+  }
+}
+
 // Upsert (insert or update) a campaign's config row, keyed by CAMPAIGNID.
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>
@@ -205,13 +239,15 @@ export async function POST(request: NextRequest) {
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
 
-  // Add the Step-1 source columns to pre-existing config tables.
-  for (const col of ["SOURCE_KIND VARCHAR", "SOURCE_OBJECT VARCHAR", "SOURCE_MAPPING_JSON VARCHAR"]) {
-    try {
-      await executeSnowflakeQuery(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS ${col}`, SF_OPTS)
-    } catch {
-      /* already present */
-    }
+  // Make sure the table has every column the upsert writes to — older/partial
+  // config tables can be missing some (e.g. UPDATE_HLL_PROCEDURE, SOURCE_*),
+  // which makes the MERGE fail to compile. Add any that are absent.
+  try {
+    await ensureConfigColumns()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("[/api/campaign-config POST] ensureConfigColumns error:", message)
+    return NextResponse.json({ error: `Could not prepare the config table: ${message}` }, { status: 500 })
   }
 
   const updateSet = [
