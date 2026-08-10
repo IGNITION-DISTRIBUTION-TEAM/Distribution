@@ -69,11 +69,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Read the campaign's stored config.
   let config: RunConfig
   try {
+    // SELECT * so a partial config table (missing columns the app role can't
+    // add) still reads — missing fields come back undefined and are treated as
+    // unset (step skipped / defaults) rather than crashing the whole run.
     const rows = await executeSnowflakeQuery<RunConfig>(
-      `SELECT SOURCE_KIND, SOURCE_OBJECT, SOURCE_MAPPING_JSON, UPLOAD_TARGET_TABLE,
-              LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE,
-              LEAD_EXPIRY_DAYS, BATCH_NAME_TEMPLATE, IS_ACTIVE
-       FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${campaignId}`,
+      `SELECT * FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${campaignId}`,
       CONFIG_SF_OPTS
     )
     if (!rows.length) return NextResponse.json({ error: "No campaign config found for this campaign." }, { status: 400 })
@@ -83,7 +83,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: `Failed to read campaign config: ${message}` }, { status: 500 })
   }
 
-  const isActive = config.IS_ACTIVE === true || String(config.IS_ACTIVE).toUpperCase() === "TRUE"
+  // Missing IS_ACTIVE column (undefined) → treat as active; only an explicit FALSE blocks.
+  const isActive = config.IS_ACTIVE == null ? true : (config.IS_ACTIVE === true || String(config.IS_ACTIVE).toUpperCase() === "TRUE")
   if (!isActive) {
     return NextResponse.json({ error: "This campaign's config is inactive. Activate it before running." }, { status: 400 })
   }
