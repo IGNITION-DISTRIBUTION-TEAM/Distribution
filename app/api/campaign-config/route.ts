@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
-import { normLeadExpiryDays } from "@/lib/hll-insert"
+import { normLeadExpiryDays, batchNameSql, DEFAULT_BATCH_TEMPLATE } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 
@@ -47,6 +47,7 @@ export type CampaignConfigInput = {
   sourceObject?: string
   sourceMappingJson?: string | null
   leadExpiryDays?: number
+  batchNameTemplate?: string
   isActive?: boolean
 }
 
@@ -124,6 +125,13 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
   const sourceMappingJson = validateSourceMapping(body.sourceMapping)
   const leadExpiryDays = normLeadExpiryDays(body.leadExpiryDays)
 
+  // Batch-name template: default when empty; reject anything that doesn't
+  // compile to a safe expression.
+  const batchNameTemplate = body.batchNameTemplate ? String(body.batchNameTemplate).trim() : DEFAULT_BATCH_TEMPLATE
+  if (batchNameSql(batchNameTemplate) === null) {
+    return { error: "Batch name is invalid. Use letters, digits, _ . - and the token {date}, e.g. BATCH_ONAIR_ULTRA5{date}" }
+  }
+
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
 
   return {
@@ -133,6 +141,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sourceObject,
     sourceMappingJson,
     leadExpiryDays,
+    batchNameTemplate,
     sftpHost: str(body.sftpHost),
     sftpPort,
     sftpUsername: str(body.sftpUsername),
@@ -184,6 +193,7 @@ const CONFIG_COLUMNS: [string, string][] = [
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
   ["LEAD_EXPIRY_DAYS", "NUMBER"],
+  ["BATCH_NAME_TEMPLATE", "VARCHAR"],
   ["IS_ACTIVE", "BOOLEAN"],
   // Last full-distribution run outcome (set by the campaign run orchestrator).
   ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
@@ -282,6 +292,7 @@ export async function POST(request: NextRequest) {
     ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
     ["SOURCE_MAPPING_JSON", parsed.sourceMappingJson ? sqlStr(parsed.sourceMappingJson) : "NULL"],
     ["LEAD_EXPIRY_DAYS", String(parsed.leadExpiryDays ?? 45)],
+    ["BATCH_NAME_TEMPLATE", sqlStr(parsed.batchNameTemplate ?? DEFAULT_BATCH_TEMPLATE)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
 

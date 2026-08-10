@@ -5290,6 +5290,7 @@ type CampaignConfig = {
   SOURCE_OBJECT?: string | null
   SOURCE_MAPPING_JSON?: string | null
   LEAD_EXPIRY_DAYS?: number | string | null
+  BATCH_NAME_TEMPLATE?: string | null
   IS_ACTIVE?: boolean | null
   LAST_RUN_AT?: string | null
   LAST_RUN_STATUS?: string | null
@@ -5324,6 +5325,8 @@ function CampaignSettingsPanel() {
   const [sourceMapping, setSourceMapping] = useState<Record<string, string>>({})
   // Lead expiry: LEADEXPIRY = today + this many days (default 45).
   const [leadExpiryDays, setLeadExpiryDays] = useState("45")
+  // Batch name template: {date} → today as YYYYMMDD. Editable per campaign.
+  const [batchTemplate, setBatchTemplate] = useState("BATCH_ONAIR_ULTRA5{date}")
   const [hllCols, setHllCols] = useState<{ name: string; type: string }[]>([])
   const [viewCols, setViewCols] = useState<{ name: string; type: string }[]>([])
   const [colsLoading, setColsLoading] = useState(false)
@@ -5356,7 +5359,7 @@ function CampaignSettingsPanel() {
         const next = { ...m }
         // These HLL columns are auto-filled (campaign id / today / today+N) —
         // never map them from a source column (drop any stale entries too).
-        const AUTO = ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY"]
+        const AUTO = ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]
         for (const a of AUTO) delete next[a]
         for (const hcol of hc) {
           if (AUTO.includes(hcol.name.toUpperCase())) continue
@@ -5445,6 +5448,7 @@ function CampaignSettingsPanel() {
     setSourceObject("")
     setSourceMapping({})
     setLeadExpiryDays("45")
+    setBatchTemplate("BATCH_ONAIR_ULTRA5{date}")
     setHllCols([]); setViewCols([]); setColsMsg(null)
     setIsActive(true)
     setConfigExists(false)
@@ -5486,10 +5490,11 @@ function CampaignSettingsPanel() {
           try {
             const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
             // These are auto-filled, not stored source mappings.
-            for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY"]) delete parsedMap[a]
+            for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]) delete parsedMap[a]
             setSourceMapping(parsedMap)
           } catch { setSourceMapping({}) }
           setLeadExpiryDays(c.LEAD_EXPIRY_DAYS != null ? String(c.LEAD_EXPIRY_DAYS) : "45")
+          setBatchTemplate(c.BATCH_NAME_TEMPLATE ?? "BATCH_ONAIR_ULTRA5{date}")
           setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
           setRunResults(null)
@@ -5537,6 +5542,7 @@ function CampaignSettingsPanel() {
           sourceObject,
           sourceMapping,
           leadExpiryDays: Number(leadExpiryDays) || 45,
+          batchNameTemplate: batchTemplate,
           isActive,
         }),
       })
@@ -5798,6 +5804,7 @@ function CampaignSettingsPanel() {
                               up === "CAMPAIGNID" ? `= campaign id${campaignId ? ` (${campaignId})` : ""} · auto`
                               : up === "CREATEDONDATE" ? "= today · auto"
                               : up === "LEADEXPIRY" ? `= today + ${leadExpiryDays || "45"} days · auto`
+                              : up === "BATCHNAME" ? `= ${batchTemplate || "BATCH…{date}"} · auto`
                               : null
                             return (
                             <tr key={h.name} className="border-t border-border/50">
@@ -5838,6 +5845,22 @@ function CampaignSettingsPanel() {
                     <span className="text-xs text-muted-foreground">
                       <span className="font-mono">LEADEXPIRY</span> = today + this many days. Default 45.
                     </span>
+                  </div>
+                  <div className="mt-3">
+                    <Label htmlFor="batch-name" className="text-xs text-muted-foreground">Batch name</Label>
+                    <Input
+                      id="batch-name"
+                      value={batchTemplate}
+                      onChange={(e) => setBatchTemplate(e.target.value)}
+                      placeholder="BATCH_ONAIR_ULTRA5{date}"
+                      className="mt-1 font-mono text-sm"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Use <span className="font-mono">{"{date}"}</span> for today&apos;s date (YYYYMMDD). Example today:{" "}
+                      <span className="font-mono text-foreground">
+                        {(batchTemplate || "").split("{date}").join(new Date().toISOString().slice(0, 10).replace(/-/g, "")) || "—"}
+                      </span>
+                    </p>
                   </div>
                 </div>
               )}

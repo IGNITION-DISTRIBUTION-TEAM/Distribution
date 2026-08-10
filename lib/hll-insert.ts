@@ -7,16 +7,46 @@ export const HLL_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HIS
 export const CAMPAIGN_ID_COL = "CAMPAIGNID"
 export const CREATED_ON_COL = "CREATEDONDATE"
 export const LEAD_EXPIRY_COL = "LEADEXPIRY"
+export const BATCHNAME_COL = "BATCHNAME"
 
 // Columns the mapper locks (auto-filled, never mapped from a source column).
-export const AUTO_HLL_COLUMNS = [CAMPAIGN_ID_COL, CREATED_ON_COL, LEAD_EXPIRY_COL]
+export const AUTO_HLL_COLUMNS = [CAMPAIGN_ID_COL, CREATED_ON_COL, LEAD_EXPIRY_COL, BATCHNAME_COL]
 
 export const DEFAULT_LEAD_EXPIRY_DAYS = 45
+// Editable batch-name template. `{date}` expands to today's date as YYYYMMDD.
+// Default reproduces CONCAT('BATCH_ONAIR_ULTRA5', REPLACE(CURRENT_DATE,'-','')).
+export const DEFAULT_BATCH_TEMPLATE = "BATCH_ONAIR_ULTRA5{date}"
 
 // Clamp/normalise a lead-expiry-days value to a safe positive integer.
 export function normLeadExpiryDays(raw: unknown): number {
   const n = Number(raw)
   return Number.isInteger(n) && n >= 1 && n <= 3650 ? n : DEFAULT_LEAD_EXPIRY_DAYS
+}
+
+// Literal segments of a batch template may only contain these characters, so
+// the template can never inject SQL (the only dynamic part is the date expr).
+const BATCH_SEGMENT = /^[A-Za-z0-9_.-]*$/
+export const BATCH_DATE_TOKEN = "{date}"
+
+/**
+ * Turn an editable batch-name template into a safe SQL string expression.
+ * `{date}` → REPLACE(TO_VARCHAR(CURRENT_DATE),'-','') (today as YYYYMMDD);
+ * every other segment must be a plain identifier-ish literal. Returns null for
+ * an empty or invalid template (caller then leaves BATCHNAME unmapped).
+ */
+export function batchNameSql(template: string | null | undefined): string | null {
+  const t = (template ?? "").trim()
+  if (!t || t.length > 200) return null
+  const parts = t.split(BATCH_DATE_TOKEN)
+  for (const seg of parts) if (!BATCH_SEGMENT.test(seg)) return null
+  const dateExpr = "REPLACE(TO_VARCHAR(CURRENT_DATE), '-', '')"
+  const pieces: string[] = []
+  parts.forEach((seg, i) => {
+    if (seg) pieces.push(`'${seg.replace(/'/g, "''")}'`)
+    if (i < parts.length - 1) pieces.push(dateExpr)
+  })
+  if (pieces.length === 0) return null
+  return pieces.length === 1 ? pieces[0] : `CONCAT(${pieces.join(", ")})`
 }
 
 // Uppercase set of the HLL table's column names (metadata only). Used to decide
@@ -38,12 +68,18 @@ export async function hllColumnSet(): Promise<Set<string>> {
  *   LEADEXPIRY    → today + leadExpiryDays
  * `leadExpiryDays` MUST already be a validated integer (see normLeadExpiryDays).
  */
-export function buildAutoExprs(campaignId: number | null, leadExpiryDays: number): Record<string, string> {
+export function buildAutoExprs(
+  campaignId: number | null,
+  leadExpiryDays: number,
+  batchTemplate?: string | null
+): Record<string, string> {
   const out: Record<string, string> = {
     [CREATED_ON_COL]: "CURRENT_DATE",
     [LEAD_EXPIRY_COL]: `DATEADD(day, ${leadExpiryDays}, CURRENT_DATE)`,
   }
   if (campaignId != null) out[CAMPAIGN_ID_COL] = String(campaignId)
+  const batch = batchNameSql(batchTemplate ?? DEFAULT_BATCH_TEMPLATE)
+  if (batch) out[BATCHNAME_COL] = batch
   return out
 }
 

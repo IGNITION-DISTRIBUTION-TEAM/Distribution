@@ -57,13 +57,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     UPDATE_HLL_PROCEDURE: string | null
     SYNC_PROCEDURE: string | null
     LEAD_EXPIRY_DAYS: number | string | null
+    BATCH_NAME_TEMPLATE: string | null
     IS_ACTIVE: boolean | string | null
   }
   let config: Config
   try {
     const rows = await executeSnowflakeQuery<Config>(
       `SELECT SOURCE_KIND, SOURCE_OBJECT, SOURCE_MAPPING_JSON, UPLOAD_TARGET_TABLE,
-              LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE, LEAD_EXPIRY_DAYS, IS_ACTIVE
+              LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE,
+              LEAD_EXPIRY_DAYS, BATCH_NAME_TEMPLATE, IS_ACTIVE
        FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${campaignId}`,
       CONFIG_SF_OPTS
     )
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const sourceKind = (config.SOURCE_KIND ?? "none").trim().toLowerCase()
   const expiryDays = normLeadExpiryDays(config.LEAD_EXPIRY_DAYS)
   if (sourceKind === "proc" || sourceKind === "view") {
-    const r = await runInitialSource(sourceKind, config, campaignId, expiryDays)
+    const r = await runInitialSource(sourceKind, config, campaignId, expiryDays, config.BATCH_NAME_TEMPLATE)
     results.push(r)
     if (r.status === "error") return finish(campaignId, results)
   } else {
@@ -132,7 +134,8 @@ async function runInitialSource(
     UPLOAD_TARGET_TABLE: string | null
   },
   campaignId: number,
-  expiryDays: number
+  expiryDays: number,
+  batchTemplate: string | null
 ): Promise<StepResult> {
   const step = "Initial source"
   const object = (config.SOURCE_OBJECT ?? "").trim()
@@ -166,7 +169,7 @@ async function runInitialSource(
   try {
     hllColumns = await hllColumnSet()
   } catch { /* null → assume all reserved columns exist */ }
-  const autos = activeAutoExprs(buildAutoExprs(campaignId, expiryDays), hllColumns)
+  const autos = activeAutoExprs(buildAutoExprs(campaignId, expiryDays, batchTemplate), hllColumns)
   const autoUpper = new Set(Object.keys(autos).map((c) => c.toUpperCase()))
 
   // Auto columns are filled by expression; still require a real source column.
