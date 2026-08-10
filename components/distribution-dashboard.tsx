@@ -5415,7 +5415,6 @@ function SettingsContent() {
       </div>
 
       <CampaignSettingsPanel />
-      <HllProceduresPanel />
     </div>
   )
 }
@@ -5566,21 +5565,17 @@ function CampaignSettingsPanel() {
   const [configExists, setConfigExists] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [hllProcs, setHllProcs] = useState<HllProc[]>([])
-
-  // Available update-HLL procedures, to populate the assignment dropdown.
-  useEffect(() => {
-    let cancelled = false
-    fetch("/api/hll-procedures", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : { rows: [] }))
-      .then((data) => {
-        if (!cancelled) setHllProcs((data.rows as HllProc[]) ?? [])
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  // New-procedure input for the per-campaign update-HLL list.
+  const [newHllProc, setNewHllProc] = useState("")
+  const PROC_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
+  const addHllProc = () => {
+    const p = newHllProc.trim()
+    if (!p) return
+    if (!PROC_RE.test(p)) { toast.error('Procedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP(608)'); return }
+    if (updateHllProcs.includes(p)) { setNewHllProc(""); return }
+    setUpdateHllProcs((prev) => [...prev, p])
+    setNewHllProc("")
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -6163,48 +6158,47 @@ function CampaignSettingsPanel() {
                     className="font-mono text-sm"
                   />
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <Label className="mb-1.5 block text-xs text-muted-foreground">
-                    Update HLL procedures{updateHllProcs.length > 0 && <span className="text-muted-foreground/70"> · {updateHllProcs.length} selected</span>}
+                    Update HLL procedures{updateHllProcs.length > 0 && <span className="text-muted-foreground/70"> · {updateHllProcs.length}</span>}
                   </Label>
-                  {hllProcs.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      No procedures yet — add them under &quot;HLL update procedures&quot; below.
+                  <div className="flex gap-2">
+                    <Input
+                      value={newHllProc}
+                      onChange={(e) => setNewHllProc(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addHllProc() } }}
+                      placeholder="DATABASE.SCHEMA.SP_NAME(608)"
+                      className="font-mono text-sm"
+                    />
+                    <Button type="button" variant="outline" onClick={addHllProc}>
+                      <Plus className="mr-1 h-3.5 w-3.5" /> Add
+                    </Button>
+                  </div>
+                  {updateHllProcs.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      None yet — add the update-HLL procedures to run for <span className="font-medium text-foreground">this campaign</span>, in order.
                     </p>
                   ) : (
-                    <div className="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border p-2">
-                      {hllProcs.map((p) => {
-                        const on = updateHllProcs.includes(p.PROC_NAME)
-                        return (
+                    <ul className="mt-2 flex flex-col divide-y divide-border/60 rounded-md border border-border">
+                      {updateHllProcs.map((p, i) => (
+                        <li key={`${p}-${i}`} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                          <span className="font-mono text-xs text-foreground">
+                            <span className="mr-2 text-muted-foreground">{i + 1}.</span>{p}
+                          </span>
                           <button
-                            key={String(p.PROC_INDEX)}
                             type="button"
-                            onClick={() =>
-                              setUpdateHllProcs((prev) => {
-                                const set = new Set(prev)
-                                if (set.has(p.PROC_NAME)) set.delete(p.PROC_NAME)
-                                else set.add(p.PROC_NAME)
-                                // keep the run order stable = master-list order
-                                return hllProcs.map((x) => x.PROC_NAME).filter((n) => set.has(n))
-                              })
-                            }
-                            className={cn(
-                              "flex items-center gap-2 rounded px-2 py-1 text-left font-mono text-xs",
-                              on ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground"
-                            )}
+                            className="text-xs text-rose-400 hover:text-rose-300"
+                            onClick={() => setUpdateHllProcs((prev) => prev.filter((_, idx) => idx !== i))}
                           >
-                            <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "border-primary bg-primary/20" : "border-border")}>
-                              {on && <Check className="h-3 w-3 text-primary" />}
-                            </span>
-                            {p.PROC_NAME}
+                            Remove
                           </button>
-                        )
-                      })}
-                    </div>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                  {updateHllProcs.length > 1 && (
-                    <p className="mt-1 text-xs text-muted-foreground">Runs in the order listed above.</p>
-                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Specific to this campaign. In the run they execute in this order (Step 4). Include any argument, e.g. <span className="font-mono">…SP_X(608)</span>.
+                  </p>
                 </div>
                 <div>
                   <Label className="mb-1.5 block text-xs text-muted-foreground">Sync procedure</Label>
