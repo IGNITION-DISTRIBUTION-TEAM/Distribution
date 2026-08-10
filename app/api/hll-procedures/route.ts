@@ -6,8 +6,10 @@ export const dynamic = "force-dynamic"
 export const TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_HLL_UPDATE_PROCEDURES"
 export const SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 
-// Fully-qualified DATABASE.SCHEMA.PROC.
-export const QUALIFIED_PROC = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
+// Fully-qualified DATABASE.SCHEMA.PROC, optionally with a call-argument list
+// of digits / identifiers / commas (e.g. SP_UPDATE_HLL(608) or SP_X(1)). Only
+// safe chars inside the parens — no quotes/semicolons.
+export const QUALIFIED_PROC = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
 
 export type HllProcRow = {
   PROC_INDEX: number | string
@@ -24,7 +26,7 @@ export function validateProcName(raw: unknown): string | { error: string } {
   const trimmed = raw.trim()
   if (trimmed.length === 0) return { error: "procName is required" }
   if (!QUALIFIED_PROC.test(trimmed)) {
-    return { error: 'procName must be "DATABASE.SCHEMA.PROC" (A-Z, 0-9, _ only)' }
+    return { error: 'procName must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP_X(1)' }
   }
   return trimmed
 }

@@ -82,10 +82,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Failed to verify procedure: ${message}` }, { status: 500 })
   }
 
-  const [database, schema] = proc.split(".")
+  const [database, schema] = proc.split("(")[0].split(".")
   try {
+    // If the stored proc already carries its own argument list, call it as-is;
+    // otherwise append the campaign id (the historical behaviour).
+    const callSql = proc.includes("(") ? `CALL ${proc}` : `CALL ${proc}(${id})`
     const result = await executeSnowflakeQuery<Record<string, unknown>>(
-      `CALL ${proc}(${id})`,
+      callSql,
       { database, schema }
     )
     return NextResponse.json({ ok: true, proc, campaignId: id, result })
