@@ -2061,6 +2061,8 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
   const [running, setRunning] = useState(false)
   const [steps, setSteps] = useState<StepView[]>([])
   const [history, setHistory] = useState<RunHistoryRow[]>([])
+  const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
+  const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
 
   const loadHistory = useCallback(async () => {
     if (!campaignId) { setHistory([]); return }
@@ -2072,6 +2074,16 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
   }, [campaignId])
 
   useEffect(() => { loadHistory() }, [loadHistory])
+
+  // Load the config's step plan for the per-step Run buttons.
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/distribution/configs/${configId}/run/plan`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPlan(Array.isArray(d.steps) ? d.steps : []) })
+      .catch(() => { if (!cancelled) setPlan([]) })
+    return () => { cancelled = true }
+  }, [configId])
 
   const run = async () => {
     setRunning(true)
@@ -2088,18 +2100,66 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
     }
   }
 
+  // Run a single step (sync is fire-and-forget).
+  const runOne = async (key: string) => {
+    setStepState((s) => ({ ...s, [key]: { status: "running" } }))
+    try {
+      if (key === "sync") {
+        const r = await submitSyncFireAndForget(configId)
+        setStepState((s) => ({ ...s, [key]: { status: r.ok ? "success" : "error", message: r.ok ? "submitted — running in the background (safe to leave this page)" : r.error } }))
+        if (r.ok) toast.success("Sync submitted — running in the background")
+        else toast.error(r.error || "Failed to submit sync")
+        return
+      }
+      const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
+      setStepState((s) => ({ ...s, [key]: { status: res.ok ? "success" : "error", message: res.error } }))
+      if (res.ok) toast.success("Step complete")
+      else toast.error(res.error || "Step failed")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setStepState((s) => ({ ...s, [key]: { status: "error", message: msg } }))
+      toast.error(msg)
+    } finally {
+      loadHistory()
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
         Runs the <span className="font-medium text-foreground">{configName}</span> automation in order — Initial
-        source → Load into history → Update HLL → Sync — stopping at the first failure. Edit the config (source,
-        mapping, procedures, batch name, lead expiry) in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
+        source → Load into history → Update HLL → Sync — stopping at the first failure. The <span className="font-medium text-foreground">Sync</span> step
+        is fire-and-forget (keeps running if you leave). Edit the config in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
       </div>
 
       <Button onClick={run} disabled={running}>
         {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
         {running ? "Running…" : "Run full distribution"}
       </Button>
+
+      {/* Run each step individually. */}
+      {plan.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run individual steps</div>
+          <ul className="flex flex-col divide-y divide-border/60 rounded-md border border-border">
+            {plan.map((s) => {
+              const st = stepState[s.key]
+              return (
+                <li key={s.key} className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm">
+                  <span className="flex items-center gap-2">
+                    {st ? <StepStatusIcon status={st.status} /> : <span className="h-4 w-4" />}
+                    <span className="text-foreground">{s.label}</span>
+                    {st?.status === "error" && st.message && <span className="text-rose-400">— {st.message}</span>}
+                  </span>
+                  <Button type="button" variant="ghost" size="sm" disabled={running || st?.status === "running"} onClick={() => runOne(s.key)}>
+                    {st?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Run"}
+                  </Button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       {steps.length > 0 && (
         <ul className="flex flex-col gap-1.5">
