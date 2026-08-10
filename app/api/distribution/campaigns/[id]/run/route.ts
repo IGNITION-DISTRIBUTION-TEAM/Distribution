@@ -24,6 +24,25 @@ export const maxDuration = 300
 
 type StepResult = { step: string; status: "success" | "error" | "skipped"; message: string }
 
+type RunConfig = {
+  SOURCE_KIND: string | null
+  SOURCE_OBJECT: string | null
+  SOURCE_MAPPING_JSON: string | null
+  UPLOAD_TARGET_TABLE: string | null
+  LOAD_HISTORY_PROCEDURE: string | null
+  UPDATE_HLL_PROCEDURE: string | null
+  SYNC_PROCEDURE: string | null
+  LEAD_EXPIRY_DAYS: number | string | null
+  BATCH_NAME_TEMPLATE: string | null
+  IS_ACTIVE: boolean | string | null
+}
+
+// NDJSON events streamed to the client during a run.
+type RunEvent =
+  | { type: "step"; step: string; phase: "start" }
+  | { type: "step"; step: string; phase: "end"; status: "success" | "error" | "skipped"; message: string }
+  | { type: "done"; ok: boolean; ran: number; results: StepResult[]; error?: string }
+
 function parseId(raw: string): number | null {
   const n = parseInt(raw, 10)
   return Number.isInteger(n) && n >= 0 ? n : null
@@ -48,21 +67,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (campaignId === null) return NextResponse.json({ error: "Invalid campaign id" }, { status: 400 })
 
   // Read the campaign's stored config.
-  type Config = {
-    SOURCE_KIND: string | null
-    SOURCE_OBJECT: string | null
-    SOURCE_MAPPING_JSON: string | null
-    UPLOAD_TARGET_TABLE: string | null
-    LOAD_HISTORY_PROCEDURE: string | null
-    UPDATE_HLL_PROCEDURE: string | null
-    SYNC_PROCEDURE: string | null
-    LEAD_EXPIRY_DAYS: number | string | null
-    BATCH_NAME_TEMPLATE: string | null
-    IS_ACTIVE: boolean | string | null
-  }
-  let config: Config
+  let config: RunConfig
   try {
-    const rows = await executeSnowflakeQuery<Config>(
+    const rows = await executeSnowflakeQuery<RunConfig>(
       `SELECT SOURCE_KIND, SOURCE_OBJECT, SOURCE_MAPPING_JSON, UPLOAD_TARGET_TABLE,
               LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE,
               LEAD_EXPIRY_DAYS, BATCH_NAME_TEMPLATE, IS_ACTIVE
@@ -81,17 +88,61 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "This campaign's config is inactive. Activate it before running." }, { status: 400 })
   }
 
+  // Stream per-step progress as NDJSON when asked (?stream=1); the client shows
+  // a spinner on the running step and updates each as it completes.
+  if (request.nextUrl.searchParams.get("stream") === "1") {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const ev of runStepsGen(campaignId, config)) {
+            controller.enqueue(encoder.encode(JSON.stringify(ev) + "\n"))
+          }
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "done", ok: false, ran: 0, results: [], error: message }) + "\n"))
+        } finally {
+          controller.close()
+        }
+      },
+    })
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no", // ask proxies not to buffer, so events arrive live
+      },
+    })
+  }
+
+  // Non-streaming: run to completion and return the final summary as JSON.
+  let doneEv: Extract<RunEvent, { type: "done" }> | null = null
+  for await (const ev of runStepsGen(campaignId, config)) {
+    if (ev.type === "done") doneEv = ev
+  }
+  const ok = doneEv?.ok ?? false
+  return NextResponse.json({ ok, ran: doneEv?.ran ?? 0, results: doneEv?.results ?? [] }, { status: ok ? 200 : 500 })
+}
+
+// Run the steps in order, yielding a start/end event per step and a final
+// done event (which also persists the run outcome). Stops at the first error.
+async function* runStepsGen(campaignId: number, config: RunConfig): AsyncGenerator<RunEvent> {
   const results: StepResult[] = []
+  const emitEnd = (r: StepResult): RunEvent => {
+    results.push(r)
+    return { type: "step", step: r.step, phase: "end", status: r.status, message: r.message }
+  }
 
   // ── Step 1: initial source → HLL ────────────────────────────────────────
   const sourceKind = (config.SOURCE_KIND ?? "none").trim().toLowerCase()
   const expiryDays = normLeadExpiryDays(config.LEAD_EXPIRY_DAYS)
   if (sourceKind === "proc" || sourceKind === "view") {
+    yield { type: "step", step: "Initial source", phase: "start" }
     const r = await runInitialSource(sourceKind, config, campaignId, expiryDays, config.BATCH_NAME_TEMPLATE)
-    results.push(r)
-    if (r.status === "error") return finish(campaignId, results)
+    yield emitEnd(r)
+    if (r.status === "error") { yield await done(campaignId, results); return }
   } else {
-    results.push({ step: "Initial source", status: "skipped", message: "No initial source configured." })
+    yield emitEnd({ step: "Initial source", status: "skipped", message: "No initial source configured." })
   }
 
   // ── Steps 2-4: the configured procedures, in order ──────────────────────
@@ -102,26 +153,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   ]
   for (const { step, ref } of procSteps) {
     const proc = (ref ?? "").trim()
-    if (!proc) {
-      results.push({ step, status: "skipped", message: "Not configured." })
-      continue
-    }
+    if (!proc) { yield emitEnd({ step, status: "skipped", message: "Not configured." }); continue }
     if (!RUN_PROC_IDENT.test(proc)) {
-      results.push({ step, status: "error", message: `Configured procedure is invalid: ${proc}` })
-      return finish(campaignId, results)
+      yield emitEnd({ step, status: "error", message: `Configured procedure is invalid: ${proc}` })
+      yield await done(campaignId, results); return
     }
+    yield { type: "step", step, phase: "start" }
     try {
       const { sql, database, schema } = buildCall(proc)
       await executeSnowflakeQuery(sql, { database, schema })
-      results.push({ step, status: "success", message: `Ran ${proc}` })
+      yield emitEnd({ step, status: "success", message: `Ran ${proc}` })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      results.push({ step, status: "error", message: `Failed at ${proc}: ${message}` })
-      return finish(campaignId, results)
+      yield emitEnd({ step, status: "error", message: `Failed at ${proc}: ${message}` })
+      yield await done(campaignId, results); return
     }
   }
 
-  return finish(campaignId, results)
+  yield await done(campaignId, results)
 }
 
 // Run Step 1: for a proc source, CALL it to (re)populate the upload/stage table,
@@ -206,8 +255,8 @@ async function runInitialSource(
   }
 }
 
-// Persist the run outcome on the config row and return the response.
-async function finish(campaignId: number, results: StepResult[]): Promise<NextResponse> {
+// Persist the run outcome on the config row and build the final done event.
+async function done(campaignId: number, results: StepResult[]): Promise<RunEvent> {
   const failed = results.some((r) => r.status === "error")
   const ranCount = results.filter((r) => r.status === "success").length
   const summary = results.map((r) => `${r.step}: ${r.status}`).join(" | ")
@@ -222,5 +271,5 @@ async function finish(campaignId: number, results: StepResult[]): Promise<NextRe
   } catch (e) {
     console.error("[/api/distribution/campaigns/[id]/run] record error:", e)
   }
-  return NextResponse.json({ ok: !failed, ran: ranCount, results }, { status: failed ? 500 : 200 })
+  return { type: "done", ok: !failed, ran: ranCount, results }
 }

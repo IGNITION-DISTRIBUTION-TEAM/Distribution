@@ -125,6 +125,68 @@ const navItems: NavItem[] = [
 
 type LeadSource = "file" | "sftp" | "snowflake"
 
+// A step's live state in the run UI.
+type StepView = { step: string; status: "running" | "success" | "error" | "skipped"; message?: string }
+// One NDJSON event from the run stream.
+type RunStreamEvent =
+  | { type: "step"; step: string; phase: "start" }
+  | { type: "step"; step: string; phase: "end"; status: "success" | "error" | "skipped"; message: string }
+  | { type: "done"; ok: boolean; ran: number; results?: unknown[]; error?: string }
+
+// Fold a stream event into the current step list (append if the step is new).
+function applyRunEvent(prev: StepView[], ev: RunStreamEvent): StepView[] {
+  if (ev.type !== "step") return prev
+  const idx = prev.findIndex((s) => s.step === ev.step)
+  const row: StepView =
+    ev.phase === "start"
+      ? { step: ev.step, status: "running" }
+      : { step: ev.step, status: ev.status, message: ev.message }
+  const next = [...prev]
+  if (idx >= 0) next[idx] = row
+  else next.push(row)
+  return next
+}
+
+// POST the run with streaming and dispatch each NDJSON event. Pre-stream
+// errors (no config / inactive) arrive as a non-OK JSON response and throw.
+async function streamDistribution(campaignId: string, onEvent: (ev: RunStreamEvent) => void): Promise<void> {
+  const res = await fetch(`/api/distribution/campaigns/${campaignId}/run?stream=1`, { method: "POST" })
+  if (!res.ok) {
+    const ct = res.headers.get("content-type") || ""
+    if (!ct.includes("ndjson")) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as { error?: string }).error || `Run failed (${res.status})`)
+    }
+  }
+  if (!res.body) throw new Error("No response stream")
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ""
+  const flushLine = (line: string) => {
+    const t = line.trim()
+    if (t) onEvent(JSON.parse(t) as RunStreamEvent)
+  }
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      flushLine(buf.slice(0, nl))
+      buf = buf.slice(nl + 1)
+    }
+  }
+  flushLine(buf)
+}
+
+// Icon for a step's state (spinner while running).
+function StepStatusIcon({ status }: { status: StepView["status"] }) {
+  if (status === "running") return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-400" />
+  if (status === "success") return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+  if (status === "error") return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+  return <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+}
+
 function ManualContent() {
   const [campaignId, setCampaignId] = useState("")
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -1874,33 +1936,26 @@ function SftpSourcePanel() {
 // edited in Settings → Campaign automation.
 function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: string; campaignTitle: string }) {
   const [running, setRunning] = useState(false)
-  const [results, setResults] = useState<RunStepResult[] | null>(null)
+  const [steps, setSteps] = useState<StepView[]>([])
   const [noConfig, setNoConfig] = useState(false)
 
   const run = async () => {
     setRunning(true)
-    setResults(null)
+    setSteps([])
     setNoConfig(false)
     try {
-      const res = await fetch(`/api/distribution/campaigns/${campaignId}/run`, { method: "POST" })
-      const data = await res.json()
-      if (Array.isArray(data.results)) setResults(data.results as RunStepResult[])
-      if (!res.ok && !Array.isArray(data.results)) {
-        // e.g. "No campaign config found" / "inactive" — surface clearly.
-        if (typeof data.error === "string" && /no campaign config/i.test(data.error)) setNoConfig(true)
-        throw new Error(data.error || `Run failed (${res.status})`)
-      }
-      const failed = Array.isArray(data.results)
-        ? (data.results as RunStepResult[]).some((r) => r.status === "error")
-        : !res.ok
-      if (failed) {
-        const bad = (data.results as RunStepResult[] | undefined)?.find((r) => r.status === "error")
-        toast.error(bad ? `${bad.step}: ${bad.message}` : "Distribution failed")
-      } else {
-        toast.success(`Distribution complete — ${data.ran ?? 0} step(s) ran`)
-      }
+      await streamDistribution(campaignId, (ev) => {
+        if (ev.type === "step") setSteps((prev) => applyRunEvent(prev, ev))
+        else if (ev.type === "done") {
+          if (ev.error) toast.error(ev.error)
+          else if (ev.ok) toast.success(`Distribution complete — ${ev.ran} step(s) ran`)
+          else toast.error("Distribution failed — see steps below")
+        }
+      })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/no campaign config/i.test(msg)) setNoConfig(true)
+      toast.error(msg)
     } finally {
       setRunning(false)
     }
@@ -1929,19 +1984,13 @@ function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: strin
         </div>
       )}
 
-      {results && (
+      {steps.length > 0 && (
         <ul className="flex flex-col gap-1.5">
-          {results.map((r, i) => (
+          {steps.map((r, i) => (
             <li key={i} className="flex items-start gap-2 text-sm">
-              {r.status === "success" ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-              ) : r.status === "error" ? (
-                <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-              ) : (
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              )}
+              <StepStatusIcon status={r.status} />
               <span className="font-medium text-foreground">{r.step}:</span>
-              <span className="text-muted-foreground">{r.message}</span>
+              <span className="text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
             </li>
           ))}
         </ul>
@@ -5338,8 +5387,6 @@ type CampaignConfig = {
   LAST_RUN_MESSAGE?: string | null
 }
 
-type RunStepResult = { step: string; status: "success" | "error" | "skipped"; message: string }
-
 function CampaignSettingsPanel() {
   // --- Campaign picker ---
   const [campaignId, setCampaignId] = useState("")
@@ -5375,7 +5422,7 @@ function CampaignSettingsPanel() {
   const [isActive, setIsActive] = useState(true)
   // --- Full-distribution run ---
   const [running, setRunning] = useState(false)
-  const [runResults, setRunResults] = useState<RunStepResult[] | null>(null)
+  const [runSteps, setRunSteps] = useState<StepView[]>([])
   const [lastRunAt, setLastRunAt] = useState<string | null>(null)
   const [lastRunStatus, setLastRunStatus] = useState<string | null>(null)
   const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
@@ -5493,7 +5540,7 @@ function CampaignSettingsPanel() {
     setHllCols([]); setViewCols([]); setColsMsg(null)
     setIsActive(true)
     setConfigExists(false)
-    setRunResults(null)
+    setRunSteps([])
     setLastRunAt(null); setLastRunStatus(null); setLastRunMessage(null)
   }, [])
 
@@ -5538,7 +5585,7 @@ function CampaignSettingsPanel() {
           setBatchTemplate(c.BATCH_NAME_TEMPLATE ?? "BATCH_ONAIR_ULTRA5{date}")
           setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
-          setRunResults(null)
+          setRunSteps([])
           setLastRunAt(c.LAST_RUN_AT ?? null)
           setLastRunStatus(c.LAST_RUN_STATUS ?? null)
           setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
@@ -5604,26 +5651,20 @@ function CampaignSettingsPanel() {
   const runFullDistribution = async () => {
     if (!campaignId) return
     setRunning(true)
-    setRunResults(null)
+    setRunSteps([])
     try {
-      const res = await fetch(`/api/distribution/campaigns/${campaignId}/run`, { method: "POST" })
-      const data = await res.json()
-      if (Array.isArray(data.results)) setRunResults(data.results as RunStepResult[])
-      if (!res.ok && !Array.isArray(data.results)) {
-        throw new Error(data.error || `Run failed (${res.status})`)
-      }
-      const failed = Array.isArray(data.results)
-        ? (data.results as RunStepResult[]).some((r) => r.status === "error")
-        : !res.ok
-      const now = new Date().toISOString().slice(0, 16).replace("T", " ")
-      setLastRunAt(now)
-      setLastRunStatus(failed ? "Error" : "Success")
-      if (failed) {
-        const bad = (data.results as RunStepResult[] | undefined)?.find((r) => r.status === "error")
-        toast.error(bad ? `${bad.step}: ${bad.message}` : "Distribution failed")
-      } else {
-        toast.success(`Distribution complete — ${data.ran ?? 0} step(s) ran`)
-      }
+      await streamDistribution(campaignId, (ev) => {
+        if (ev.type === "step") {
+          setRunSteps((prev) => applyRunEvent(prev, ev))
+        } else if (ev.type === "done") {
+          const now = new Date().toISOString().slice(0, 16).replace("T", " ")
+          setLastRunAt(now)
+          setLastRunStatus(ev.error || !ev.ok ? "Error" : "Success")
+          if (ev.error) toast.error(ev.error)
+          else if (ev.ok) toast.success(`Distribution complete — ${ev.ran} step(s) ran`)
+          else toast.error("Distribution failed — see steps below")
+        }
+      })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
@@ -6022,19 +6063,13 @@ function CampaignSettingsPanel() {
                 <p className="mt-2 text-xs text-amber-400">Save the configuration before running.</p>
               )}
 
-              {runResults && (
+              {runSteps.length > 0 && (
                 <ul className="mt-3 flex flex-col gap-1.5">
-                  {runResults.map((r, i) => (
+                  {runSteps.map((r, i) => (
                     <li key={i} className="flex items-start gap-2 text-xs">
-                      {r.status === "success" ? (
-                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      ) : r.status === "error" ? (
-                        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" />
-                      ) : (
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
+                      <StepStatusIcon status={r.status} />
                       <span className="font-medium text-foreground">{r.step}:</span>
-                      <span className="text-muted-foreground">{r.message}</span>
+                      <span className="text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
                     </li>
                   ))}
                 </ul>
