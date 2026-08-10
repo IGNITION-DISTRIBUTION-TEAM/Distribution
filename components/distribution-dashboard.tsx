@@ -5290,7 +5290,12 @@ type CampaignConfig = {
   SOURCE_OBJECT?: string | null
   SOURCE_MAPPING_JSON?: string | null
   IS_ACTIVE?: boolean | null
+  LAST_RUN_AT?: string | null
+  LAST_RUN_STATUS?: string | null
+  LAST_RUN_MESSAGE?: string | null
 }
+
+type RunStepResult = { step: string; status: "success" | "error" | "skipped"; message: string }
 
 function CampaignSettingsPanel() {
   // --- Campaign picker ---
@@ -5321,6 +5326,12 @@ function CampaignSettingsPanel() {
   const [colsLoading, setColsLoading] = useState(false)
   const [colsMsg, setColsMsg] = useState<string | null>(null)
   const [isActive, setIsActive] = useState(true)
+  // --- Full-distribution run ---
+  const [running, setRunning] = useState(false)
+  const [runResults, setRunResults] = useState<RunStepResult[] | null>(null)
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null)
+  const [lastRunStatus, setLastRunStatus] = useState<string | null>(null)
+  const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
 
   const loadSourceColumns = async () => {
     // Proc source maps FROM the stage/upload target table; view maps FROM the view.
@@ -5428,6 +5439,8 @@ function CampaignSettingsPanel() {
     setHllCols([]); setViewCols([]); setColsMsg(null)
     setIsActive(true)
     setConfigExists(false)
+    setRunResults(null)
+    setLastRunAt(null); setLastRunStatus(null); setLastRunMessage(null)
   }, [])
 
   // Load the selected campaign's saved config (if any) into the form.
@@ -5464,6 +5477,10 @@ function CampaignSettingsPanel() {
           try { setSourceMapping(c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}) } catch { setSourceMapping({}) }
           setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
+          setRunResults(null)
+          setLastRunAt(c.LAST_RUN_AT ?? null)
+          setLastRunStatus(c.LAST_RUN_STATUS ?? null)
+          setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
           setConfigExists(true)
         } else {
           resetForm()
@@ -5515,6 +5532,38 @@ function CampaignSettingsPanel() {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Run the whole distribution in order: initial source → load history →
+  // update HLL → sync. Stops at the first failed step.
+  const runFullDistribution = async () => {
+    if (!campaignId) return
+    setRunning(true)
+    setRunResults(null)
+    try {
+      const res = await fetch(`/api/distribution/campaigns/${campaignId}/run`, { method: "POST" })
+      const data = await res.json()
+      if (Array.isArray(data.results)) setRunResults(data.results as RunStepResult[])
+      if (!res.ok && !Array.isArray(data.results)) {
+        throw new Error(data.error || `Run failed (${res.status})`)
+      }
+      const failed = Array.isArray(data.results)
+        ? (data.results as RunStepResult[]).some((r) => r.status === "error")
+        : !res.ok
+      const now = new Date().toISOString().slice(0, 16).replace("T", " ")
+      setLastRunAt(now)
+      setLastRunStatus(failed ? "Error" : "Success")
+      if (failed) {
+        const bad = (data.results as RunStepResult[] | undefined)?.find((r) => r.status === "error")
+        toast.error(bad ? `${bad.step}: ${bad.message}` : "Distribution failed")
+      } else {
+        toast.success(`Distribution complete — ${data.ran ?? 0} step(s) ran`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -5824,6 +5873,62 @@ function CampaignSettingsPanel() {
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Save configuration
               </Button>
+            </div>
+
+            <Separator />
+
+            {/* Run the whole distribution end-to-end. */}
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">Run full distribution</div>
+                  <div className="text-xs text-muted-foreground">
+                    Initial source → Load into history → Update HLL → Sync. Runs in order and stops at the first failure.
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {lastRunAt && (
+                    <span className="text-xs text-muted-foreground" title={lastRunMessage ?? undefined}>
+                      Last run{" "}
+                      <span className={lastRunStatus === "Success" ? "text-emerald-400" : "text-rose-400"}>
+                        {lastRunStatus ?? "—"}
+                      </span>{" "}
+                      · {lastRunAt}
+                    </span>
+                  )}
+                  <Button
+                    variant="secondary"
+                    onClick={runFullDistribution}
+                    disabled={running || saving || configLoading || !configExists}
+                    title={!configExists ? "Save the configuration first" : undefined}
+                  >
+                    {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+                    {running ? "Running…" : "Run full distribution"}
+                  </Button>
+                </div>
+              </div>
+
+              {!configExists && (
+                <p className="mt-2 text-xs text-amber-400">Save the configuration before running.</p>
+              )}
+
+              {runResults && (
+                <ul className="mt-3 flex flex-col gap-1.5">
+                  {runResults.map((r, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs">
+                      {r.status === "success" ? (
+                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      ) : r.status === "error" ? (
+                        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" />
+                      ) : (
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="font-medium text-foreground">{r.step}:</span>
+                      <span className="text-muted-foreground">{r.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

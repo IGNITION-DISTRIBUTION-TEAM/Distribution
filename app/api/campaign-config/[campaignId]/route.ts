@@ -15,11 +15,23 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cam
   if (typeof id !== "number") return NextResponse.json(id, { status: 400 })
 
   try {
-    const rows = await executeSnowflakeQuery<Record<string, unknown>>(
-      `SELECT * FROM ${TABLE} WHERE CAMPAIGNID = ${id}`,
-      SF_OPTS
-    )
-    return NextResponse.json({ config: rows[0] ?? null })
+    let rows: Record<string, unknown>[]
+    try {
+      rows = await executeSnowflakeQuery<Record<string, unknown>>(
+        `SELECT *, TO_VARCHAR(LAST_RUN_AT, 'YYYY-MM-DD HH24:MI') AS LAST_RUN_AT_FMT
+         FROM ${TABLE} WHERE CAMPAIGNID = ${id}`,
+        SF_OPTS
+      )
+    } catch {
+      // Legacy table without the LAST_RUN_* columns — fall back to a plain select.
+      rows = await executeSnowflakeQuery<Record<string, unknown>>(
+        `SELECT * FROM ${TABLE} WHERE CAMPAIGNID = ${id}`,
+        SF_OPTS
+      )
+    }
+    const config = rows[0] ?? null
+    if (config && config.LAST_RUN_AT_FMT != null) config.LAST_RUN_AT = config.LAST_RUN_AT_FMT
+    return NextResponse.json({ config })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/campaign-config/[campaignId] GET] error:", message)

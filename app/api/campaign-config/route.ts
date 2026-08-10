@@ -180,9 +180,20 @@ const CONFIG_COLUMNS: [string, string][] = [
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
   ["IS_ACTIVE", "BOOLEAN"],
+  // Last full-distribution run outcome (set by the campaign run orchestrator).
+  ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
   ["CREATED_BY", "VARCHAR"], ["CREATED_AT", "TIMESTAMP_NTZ"],
   ["UPDATED_BY", "VARCHAR"], ["UPDATED_AT", "TIMESTAMP_NTZ"],
 ]
+
+// Shared regexes for the run orchestrator — re-validate stored values before executing.
+export const RUN_QUALIFIED = QUALIFIED_IDENT
+export const RUN_PROC_IDENT = PROC_IDENT
+
+// Ensure the config table has every column, including the run-tracking ones.
+export async function ensurePublicConfigColumns(): Promise<void> {
+  await ensureConfigColumns()
+}
 
 async function ensureConfigColumns(): Promise<void> {
   await executeSnowflakeQuery(
