@@ -5351,7 +5351,11 @@ function CampaignSettingsPanel() {
       setHllCols(hc); setViewCols(vc)
       setSourceMapping((m) => {
         const next = { ...m }
+        // CAMPAIGNID is auto-filled with the campaign id — never map it from a
+        // source column (drop any stale entry too).
+        delete next["CAMPAIGNID"]
         for (const hcol of hc) {
+          if (hcol.name.toUpperCase() === "CAMPAIGNID") continue
           if (next[hcol.name]) continue
           const hit = vc.find((s: { name: string }) => s.name.toLowerCase() === hcol.name.toLowerCase())
           if (hit) next[hcol.name] = hit.name
@@ -5474,7 +5478,11 @@ function CampaignSettingsPanel() {
           setSyncProcedure(c.SYNC_PROCEDURE ?? "")
           setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
           setSourceObject(c.SOURCE_OBJECT ?? "")
-          try { setSourceMapping(c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}) } catch { setSourceMapping({}) }
+          try {
+            const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
+            delete parsedMap["CAMPAIGNID"] // CAMPAIGNID is auto-filled, not a stored source mapping
+            setSourceMapping(parsedMap)
+          } catch { setSourceMapping({}) }
           setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
           setRunResults(null)
@@ -5776,20 +5784,29 @@ function CampaignSettingsPanel() {
                           </tr>
                         </thead>
                         <tbody>
-                          {hllCols.map((h) => (
+                          {hllCols.map((h) => {
+                            const isCampaignId = h.name.toUpperCase() === "CAMPAIGNID"
+                            return (
                             <tr key={h.name} className="border-t border-border/50">
                               <td className="px-3 py-1.5"><span className="font-mono text-xs text-foreground">{h.name}</span> <span className="ml-1 text-[10px] text-muted-foreground">{h.type}</span></td>
                               <td className="px-3 py-1.5">
-                                <Select value={sourceMapping[h.name] ?? "__none__"} onValueChange={(v) => setSrcMap(h.name, v)}>
-                                  <SelectTrigger className="h-8 w-full"><SelectValue placeholder="— skip —" /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="__none__">— skip —</SelectItem>
-                                    {viewCols.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
-                                  </SelectContent>
-                                </Select>
+                                {isCampaignId ? (
+                                  <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-1 font-mono text-xs text-emerald-400" title="Filled automatically with this campaign's id">
+                                    = campaign id {campaignId ? `(${campaignId})` : ""} · auto
+                                  </span>
+                                ) : (
+                                  <Select value={sourceMapping[h.name] ?? "__none__"} onValueChange={(v) => setSrcMap(h.name, v)}>
+                                    <SelectTrigger className="h-8 w-full"><SelectValue placeholder="— skip —" /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">— skip —</SelectItem>
+                                      {viewCols.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                )}
                               </td>
                             </tr>
-                          ))}
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>

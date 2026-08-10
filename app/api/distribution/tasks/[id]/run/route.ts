@@ -3,8 +3,7 @@ import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { TABLE, SF_OPTS, sqlStr, IDENT_COL } from "../../route"
 import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
-
-const HLL_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
+import { HLL_TABLE, CAMPAIGN_ID_COL, hllColumnSet, buildHllInsertLists } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -50,7 +49,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Preferred path: lead-source → HLL (proc-fills-table or view), mapped.
   const sourceKind = (task.SOURCE_KIND ?? "none").trim()
   if (sourceKind === "proc" || sourceKind === "view") {
-    return runSourceToHll(taskId, task)
+    const cid = (task.CAMPAIGN_ID ?? "").trim()
+    const campaignId = /^[0-9]+$/.test(cid) ? Number(cid) : null
+    return runSourceToHll(taskId, task, campaignId)
   }
 
   const campaignId = task.CAMPAIGN_ID?.trim() || null
@@ -113,7 +114,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 // then INSERT the mapped columns into the fixed HLL table (append).
 async function runSourceToHll(
   taskId: number,
-  task: { SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null }
+  task: { SOURCE_KIND: string | null; SOURCE_OBJECT: string | null; SOURCE_TABLE: string | null; MAPPING_JSON: string | null },
+  campaignId: number | null
 ): Promise<NextResponse> {
   const kind = (task.SOURCE_KIND ?? "").trim()
   const object = (task.SOURCE_OBJECT ?? "").trim()
@@ -137,10 +139,19 @@ async function runSourceToHll(
   } catch {
     mapping = {}
   }
-  const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s))
-  if (pairs.length === 0) {
+  const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s)) as [string, string][]
+  const nonIdPairs = pairs.filter(([h]) => h.toUpperCase() !== CAMPAIGN_ID_COL)
+  if (nonIdPairs.length === 0) {
     await recordRun(taskId, "Error", "No column mapping is set for this source.")
-    return NextResponse.json({ error: "Map at least one source column to an HLL column first." }, { status: 400 })
+    return NextResponse.json({ error: "Map at least one source column (besides the auto-filled campaign id) to an HLL column first." }, { status: 400 })
+  }
+
+  // Auto-fill CAMPAIGNID from the task's campaign when known and HLL has it.
+  let hllHasCampaignId = campaignId != null
+  if (campaignId != null) {
+    try {
+      hllHasCampaignId = (await hllColumnSet()).has(CAMPAIGN_ID_COL)
+    } catch { /* keep the default */ }
   }
 
   try {
@@ -149,11 +160,10 @@ async function runSourceToHll(
       const [db, schema] = object.split(".")
       await executeSnowflakeQuery(`CALL ${object}()`, { database: db, schema })
     }
-    // 2. Append mapped rows into HLL.
-    const hllCols = pairs.map(([h]) => h).join(", ")
-    const srcCols = pairs.map(([, s]) => s).join(", ")
+    // 2. Append mapped rows into HLL (CAMPAIGNID = campaign id when known).
+    const { hllCols, selectExprs } = buildHllInsertLists(pairs, campaignId, hllHasCampaignId)
     await executeSnowflakeQuery(
-      `INSERT INTO ${HLL_TABLE} (${hllCols}) SELECT ${srcCols} FROM ${readFrom}`,
+      `INSERT INTO ${HLL_TABLE} (${hllCols.join(", ")}) SELECT ${selectExprs.join(", ")} FROM ${readFrom}`,
       { database: HLL_TABLE.split(".")[0], schema: HLL_TABLE.split(".")[1] }
     )
     // 3. How many rows landed (best-effort count of the source).

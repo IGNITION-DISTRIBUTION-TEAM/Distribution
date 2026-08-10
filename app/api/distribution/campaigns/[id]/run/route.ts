@@ -9,8 +9,7 @@ import {
   RUN_PROC_IDENT,
 } from "@/app/api/campaign-config/route"
 import { IDENT_COL } from "@/app/api/distribution/tasks/route"
-
-const HLL_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
+import { HLL_TABLE, CAMPAIGN_ID_COL, hllColumnSet, buildHllInsertLists } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -77,7 +76,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // ── Step 1: initial source → HLL ────────────────────────────────────────
   const sourceKind = (config.SOURCE_KIND ?? "none").trim().toLowerCase()
   if (sourceKind === "proc" || sourceKind === "view") {
-    const r = await runInitialSource(sourceKind, config)
+    const r = await runInitialSource(sourceKind, config, campaignId)
     results.push(r)
     if (r.status === "error") return finish(campaignId, results)
   } else {
@@ -122,7 +121,8 @@ async function runInitialSource(
     SOURCE_OBJECT: string | null
     SOURCE_MAPPING_JSON: string | null
     UPLOAD_TARGET_TABLE: string | null
-  }
+  },
+  campaignId: number
 ): Promise<StepResult> {
   const step = "Initial source"
   const object = (config.SOURCE_OBJECT ?? "").trim()
@@ -147,10 +147,22 @@ async function runInitialSource(
   } catch {
     mapping = {}
   }
-  const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s))
-  if (pairs.length === 0) {
-    return { step, status: "error", message: "No column mapping is set for the initial source." }
+  const pairs = Object.entries(mapping).filter(([h, s]) => IDENT_COL.test(h) && typeof s === "string" && IDENT_COL.test(s)) as [string, string][]
+
+  // CAMPAIGNID is auto-filled from the known campaign id, so a mapping that only
+  // covers CAMPAIGNID (or is empty because CAMPAIGNID is handled) still needs at
+  // least one real source column to carry data across.
+  const nonIdPairs = pairs.filter(([h]) => h.toUpperCase() !== CAMPAIGN_ID_COL)
+  if (nonIdPairs.length === 0) {
+    return { step, status: "error", message: "Map at least one source column (besides the auto-filled campaign id) into HLL." }
   }
+
+  // Does the HLL target actually have a CAMPAIGNID column? Default to yes on a
+  // metadata read failure — the campaign id is a required HLL field here.
+  let hllHasCampaignId = true
+  try {
+    hllHasCampaignId = (await hllColumnSet()).has(CAMPAIGN_ID_COL)
+  } catch { /* keep the default */ }
 
   try {
     // 1. If proc, run it to (re)populate its upload/stage table.
@@ -158,11 +170,10 @@ async function runInitialSource(
       const { sql, database, schema } = buildCall(object)
       await executeSnowflakeQuery(sql, { database, schema })
     }
-    // 2. Append mapped rows into HLL.
-    const hllCols = pairs.map(([h]) => h).join(", ")
-    const srcCols = pairs.map(([, s]) => s).join(", ")
+    // 2. Append mapped rows into HLL, with CAMPAIGNID = this campaign's id.
+    const { hllCols, selectExprs } = buildHllInsertLists(pairs, campaignId, hllHasCampaignId)
     await executeSnowflakeQuery(
-      `INSERT INTO ${HLL_TABLE} (${hllCols}) SELECT ${srcCols} FROM ${readFrom}`,
+      `INSERT INTO ${HLL_TABLE} (${hllCols.join(", ")}) SELECT ${selectExprs.join(", ")} FROM ${readFrom}`,
       { database: HLL_TABLE.split(".")[0], schema: HLL_TABLE.split(".")[1] }
     )
     // 3. Best-effort row count of the source.
