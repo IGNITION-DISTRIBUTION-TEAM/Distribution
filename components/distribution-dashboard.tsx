@@ -202,6 +202,28 @@ async function runStepwiseAt(
   return { ok: !failed, ran }
 }
 
+// Run a single step (submit async + poll to completion). Used by the per-step
+// "Run" buttons in Settings.
+async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; error?: string }> {
+  const subRes = await fetch(`${base}/step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  })
+  const sub = await subRes.json().catch(() => ({}))
+  if ((sub as { error?: string }).error) return { ok: false, error: (sub as { error: string }).error }
+  const handle = (sub as { handle?: string }).handle
+  if (!handle) return { ok: false, error: "No statement handle returned" }
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 2500))
+    const pr = await fetch(`${base}/step?handle=${encodeURIComponent(handle)}`, { cache: "no-store" })
+    const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
+    if (ps.status === "running") continue
+    if (ps.status === "error") return { ok: false, error: ps.error || "Step failed" }
+    return { ok: true }
+  }
+}
+
 // Icon for a step's state (spinner while running).
 function StepStatusIcon({ status }: { status: StepView["status"] }) {
   if (status === "running") return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-400" />
@@ -5492,6 +5514,10 @@ type CampaignConfig = {
   UPDATE_HLL_PROCEDURE?: string | null
   UPDATE_HLL_PROCEDURES?: string | null
   SYNC_PROCEDURE?: string | null
+  SYNC_SOURCE_VIEW?: string | null
+  SYNC_TARGET_TABLE?: string | null
+  SYNC_COLUMNS?: string | null
+  SYNC_BATCH_SIZE?: number | string | null
   SOURCE_KIND?: string | null
   SOURCE_OBJECT?: string | null
   SOURCE_MAPPING_JSON?: string | null
@@ -5541,6 +5567,11 @@ function CampaignSettingsPanel() {
   const [loadHistoryProc, setLoadHistoryProc] = useState("")
   const [updateHllProcs, setUpdateHllProcs] = useState<string[]>([])
   const [syncProcedure, setSyncProcedure] = useState("")
+  // Structured sync (SP_SYNC_TO_SQLSERVER_LARGE): the source view is interchangeable.
+  const [syncSourceView, setSyncSourceView] = useState("")
+  const [syncTargetTable, setSyncTargetTable] = useState("")
+  const [syncColumns, setSyncColumns] = useState("")
+  const [syncBatch, setSyncBatch] = useState("10000")
   // Step 1 — initial source
   const [sourceKind, setSourceKind] = useState<"none" | "proc" | "view">("none")
   const [sourceObject, setSourceObject] = useState("")
@@ -5561,6 +5592,9 @@ function CampaignSettingsPanel() {
   const [lastRunStatus, setLastRunStatus] = useState<string | null>(null)
   const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
   const [history, setHistory] = useState<RunHistoryRow[]>([])
+  // Per-step run: the saved config's plan + each step's transient status.
+  const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
+  const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
 
   // Run history is shown for the whole campaign (all its configs).
   const loadHistory = useCallback(async (cid: string) => {
@@ -5693,6 +5727,7 @@ function CampaignSettingsPanel() {
     setLoadHistoryProc("")
     setUpdateHllProcs([])
     setSyncProcedure("")
+    setSyncSourceView(""); setSyncTargetTable(""); setSyncColumns(""); setSyncBatch("10000")
     setSourceKind("none")
     setSourceObject("")
     setSourceMapping({})
@@ -5725,6 +5760,10 @@ function CampaignSettingsPanel() {
       else setUpdateHllProcs(c.UPDATE_HLL_PROCEDURE ? [c.UPDATE_HLL_PROCEDURE] : [])
     } catch { setUpdateHllProcs(c.UPDATE_HLL_PROCEDURE ? [c.UPDATE_HLL_PROCEDURE] : []) }
     setSyncProcedure(c.SYNC_PROCEDURE ?? "")
+    setSyncSourceView(c.SYNC_SOURCE_VIEW ?? "")
+    setSyncTargetTable(c.SYNC_TARGET_TABLE ?? "")
+    setSyncColumns(c.SYNC_COLUMNS ?? "")
+    setSyncBatch(c.SYNC_BATCH_SIZE != null ? String(c.SYNC_BATCH_SIZE) : "10000")
     setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
     setSourceObject(c.SOURCE_OBJECT ?? "")
     try {
@@ -5800,6 +5839,7 @@ function CampaignSettingsPanel() {
           sftpPassword: password, sftpPrivateKey: privateKey, sftpRemotePath: remotePath,
           uploadTargetTable: targetTable, loadHistoryProcedure: loadHistoryProc,
           updateHllProcedures: updateHllProcs, syncProcedure,
+          syncSourceView, syncTargetTable, syncColumns, syncBatchSize: syncBatch,
           sourceKind, sourceObject, sourceMapping,
           leadExpiryDays: Number(leadExpiryDays) || 45, batchNameTemplate: batchTemplate, isActive,
         }),
@@ -5833,6 +5873,18 @@ function CampaignSettingsPanel() {
 
   // Run the whole distribution in order: initial source → load history →
   // update HLL → sync. Stops at the first failed step.
+  // Load the saved config's step plan (for the per-step Run buttons).
+  useEffect(() => {
+    if (configId == null) { setPlan([]); setStepState({}); return }
+    let cancelled = false
+    fetch(`/api/distribution/configs/${configId}/run/plan`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPlan(Array.isArray(d.steps) ? d.steps : []) })
+      .catch(() => { if (!cancelled) setPlan([]) })
+    setStepState({})
+    return () => { cancelled = true }
+  }, [configId])
+
   const runFullDistribution = async () => {
     if (configId == null) { toast.error("Save this automation before running it."); return }
     setRunning(true)
@@ -5849,6 +5901,24 @@ function CampaignSettingsPanel() {
     } finally {
       setRunning(false)
       loadHistory(campaignId) // refresh the history list with this run
+    }
+  }
+
+  // Run a single step of the saved config.
+  const runOneStep = async (key: string) => {
+    if (configId == null) { toast.error("Save this automation first."); return }
+    setStepState((s) => ({ ...s, [key]: { status: "running" } }))
+    try {
+      const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
+      setStepState((s) => ({ ...s, [key]: { status: res.ok ? "success" : "error", message: res.error } }))
+      if (res.ok) toast.success("Step complete")
+      else toast.error(res.error || "Step failed")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setStepState((s) => ({ ...s, [key]: { status: "error", message: msg } }))
+      toast.error(msg)
+    } finally {
+      loadHistory(campaignId)
     }
   }
 
@@ -6276,13 +6346,56 @@ function CampaignSettingsPanel() {
                     Specific to this campaign. In the run they execute in this order (Step 4). Include any argument, e.g. <span className="font-mono">…SP_X(608)</span>.
                   </p>
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <Label className="mb-1.5 block text-xs text-muted-foreground">Sync procedure</Label>
                   <Input
                     value={syncProcedure}
                     onChange={(e) => setSyncProcedure(e.target.value)}
-                    placeholder="DATABASE.SCHEMA.PROC"
+                    placeholder="DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_SYNC_TO_SQLSERVER_LARGE"
                     className="font-mono text-sm"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    If a <span className="font-medium text-foreground">source view</span> is set below, the sync runs
+                    <span className="font-mono"> CALL proc(&apos;view&apos;, &apos;target&apos;, &apos;columns&apos;, batch)</span>. Otherwise the procedure is called on its own.
+                  </p>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Sync source view <span className="text-emerald-400">(interchangeable)</span></Label>
+                  <Input
+                    value={syncSourceView}
+                    onChange={(e) => setSyncSourceView(e.target.value)}
+                    placeholder="DATAWAREHOUSE.DISTRIBUTION.VW_ONAIR_ULTRA_COMBINED_SS_adhoc"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Sync target table</Label>
+                  <Input
+                    value={syncTargetTable}
+                    onChange={(e) => setSyncTargetTable(e.target.value)}
+                    placeholder="Upload.TempUpload"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Batch size</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={syncBatch}
+                    onChange={(e) => setSyncBatch(e.target.value)}
+                    placeholder="10000"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Sync columns (comma-separated)</Label>
+                  <Textarea
+                    value={syncColumns}
+                    onChange={(e) => setSyncColumns(e.target.value)}
+                    placeholder="CustomerCode,CampaignId,IdNumber,CellNumber,…"
+                    rows={3}
+                    className="font-mono text-xs"
                   />
                 </div>
               </div>
@@ -6340,6 +6453,37 @@ function CampaignSettingsPanel() {
 
               {!configExists && (
                 <p className="mt-2 text-xs text-amber-400">Save this automation before running.</p>
+              )}
+
+              {/* Run each step individually (uses the last saved config). */}
+              {configExists && plan.length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run individual steps</div>
+                  <ul className="flex flex-col divide-y divide-border/60 rounded-md border border-border">
+                    {plan.map((s) => {
+                      const st = stepState[s.key]
+                      return (
+                        <li key={s.key} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+                          <span className="flex items-center gap-2">
+                            {st ? <StepStatusIcon status={st.status} /> : <span className="h-4 w-4" />}
+                            <span className="text-foreground">{s.label}</span>
+                            {st?.status === "error" && st.message && <span className="text-rose-400">— {st.message}</span>}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={running || st?.status === "running"}
+                            onClick={() => runOneStep(s.key)}
+                          >
+                            {st?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Run"}
+                          </Button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  <p className="mt-1 text-xs text-muted-foreground">Runs against the last <span className="font-medium text-foreground">saved</span> config. Save after edits before running a step.</p>
+                </div>
               )}
 
               {runSteps.length > 0 && (

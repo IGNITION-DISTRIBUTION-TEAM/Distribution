@@ -134,9 +134,26 @@ export async function POST(request: NextRequest) {
   const badProc = updateHllList.find((p) => !RUN_PROC_IDENT.test(p))
   if (badProc) return NextResponse.json({ error: `Update-HLL procedure is invalid: ${badProc}` }, { status: 400 })
 
+  // Structured sync fields (validated at run in buildStepSql).
+  const syncSourceView = body.syncSourceView != null ? String(body.syncSourceView).trim() : ""
+  const syncTargetTable = body.syncTargetTable != null ? String(body.syncTargetTable).trim() : ""
+  const syncColumns = body.syncColumns != null ? String(body.syncColumns).trim() : ""
+  const syncBatchRaw = body.syncBatchSize != null ? String(body.syncBatchSize).trim() : ""
+  const syncBatch = /^[0-9]+$/.test(syncBatchRaw) ? Number(syncBatchRaw) : 10000
+  if (syncSourceView && !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(syncSourceView)) {
+    return NextResponse.json({ error: 'Sync source view must be "DATABASE.SCHEMA.NAME"' }, { status: 400 })
+  }
+
   try {
     await ensureConfigsTable()
-    const cols: [string, string][] = [["CONFIG_NAME", sqlStr(name)], ...colsFromParsed(parsed as unknown as Record<string, unknown>, updateHllList)]
+    const cols: [string, string][] = [
+      ["CONFIG_NAME", sqlStr(name)],
+      ...colsFromParsed(parsed as unknown as Record<string, unknown>, updateHllList),
+      ["SYNC_SOURCE_VIEW", sqlStr(syncSourceView)],
+      ["SYNC_TARGET_TABLE", sqlStr(syncTargetTable)],
+      ["SYNC_COLUMNS", sqlStr(syncColumns)],
+      ["SYNC_BATCH_SIZE", String(syncBatch)],
+    ]
     if (configId !== null) {
       const setSql = [...cols.map(([c, v]) => `${c} = ${v}`), "UPDATED_AT = CURRENT_TIMESTAMP()", `UPDATED_BY = ${sqlStr(actor)}`].join(", ")
       await executeSnowflakeQuery(`UPDATE ${CONFIGS_TABLE} SET ${setSql} WHERE CONFIG_ID = ${configId}`, SF_OPTS)

@@ -39,6 +39,8 @@ export const CONFIGS_COLUMNS: [string, string][] = [
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
   ["UPDATE_HLL_PROCEDURES", "VARCHAR"],
+  // Structured sync (SP_SYNC_TO_SQLSERVER_LARGE): view is interchangeable.
+  ["SYNC_SOURCE_VIEW", "VARCHAR"], ["SYNC_TARGET_TABLE", "VARCHAR"], ["SYNC_COLUMNS", "VARCHAR"], ["SYNC_BATCH_SIZE", "NUMBER"],
   ["LEAD_EXPIRY_DAYS", "NUMBER"], ["BATCH_NAME_TEMPLATE", "VARCHAR"],
   ["IS_ACTIVE", "BOOLEAN"],
   ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
@@ -175,7 +177,11 @@ export function planSteps(config: RunConfigRow): StepDef[] {
 
 const PROC_COL: Record<string, string> = {
   load_history: "LOAD_HISTORY_PROCEDURE",
-  sync: "SYNC_PROCEDURE",
+}
+
+// SQL string literal (single-quoted, quotes escaped).
+function sqlLit(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`
 }
 
 // Build the SQL + exec opts for one step. Throws a clear message on bad config.
@@ -217,6 +223,28 @@ export async function buildStepSql(
       database: HLL_TABLE.split(".")[0],
       schema: HLL_TABLE.split(".")[1],
     }
+  }
+
+  // Sync — structured SP_SYNC_TO_SQLSERVER_LARGE call when a source view is set
+  // (CALL proc('<view>','<target>','<columns>',<batch>)); otherwise a plain proc.
+  if (key === "sync") {
+    const proc = str(config, "SYNC_PROCEDURE")
+    const view = str(config, "SYNC_SOURCE_VIEW")
+    if (view) {
+      if (!RUN_QUALIFIED.test(proc)) throw new Error(`Sync procedure must be DATABASE.SCHEMA.PROC: ${proc || "(empty)"}`)
+      if (!RUN_QUALIFIED.test(view)) throw new Error(`Sync source view must be DATABASE.SCHEMA.NAME: ${view}`)
+      const target = str(config, "SYNC_TARGET_TABLE") || "Upload.TempUpload"
+      if (!/^[A-Za-z0-9_.]+$/.test(target)) throw new Error(`Sync target table invalid: ${target}`)
+      const cols = str(config, "SYNC_COLUMNS").replace(/\s+/g, "")
+      if (!/^[A-Za-z0-9_,]+$/.test(cols)) throw new Error("Sync columns must be a comma-separated list of column names.")
+      const batchRaw = str(config, "SYNC_BATCH_SIZE")
+      const batch = /^[0-9]+$/.test(batchRaw) ? batchRaw : "10000"
+      const sql = `CALL ${proc}(${sqlLit(view)}, ${sqlLit(target)}, ${sqlLit(cols)}, ${batch})`
+      const [database, schema] = proc.split(".")
+      return { sql, database, schema }
+    }
+    if (!RUN_PROC_IDENT.test(proc)) throw new Error(`Configured sync procedure is invalid: ${proc || "(empty)"}`)
+    return { sql: buildCall(proc), ...dbSchemaOf(proc) }
   }
 
   // Update HLL — one of possibly several procedures (key "update_hll" or
