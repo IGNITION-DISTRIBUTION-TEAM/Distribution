@@ -2063,6 +2063,7 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
   const [history, setHistory] = useState<RunHistoryRow[]>([])
   const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
   const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
+  const [syncBg, setSyncBg] = useState<{ status: string; at?: string | null; finishedAt?: string | null; error?: string } | null>(null)
 
   const loadHistory = useCallback(async () => {
     if (!campaignId) { setHistory([]); return }
@@ -2073,7 +2074,16 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
     } catch { setHistory([]) }
   }, [campaignId])
 
+  const checkSync = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/distribution/configs/${configId}/sync`, { cache: "no-store" })
+      const d = await res.json()
+      setSyncBg(d && d.status ? d : null)
+    } catch { setSyncBg(null) }
+  }, [configId])
+
   useEffect(() => { loadHistory() }, [loadHistory])
+  useEffect(() => { checkSync() }, [checkSync])
 
   // Load the config's step plan for the per-step Run buttons.
   useEffect(() => {
@@ -2097,6 +2107,7 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
     } finally {
       setRunning(false)
       loadHistory()
+      checkSync()
     }
   }
 
@@ -2121,6 +2132,7 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
       toast.error(msg)
     } finally {
       loadHistory()
+      checkSync()
     }
   }
 
@@ -2131,6 +2143,27 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
         source → Load into history → Update HLL → Sync — stopping at the first failure. The <span className="font-medium text-foreground">Sync</span> step
         is fire-and-forget (keeps running if you leave). Edit the config in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
       </div>
+
+      {/* Live status of the fire-and-forget sync. */}
+      {syncBg && syncBg.status !== "none" && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm">
+          {syncBg.status === "running" ? <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
+            : syncBg.status === "done" ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            : <XCircle className="h-4 w-4 text-rose-400" />}
+          <span className="text-muted-foreground">Sync:</span>
+          <span className={
+            syncBg.status === "done" ? "font-medium text-emerald-400"
+            : syncBg.status === "error" ? "font-medium text-rose-400"
+            : "font-medium text-sky-400"
+          }>
+            {syncBg.status === "running" ? "still running…" : syncBg.status}
+          </span>
+          {syncBg.at && <span className="text-xs text-muted-foreground">· started {syncBg.at}</span>}
+          {syncBg.finishedAt && <span className="text-xs text-muted-foreground">· finished {syncBg.finishedAt}</span>}
+          {syncBg.status === "error" && syncBg.error && <span className="text-xs text-rose-400">· {syncBg.error}</span>}
+          <Button type="button" variant="ghost" size="sm" onClick={checkSync}>Refresh</Button>
+        </div>
+      )}
 
       <Button onClick={run} disabled={running}>
         {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
