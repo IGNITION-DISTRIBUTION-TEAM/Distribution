@@ -2286,8 +2286,18 @@ const PROC_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "full", label: "Full run (all configured)" },
 ]
 const procKindLabel = (k: string | null) => PROC_KIND_OPTIONS.find((o) => o.value === (k ?? "none"))?.label ?? "—"
-type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string; campaignId: string; campaignTitle: string; procKind: string; sourceKind: string; sourceObject: string; sourceTable: string; mapping: Record<string, string>; standaloneProc: string }
-const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "", campaignId: "", campaignTitle: "", procKind: "none", sourceKind: "none", sourceObject: "", sourceTable: "", mapping: {}, standaloneProc: "" }
+type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; scheduleFrequency: string; scheduleDow: string; scheduleTime: string; description: string; campaignId: string; campaignTitle: string; procKind: string; sourceKind: string; sourceObject: string; sourceTable: string; mapping: Record<string, string>; standaloneProc: string }
+const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", scheduleFrequency: "manual", scheduleDow: "Mon", scheduleTime: "08:00", description: "", campaignId: "", campaignTitle: "", procKind: "none", sourceKind: "none", sourceObject: "", sourceTable: "", mapping: {}, standaloneProc: "" }
+const FREQUENCY_OPTIONS = [
+  { value: "manual", label: "Manual (Run now only)" },
+  { value: "hourly", label: "Hourly (~every hour)" },
+  { value: "daily", label: "Daily (at a time)" },
+  { value: "weekly", label: "Weekly (day + time)" },
+]
+const DOW_OPTIONS = [
+  { value: "Mon", label: "Monday" }, { value: "Tue", label: "Tuesday" }, { value: "Wed", label: "Wednesday" },
+  { value: "Thu", label: "Thursday" }, { value: "Fri", label: "Friday" }, { value: "Sat", label: "Saturday" }, { value: "Sun", label: "Sunday" },
+]
 
 function taskStatusClass(s: string): string {
   switch (s) {
@@ -2400,7 +2410,7 @@ function AutomationContent() {
   const openEdit = (t: AutomationTask) => {
     let mapping: Record<string, string> = {}
     try { mapping = t.MAPPING_JSON ? JSON.parse(t.MAPPING_JSON) : {} } catch { mapping = {} }
-    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none", sourceKind: t.SOURCE_KIND ?? "none", sourceObject: t.SOURCE_OBJECT ?? "", sourceTable: t.SOURCE_TABLE ?? "", mapping, standaloneProc: t.STANDALONE_PROC ?? "" })
+    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", scheduleFrequency: t.SCHEDULE_FREQUENCY ?? "manual", scheduleDow: t.SCHEDULE_DOW ?? "Mon", scheduleTime: t.SCHEDULE_TIME ?? "08:00", description: t.DESCRIPTION ?? "", campaignId: t.CAMPAIGN_ID ?? "", campaignTitle: t.CAMPAIGN_TITLE ?? "", procKind: t.PROC_KIND ?? "none", sourceKind: t.SOURCE_KIND ?? "none", sourceObject: t.SOURCE_OBJECT ?? "", sourceTable: t.SOURCE_TABLE ?? "", mapping, standaloneProc: t.STANDALONE_PROC ?? "" })
     setHllCols([]); setSrcCols([]); setColsMsg(null)
     setEditing(t)
   }
@@ -2508,8 +2518,33 @@ function AutomationContent() {
               <Input id="task-target" className="mt-1" value={form.target} onChange={(e) => setF("target", e.target.value)} placeholder="CRM / dialler / campaign" />
             </div>
             <div>
-              <Label htmlFor="task-schedule">Schedule</Label>
-              <Input id="task-schedule" className="mt-1" value={form.schedule} onChange={(e) => setF("schedule", e.target.value)} placeholder="e.g. Real-time, Daily 08:00" />
+              <Label>Frequency</Label>
+              <Select value={form.scheduleFrequency} onValueChange={(v) => setF("scheduleFrequency", v)}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{FREQUENCY_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {form.scheduleFrequency === "manual"
+                  ? "Runs only when you click Run now."
+                  : "Runs automatically when the task is Active (checked every 15 min, times in SAST). Requires the scheduler to be enabled."}
+              </p>
+              {(form.scheduleFrequency === "daily" || form.scheduleFrequency === "weekly") && (
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {form.scheduleFrequency === "weekly" && (
+                    <div>
+                      <Label className="mb-1 block text-xs text-muted-foreground">Day</Label>
+                      <Select value={form.scheduleDow} onValueChange={(v) => setF("scheduleDow", v)}>
+                        <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                        <SelectContent>{DOW_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div>
+                    <Label htmlFor="task-time" className="mb-1 block text-xs text-muted-foreground">Time (SAST)</Label>
+                    <Input id="task-time" type="time" className="w-32" value={form.scheduleTime} onChange={(e) => setF("scheduleTime", e.target.value)} />
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <Label>Campaign</Label>
@@ -2680,7 +2715,12 @@ function AutomationContent() {
                     <TableCell className="text-muted-foreground">{t.TASK_TYPE}</TableCell>
                     <TableCell className="text-muted-foreground">{t.TARGET || "—"}</TableCell>
                     <TableCell><Badge variant="outline" className={taskStatusClass(t.STATUS)}>{t.STATUS}</Badge></TableCell>
-                    <TableCell className="text-muted-foreground">{t.SCHEDULE || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {t.SCHEDULE_FREQUENCY === "hourly" ? "Hourly"
+                        : t.SCHEDULE_FREQUENCY === "daily" ? `Daily ${t.SCHEDULE_TIME ?? ""}`.trim()
+                        : t.SCHEDULE_FREQUENCY === "weekly" ? `Weekly ${t.SCHEDULE_DOW ?? ""} ${t.SCHEDULE_TIME ?? ""}`.trim()
+                        : (t.SCHEDULE || "Manual")}
+                    </TableCell>
                     <TableCell className="text-xs">
                       {t.LAST_RUN_AT ? (
                         <div className="flex flex-col gap-0.5" title={t.LAST_RUN_MESSAGE ?? undefined}>

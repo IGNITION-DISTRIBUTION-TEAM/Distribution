@@ -68,6 +68,9 @@ export type TaskRow = {
   SOURCE_TABLE: string | null
   MAPPING_JSON: string | null
   STANDALONE_PROC: string | null
+  SCHEDULE_FREQUENCY: string | null
+  SCHEDULE_DOW: string | null
+  SCHEDULE_TIME: string | null
   LAST_RUN_AT: string | null
   LAST_RUN_STATUS: string | null
   LAST_RUN_MESSAGE: string | null
@@ -91,6 +94,26 @@ export function validateName(raw: unknown): string | { error: string } {
   if (t.length > 200) return { error: "name is too long (max 200)" }
   return t
 }
+// How often an Active task runs unattended (checked by the cron runner).
+export const SCHEDULE_FREQUENCIES = ["manual", "hourly", "daily", "weekly"] as const
+export function normFrequency(raw: unknown): string {
+  const s = String(raw ?? "").trim().toLowerCase()
+  return (SCHEDULE_FREQUENCIES as readonly string[]).includes(s) ? s : "manual"
+}
+// Minimum minutes between auto-runs per frequency (interval-based, timezone-safe).
+export const FREQ_MINUTES: Record<string, number> = { hourly: 55, daily: 1380, weekly: 10020 }
+
+// Day-of-week for weekly schedules. Matches Snowflake DAYNAME() output.
+export const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
+export function normDow(raw: unknown): string {
+  const s = String(raw ?? "").trim()
+  return (DOW_NAMES as readonly string[]).includes(s) ? s : "Mon"
+}
+export function normTime(raw: unknown): string {
+  const s = String(raw ?? "").trim()
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(s) ? s : "08:00"
+}
+
 export function normType(raw: unknown): string {
   const s = String(raw ?? "").trim()
   return (TASK_TYPES as readonly string[]).includes(s) ? s : "Custom"
@@ -108,7 +131,7 @@ export async function ensureTable(): Promise<void> {
        STATUS VARCHAR, SCHEDULE VARCHAR,
        CAMPAIGN_ID VARCHAR, CAMPAIGN_TITLE VARCHAR, PROC_KIND VARCHAR,
        SOURCE_KIND VARCHAR, SOURCE_OBJECT VARCHAR, SOURCE_TABLE VARCHAR, MAPPING_JSON VARCHAR,
-       STANDALONE_PROC VARCHAR,
+       STANDALONE_PROC VARCHAR, SCHEDULE_FREQUENCY VARCHAR, SCHEDULE_DOW VARCHAR, SCHEDULE_TIME VARCHAR,
        LAST_RUN_AT TIMESTAMP_NTZ, LAST_RUN_STATUS VARCHAR, LAST_RUN_MESSAGE VARCHAR,
        CREATED_BY VARCHAR,
        CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -120,7 +143,7 @@ export async function ensureTable(): Promise<void> {
   const addCols = [
     "CAMPAIGN_ID VARCHAR", "CAMPAIGN_TITLE VARCHAR", "PROC_KIND VARCHAR",
     "SOURCE_KIND VARCHAR", "SOURCE_OBJECT VARCHAR", "SOURCE_TABLE VARCHAR", "MAPPING_JSON VARCHAR",
-    "STANDALONE_PROC VARCHAR",
+    "STANDALONE_PROC VARCHAR", "SCHEDULE_FREQUENCY VARCHAR", "SCHEDULE_DOW VARCHAR", "SCHEDULE_TIME VARCHAR",
     "LAST_RUN_AT TIMESTAMP_NTZ", "LAST_RUN_STATUS VARCHAR", "LAST_RUN_MESSAGE VARCHAR",
   ]
   for (const col of addCols) {
@@ -141,7 +164,7 @@ export async function GET(request: NextRequest) {
     const rows = await executeSnowflakeQuery<TaskRow>(
       `SELECT ID, NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE,
               CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
-              SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC,
+              SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC, SCHEDULE_FREQUENCY, SCHEDULE_DOW, SCHEDULE_TIME,
               TO_VARCHAR(LAST_RUN_AT, 'YYYY-MM-DD HH24:MI') AS LAST_RUN_AT,
               LAST_RUN_STATUS, LAST_RUN_MESSAGE, CREATED_BY,
               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
@@ -180,12 +203,12 @@ export async function POST(request: NextRequest) {
     const mapping = validateMapping(body.mapping)
     await executeSnowflakeQuery(
       `INSERT INTO ${TABLE} (NAME, DESCRIPTION, TASK_TYPE, TARGET, STATUS, SCHEDULE, CAMPAIGN_ID, CAMPAIGN_TITLE, PROC_KIND,
-                             SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC, CREATED_BY)
+                             SOURCE_KIND, SOURCE_OBJECT, SOURCE_TABLE, MAPPING_JSON, STANDALONE_PROC, SCHEDULE_FREQUENCY, SCHEDULE_DOW, SCHEDULE_TIME, CREATED_BY)
        VALUES (${sqlStr(name)}, ${sqlNullable(body.description)}, ${sqlStr(normType(body.type))},
                ${sqlNullable(body.target)}, ${sqlStr(normStatus(body.status))}, ${sqlNullable(body.schedule)},
                ${sqlNullable(body.campaignId)}, ${sqlNullable(body.campaignTitle)}, ${sqlStr(normProcKind(body.procKind))},
                ${sqlStr(normSourceKind(body.sourceKind))}, ${sqlNullable(body.sourceObject)}, ${sqlNullable(body.sourceTable)},
-               ${mapping ? sqlStr(mapping) : "NULL"}, ${standaloneProc ? sqlStr(standaloneProc) : "NULL"}, ${sqlStr(guard.email)})`,
+               ${mapping ? sqlStr(mapping) : "NULL"}, ${standaloneProc ? sqlStr(standaloneProc) : "NULL"}, ${sqlStr(normFrequency(body.scheduleFrequency))}, ${sqlStr(normDow(body.scheduleDow))}, ${sqlStr(normTime(body.scheduleTime))}, ${sqlStr(guard.email)})`,
       SF_OPTS
     )
     return NextResponse.json({ ok: true })

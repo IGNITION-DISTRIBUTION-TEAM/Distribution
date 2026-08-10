@@ -31,10 +31,22 @@ function parseId(raw: string): number | null {
   return Number.isInteger(n) && n >= 0 ? n : null
 }
 
+// A valid cron secret (Vercel sets Authorization: Bearer <CRON_SECRET>; we also
+// accept an x-cron-secret header) lets the scheduler run a task without a user
+// session.
+function hasCronAuth(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET
+  if (!secret) return false
+  const auth = request.headers.get("authorization")
+  return request.headers.get("x-cron-secret") === secret || auth === `Bearer ${secret}`
+}
+
 // POST — run the task's campaign procedure(s) and record the outcome on the task.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireDepartmentAccess(request, "distribution")
-  if (guard instanceof NextResponse) return guard
+  if (!hasCronAuth(request)) {
+    const guard = await requireDepartmentAccess(request, "distribution")
+    if (guard instanceof NextResponse) return guard
+  }
   const { id } = await params
   const taskId = parseId(id)
   if (taskId === null) return NextResponse.json({ error: "Invalid task id" }, { status: 400 })
@@ -218,8 +230,8 @@ async function runSourceToHll(
 async function recordRun(taskId: number, status: string, message: string): Promise<void> {
   try {
     await executeSnowflakeQuery(
-      `UPDATE ${TABLE} SET LAST_RUN_AT = CURRENT_TIMESTAMP(), LAST_RUN_STATUS = ${sqlStr(status)},
-              LAST_RUN_MESSAGE = ${sqlStr(message.slice(0, 4000))}, UPDATED_AT = CURRENT_TIMESTAMP()
+      `UPDATE ${TABLE} SET LAST_RUN_AT = SYSDATE(), LAST_RUN_STATUS = ${sqlStr(status)},
+              LAST_RUN_MESSAGE = ${sqlStr(message.slice(0, 4000))}, UPDATED_AT = SYSDATE()
        WHERE ID = ${taskId}`,
       SF_OPTS
     )
