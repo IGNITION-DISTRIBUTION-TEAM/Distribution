@@ -5943,6 +5943,7 @@ function CampaignSettingsPanel() {
               </div>
             </div>
 
+            {leadSource === "sftp" && (<>
             <Separator />
 
             <div>
@@ -6011,7 +6012,9 @@ function CampaignSettingsPanel() {
                 Credentials are stored in plaintext in Snowflake. Restrict access to this table.
               </p>
             </div>
+            </>)}
 
+            {leadSource === "snowflake" && (<>
             <Separator />
 
             <div>
@@ -6192,6 +6195,7 @@ function CampaignSettingsPanel() {
                 </div>
               </div>
             </div>
+            </>)}
 
             <Separator />
 
@@ -6199,7 +6203,7 @@ function CampaignSettingsPanel() {
               <div className="flex items-center gap-3">
                 <Switch checked={isActive} onCheckedChange={setIsActive} id="config-active" />
                 <Label htmlFor="config-active" className="text-sm text-foreground">
-                  Automation active for this campaign
+                  Automation active
                 </Label>
               </div>
               <Button onClick={handleSave} disabled={saving || configLoading}>
