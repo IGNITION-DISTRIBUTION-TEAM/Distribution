@@ -134,7 +134,8 @@ type StepView = { step: string; status: "pending" | "running" | "success" | "err
 // changes. Throws on plan errors (no config / inactive).
 async function runDistributionStepwise(
   campaignId: string,
-  setSteps: (steps: StepView[]) => void
+  setSteps: (steps: StepView[]) => void,
+  campaignTitle?: string
 ): Promise<{ ok: boolean; ran: number }> {
   const base = `/api/distribution/campaigns/${campaignId}/run`
   const planRes = await fetch(`${base}/plan`, { cache: "no-store" })
@@ -185,7 +186,7 @@ async function runDistributionStepwise(
   await fetch(`${base}/record`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ok: !failed, summary }),
+    body: JSON.stringify({ ok: !failed, summary, ran, steps: views, campaignTitle: campaignTitle ?? null }),
   }).catch(() => {})
 
   return { ok: !failed, ran }
@@ -1970,7 +1971,7 @@ function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: strin
     setSteps([])
     setNoConfig(false)
     try {
-      const res = await runDistributionStepwise(campaignId, setSteps)
+      const res = await runDistributionStepwise(campaignId, setSteps, campaignTitle)
       if (res.ok) toast.success(`Distribution complete — ${res.ran} step(s) ran`)
       else toast.error("Distribution failed — see steps below")
     } catch (err) {
@@ -5409,6 +5410,15 @@ type CampaignConfig = {
   LAST_RUN_MESSAGE?: string | null
 }
 
+type RunHistoryRow = {
+  ID: number | string
+  CREATED_AT: string | null
+  STATUS: string | null
+  RAN: number | string | null
+  SUMMARY: string | null
+  CREATED_BY: string | null
+}
+
 function CampaignSettingsPanel() {
   // --- Campaign picker ---
   const [campaignId, setCampaignId] = useState("")
@@ -5450,6 +5460,16 @@ function CampaignSettingsPanel() {
   const [lastRunAt, setLastRunAt] = useState<string | null>(null)
   const [lastRunStatus, setLastRunStatus] = useState<string | null>(null)
   const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
+  const [history, setHistory] = useState<RunHistoryRow[]>([])
+
+  const loadHistory = useCallback(async (cid: string) => {
+    if (!cid) { setHistory([]); return }
+    try {
+      const res = await fetch(`/api/distribution/campaigns/${cid}/history`, { cache: "no-store" })
+      const data = await res.json()
+      setHistory(Array.isArray(data.rows) ? (data.rows as RunHistoryRow[]) : [])
+    } catch { setHistory([]) }
+  }, [])
 
   const loadSourceColumns = async () => {
     // Proc source maps FROM the stage/upload target table; view maps FROM the view.
@@ -5543,6 +5563,9 @@ function CampaignSettingsPanel() {
   }, [])
 
   const selectedCampaign = campaigns.find((c) => c.id === campaignId)
+
+  // Load this campaign's run history when it's selected.
+  useEffect(() => { loadHistory(campaignId) }, [campaignId, loadHistory])
 
   const resetForm = useCallback(() => {
     setLeadSource("file")
@@ -5680,7 +5703,7 @@ function CampaignSettingsPanel() {
     setRunning(true)
     setRunSteps([])
     try {
-      const res = await runDistributionStepwise(campaignId, setRunSteps)
+      const res = await runDistributionStepwise(campaignId, setRunSteps, selectedCampaign?.title)
       const now = new Date().toISOString().slice(0, 16).replace("T", " ")
       setLastRunAt(now)
       setLastRunStatus(res.ok ? "Success" : "Error")
@@ -5690,6 +5713,7 @@ function CampaignSettingsPanel() {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+      loadHistory(campaignId) // refresh the history list with this run
     }
   }
 
@@ -6124,6 +6148,41 @@ function CampaignSettingsPanel() {
                   ))}
                 </ul>
               )}
+
+              {/* Run history — one row per completed run of this campaign. */}
+              <div className="mt-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run history</div>
+                {history.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No runs recorded yet.</p>
+                ) : (
+                  <div className="max-h-56 overflow-auto rounded-md border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card">
+                        <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                          <th className="px-3 py-2 font-medium">When</th>
+                          <th className="px-3 py-2 font-medium">Status</th>
+                          <th className="px-3 py-2 font-medium">Steps</th>
+                          <th className="px-3 py-2 font-medium">Detail</th>
+                          <th className="px-3 py-2 font-medium">By</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {history.map((h) => (
+                          <tr key={h.ID} className="border-t border-border/50 align-top">
+                            <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{h.CREATED_AT ?? "—"}</td>
+                            <td className="px-3 py-1.5">
+                              <span className={h.STATUS === "Success" ? "font-medium text-emerald-400" : "font-medium text-rose-400"}>{h.STATUS ?? "—"}</span>
+                            </td>
+                            <td className="px-3 py-1.5 text-muted-foreground">{h.RAN ?? 0}</td>
+                            <td className="px-3 py-1.5 text-muted-foreground">{h.SUMMARY ?? ""}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{h.CREATED_BY ?? ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

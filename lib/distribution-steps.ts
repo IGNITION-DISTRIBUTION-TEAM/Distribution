@@ -23,6 +23,23 @@ export type StepDef = { key: string; label: string }
 export const CONFIG_TABLE_REF = CONFIG_TABLE
 export const CONFIG_SF = CONFIG_SF_OPTS
 
+// Append-only log of distribution runs (one row per completed run). Created by
+// the app role, so it needs no ALTER/MODIFY rights on the config table.
+export const RUN_HISTORY_TABLE = `${CONFIG_SF_OPTS.database}.${CONFIG_SF_OPTS.schema}.TSK_DISTRIBUTION_RUN_HISTORY`
+
+export async function ensureRunHistoryTable(): Promise<void> {
+  await executeSnowflakeQuery(
+    `CREATE TABLE IF NOT EXISTS ${RUN_HISTORY_TABLE} (
+       ID NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+       CAMPAIGNID NUMBER, CAMPAIGN_TITLE VARCHAR,
+       STATUS VARCHAR, RAN NUMBER, SUMMARY VARCHAR, STEPS_JSON VARCHAR,
+       CREATED_BY VARCHAR,
+       CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+     )`,
+    CONFIG_SF_OPTS
+  )
+}
+
 function str(config: RunConfigRow, col: string): string {
   const v = config[col]
   return v == null ? "" : String(v).trim()
