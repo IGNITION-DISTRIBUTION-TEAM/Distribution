@@ -7,7 +7,6 @@ import {
   sqlStr,
   RUN_QUALIFIED,
   RUN_PROC_IDENT,
-  ensurePublicConfigColumns,
 } from "@/app/api/campaign-config/route"
 import { IDENT_COL } from "@/app/api/distribution/tasks/route"
 
@@ -55,7 +54,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   let config: Config
   try {
-    await ensurePublicConfigColumns()
     const rows = await executeSnowflakeQuery<Config>(
       `SELECT SOURCE_KIND, SOURCE_OBJECT, SOURCE_MAPPING_JSON, UPLOAD_TARGET_TABLE,
               LOAD_HISTORY_PROCEDURE, UPDATE_HLL_PROCEDURE, SYNC_PROCEDURE, IS_ACTIVE

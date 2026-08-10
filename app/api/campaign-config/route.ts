@@ -191,27 +191,56 @@ export const RUN_QUALIFIED = QUALIFIED_IDENT
 export const RUN_PROC_IDENT = PROC_IDENT
 
 // Ensure the config table has every column, including the run-tracking ones.
-export async function ensurePublicConfigColumns(): Promise<void> {
-  await ensureConfigColumns()
+export async function ensurePublicConfigColumns(): Promise<Set<string>> {
+  return ensureConfigColumns()
 }
 
-async function ensureConfigColumns(): Promise<void> {
-  await executeSnowflakeQuery(
-    `CREATE TABLE IF NOT EXISTS ${TABLE} (${CONFIG_COLUMNS.map(([n, t]) => `${n} ${t}`).join(", ")})`,
-    SF_OPTS
-  )
-  const existing = await executeSnowflakeQuery<{ COLUMN_NAME: string }>(
-    `SELECT COLUMN_NAME FROM DATAWAREHOUSE.INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA = 'LEADS_DISTRIBUTION' AND TABLE_NAME = 'TSK_CAMPAIGN_AUTOMATION_CONFIG'`,
-    SF_OPTS
-  )
-  const have = new Set(existing.map((r) => String(r.COLUMN_NAME).toUpperCase()))
+// Best-effort schema-prep: create the table if absent, then try to add any
+// missing columns. Returns the UPPERCASE set of columns that exist afterward.
+// Each step is wrapped so it never throws — the app role may lack rights to
+// CREATE/ALTER this table (a missing OPTIONAL column must not block a save).
+// The caller writes only to columns that actually exist.
+async function ensureConfigColumns(): Promise<Set<string>> {
+  try {
+    await executeSnowflakeQuery(
+      `CREATE TABLE IF NOT EXISTS ${TABLE} (${CONFIG_COLUMNS.map(([n, t]) => `${n} ${t}`).join(", ")})`,
+      SF_OPTS
+    )
+  } catch (e) {
+    console.error("[campaign-config] create-if-not-exists (best-effort):", e instanceof Error ? e.message : e)
+  }
+
+  const have = new Set<string>()
+  try {
+    const existing = await executeSnowflakeQuery<{ COLUMN_NAME: string }>(
+      `SELECT COLUMN_NAME FROM DATAWAREHOUSE.INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = 'LEADS_DISTRIBUTION' AND TABLE_NAME = 'TSK_CAMPAIGN_AUTOMATION_CONFIG'`,
+      SF_OPTS
+    )
+    for (const r of existing) have.add(String(r.COLUMN_NAME).toUpperCase())
+  } catch (e) {
+    console.error("[campaign-config] column introspection failed:", e instanceof Error ? e.message : e)
+    // Can't tell what exists — assume the full schema so we don't wrongly drop
+    // columns from the upsert. A genuinely-missing column then surfaces as a
+    // clear Snowflake "invalid identifier" error instead of silent data loss.
+    for (const [name] of CONFIG_COLUMNS) have.add(name)
+    return have
+  }
+
   for (const [name, type] of CONFIG_COLUMNS) {
     if (name === "CAMPAIGNID") continue // the key column must already exist
     if (!have.has(name)) {
-      await executeSnowflakeQuery(`ALTER TABLE ${TABLE} ADD COLUMN ${name} ${type}`, SF_OPTS)
+      try {
+        await executeSnowflakeQuery(`ALTER TABLE ${TABLE} ADD COLUMN ${name} ${type}`, SF_OPTS)
+        have.add(name)
+      } catch (e) {
+        // Likely insufficient privileges to ALTER. Skip — the column simply
+        // won't be written to until an admin adds it (see README/grants).
+        console.error(`[campaign-config] could not add column ${name} (best-effort):`, e instanceof Error ? e.message : e)
+      }
     }
   }
+  return have
 }
 
 // Upsert (insert or update) a campaign's config row, keyed by CAMPAIGNID.
@@ -251,24 +280,33 @@ export async function POST(request: NextRequest) {
   ]
 
   // Make sure the table has every column the upsert writes to — older/partial
-  // config tables can be missing some (e.g. UPDATE_HLL_PROCEDURE, SOURCE_*),
-  // which makes the MERGE fail to compile. Add any that are absent.
-  try {
-    await ensureConfigColumns()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error("[/api/campaign-config POST] ensureConfigColumns error:", message)
-    return NextResponse.json({ error: `Could not prepare the config table: ${message}` }, { status: 500 })
+  // config tables can be missing some (e.g. UPDATE_HLL_PROCEDURE, SOURCE_*).
+  // Best-effort: returns the columns that actually exist. If the app role
+  // can't add a missing column, we write only to what exists rather than
+  // failing the whole save (and warn about anything we had to drop).
+  const existingCols = await ensureConfigColumns()
+
+  const writableCols = cols.filter(([c]) => existingCols.has(c))
+  // Columns the user actually gave a value for but that don't exist and
+  // couldn't be created — these silently won't be saved, so tell them.
+  const droppedWithValue = cols
+    .filter(([c, v]) => !existingCols.has(c) && v !== "NULL" && v !== "FALSE")
+    .map(([c]) => c)
+  if (writableCols.length === 0) {
+    return NextResponse.json(
+      { error: "The config table is missing the expected columns and the app can't add them. Ask an admin to grant column-modify rights or add the columns (see grants)." },
+      { status: 500 }
+    )
   }
 
   const updateSet = [
-    ...cols.map(([c, v]) => `${c} = ${v}`),
+    ...writableCols.map(([c, v]) => `${c} = ${v}`),
     "UPDATED_AT = CURRENT_TIMESTAMP()",
     `UPDATED_BY = ${sqlStr(actor)}`,
   ].join(", ")
 
-  const insertCols = ["CAMPAIGNID", ...cols.map(([c]) => c), "CREATED_BY"].join(", ")
-  const insertVals = [String(parsed.campaignId), ...cols.map(([, v]) => v), sqlStr(actor)].join(", ")
+  const insertCols = ["CAMPAIGNID", ...writableCols.map(([c]) => c), "CREATED_BY"].join(", ")
+  const insertVals = [String(parsed.campaignId), ...writableCols.map(([, v]) => v), sqlStr(actor)].join(", ")
 
   const sql = `
     MERGE INTO ${TABLE} t
@@ -280,7 +318,13 @@ export async function POST(request: NextRequest) {
 
   try {
     await executeSnowflakeQuery(sql, SF_OPTS)
-    return NextResponse.json({ ok: true, campaignId: parsed.campaignId })
+    return NextResponse.json({
+      ok: true,
+      campaignId: parsed.campaignId,
+      ...(droppedWithValue.length
+        ? { warning: `Saved, but these fields couldn't be stored (column missing / no rights to add): ${droppedWithValue.join(", ")}.` }
+        : {}),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/campaign-config POST] error:", message)

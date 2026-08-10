@@ -5526,7 +5526,8 @@ function CampaignSettingsPanel() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`)
-      toast.success("Campaign configuration saved")
+      if (data.warning) toast.warning(data.warning)
+      else toast.success("Campaign configuration saved")
       setConfigExists(true)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
