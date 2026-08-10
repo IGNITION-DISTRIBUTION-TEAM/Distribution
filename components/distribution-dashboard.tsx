@@ -221,6 +221,22 @@ async function runStepwiseAt(
   return { ok: !failed, ran }
 }
 
+// Log a single per-step run to the config's run history (so individual runs
+// show up in "Previous runs", not just full runs).
+async function recordStepRun(configId: number | string, label: string, ok: boolean, message?: string): Promise<void> {
+  const status = ok ? "success" : "error"
+  await fetch(`/api/distribution/configs/${configId}/run/record`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ok,
+      ran: ok ? 1 : 0,
+      summary: `${label}: ${status}${!ok && message ? ` — ${message}` : ""}`,
+      steps: [{ step: label, status, message }],
+    }),
+  }).catch(() => {})
+}
+
 // Run a single step (submit async + poll to completion). Used by the per-step
 // "Run" buttons in Settings.
 async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; error?: string }> {
@@ -2111,24 +2127,28 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
     }
   }
 
-  // Run a single step (sync is fire-and-forget).
+  // Run a single step (sync is fire-and-forget). Each run is logged to history.
   const runOne = async (key: string) => {
+    const label = plan.find((p) => p.key === key)?.label ?? key
     setStepState((s) => ({ ...s, [key]: { status: "running" } }))
     try {
       if (key === "sync") {
         const r = await submitSyncFireAndForget(configId)
         setStepState((s) => ({ ...s, [key]: { status: r.ok ? "success" : "error", message: r.ok ? "submitted — running in the background (safe to leave this page)" : r.error } }))
+        await recordStepRun(configId, label, r.ok, r.ok ? "submitted (background)" : r.error)
         if (r.ok) toast.success("Sync submitted — running in the background")
         else toast.error(r.error || "Failed to submit sync")
         return
       }
       const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
       setStepState((s) => ({ ...s, [key]: { status: res.ok ? "success" : "error", message: res.error } }))
+      await recordStepRun(configId, label, res.ok, res.error)
       if (res.ok) toast.success("Step complete")
       else toast.error(res.error || "Step failed")
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setStepState((s) => ({ ...s, [key]: { status: "error", message: msg } }))
+      await recordStepRun(configId, label, false, msg)
       toast.error(msg)
     } finally {
       loadHistory()
@@ -6084,25 +6104,30 @@ function CampaignSettingsPanel() {
   // Refresh background-sync status when the config changes.
   useEffect(() => { checkSyncStatus(configId) }, [configId, checkSyncStatus])
 
-  // Run a single step of the saved config. The sync is fire-and-forget.
+  // Run a single step of the saved config. The sync is fire-and-forget. Each
+  // per-step run is logged to run history.
   const runOneStep = async (key: string) => {
     if (configId == null) { toast.error("Save this automation first."); return }
+    const label = plan.find((p) => p.key === key)?.label ?? key
     setStepState((s) => ({ ...s, [key]: { status: "running" } }))
     try {
       if (key === "sync") {
         const r = await submitSyncFireAndForget(configId)
         setStepState((s) => ({ ...s, [key]: { status: r.ok ? "success" : "error", message: r.ok ? "submitted — running in the background (safe to leave this page)" : r.error } }))
+        await recordStepRun(configId, label, r.ok, r.ok ? "submitted (background)" : r.error)
         if (r.ok) toast.success("Sync submitted — running in the background")
         else toast.error(r.error || "Failed to submit sync")
         return
       }
       const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
       setStepState((s) => ({ ...s, [key]: { status: res.ok ? "success" : "error", message: res.error } }))
+      await recordStepRun(configId, label, res.ok, res.error)
       if (res.ok) toast.success("Step complete")
       else toast.error(res.error || "Step failed")
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setStepState((s) => ({ ...s, [key]: { status: "error", message: msg } }))
+      await recordStepRun(configId, label, false, msg)
       toast.error(msg)
     } finally {
       loadHistory(campaignId)
