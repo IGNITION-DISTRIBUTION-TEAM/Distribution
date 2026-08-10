@@ -130,21 +130,43 @@ type LeadSource = "file" | "sftp" | "snowflake"
 // A step's live state in the run UI.
 type StepView = { step: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string }
 
+// Submit the sync step to Snowflake and return immediately (fire-and-forget) —
+// the sync can run for hours, so we don't wait/poll. The handle is remembered
+// server-side so its status can be checked later.
+async function submitSyncFireAndForget(configId: number | string): Promise<{ ok: boolean; error?: string }> {
+  const subRes = await fetch(`/api/distribution/configs/${configId}/run/step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "sync" }),
+  })
+  const sub = await subRes.json().catch(() => ({}))
+  if ((sub as { error?: string }).error) return { ok: false, error: (sub as { error: string }).error }
+  const handle = (sub as { handle?: string }).handle
+  if (!handle) return { ok: false, error: "No statement handle returned" }
+  await fetch(`/api/distribution/configs/${configId}/sync`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ handle }),
+  }).catch(() => {})
+  return { ok: true }
+}
+
 // Run a specific saved config, step-by-step. Thin wrapper over runStepwiseAt.
 async function runConfigStepwise(
   configId: number | string,
   setSteps: (steps: StepView[]) => void
 ): Promise<{ ok: boolean; ran: number }> {
-  return runStepwiseAt(`/api/distribution/configs/${configId}/run`, setSteps)
+  return runStepwiseAt(`/api/distribution/configs/${configId}/run`, setSteps, configId)
 }
 
 // Client-orchestrated run: fetch the plan, then submit each step to Snowflake
 // asynchronously and poll it to completion — each HTTP request is short, so a
-// slow procedure can't hang or time out the page. Calls setSteps as state
-// changes. Throws on plan errors (no config / inactive).
+// slow procedure can't hang or time out the page. The sync step is fire-and-
+// forget (submitted, not waited on). Throws on plan errors (no config/inactive).
 async function runStepwiseAt(
   base: string,
-  setSteps: (steps: StepView[]) => void
+  setSteps: (steps: StepView[]) => void,
+  configId?: number | string
 ): Promise<{ ok: boolean; ran: number }> {
   const planRes = await fetch(`${base}/plan`, { cache: "no-store" })
   const planData = await planRes.json().catch(() => ({}))
@@ -161,6 +183,15 @@ async function runStepwiseAt(
     views[i] = { step: plan[i].label, status: "running" }
     setSteps([...views])
     try {
+      // Sync is fire-and-forget: submit and move on (it can run for hours).
+      if (plan[i].key === "sync" && configId != null) {
+        const r = await submitSyncFireAndForget(configId)
+        if (!r.ok) throw new Error(r.error || "Failed to submit sync")
+        views[i] = { step: plan[i].label, status: "success", message: "submitted — running in the background (safe to leave this page)" }
+        ran++
+        setSteps([...views])
+        continue
+      }
       const subRes = await fetch(`${base}/step`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -5595,6 +5626,7 @@ function CampaignSettingsPanel() {
   // Per-step run: the saved config's plan + each step's transient status.
   const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
   const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
+  const [syncBg, setSyncBg] = useState<{ status: string; at?: string | null; error?: string } | null>(null)
 
   // Run history is shown for the whole campaign (all its configs).
   const loadHistory = useCallback(async (cid: string) => {
@@ -5904,11 +5936,31 @@ function CampaignSettingsPanel() {
     }
   }
 
-  // Run a single step of the saved config.
+  // Check the last fire-and-forget sync's status (for reopening later).
+  const checkSyncStatus = useCallback(async (cfgId: number | null) => {
+    if (cfgId == null) { setSyncBg(null); return }
+    try {
+      const res = await fetch(`/api/distribution/configs/${cfgId}/sync`, { cache: "no-store" })
+      const d = await res.json()
+      setSyncBg(d && d.status ? d : null)
+    } catch { setSyncBg(null) }
+  }, [])
+
+  // Refresh background-sync status when the config changes.
+  useEffect(() => { checkSyncStatus(configId) }, [configId, checkSyncStatus])
+
+  // Run a single step of the saved config. The sync is fire-and-forget.
   const runOneStep = async (key: string) => {
     if (configId == null) { toast.error("Save this automation first."); return }
     setStepState((s) => ({ ...s, [key]: { status: "running" } }))
     try {
+      if (key === "sync") {
+        const r = await submitSyncFireAndForget(configId)
+        setStepState((s) => ({ ...s, [key]: { status: r.ok ? "success" : "error", message: r.ok ? "submitted — running in the background (safe to leave this page)" : r.error } }))
+        if (r.ok) toast.success("Sync submitted — running in the background")
+        else toast.error(r.error || "Failed to submit sync")
+        return
+      }
       const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
       setStepState((s) => ({ ...s, [key]: { status: res.ok ? "success" : "error", message: res.error } }))
       if (res.ok) toast.success("Step complete")
@@ -6453,6 +6505,27 @@ function CampaignSettingsPanel() {
 
               {!configExists && (
                 <p className="mt-2 text-xs text-amber-400">Save this automation before running.</p>
+              )}
+
+              <p className="mt-2 text-xs text-muted-foreground">
+                The <span className="font-medium text-foreground">Sync</span> step is fire-and-forget — it&apos;s submitted to
+                Snowflake and keeps running even if you close or leave this page.
+              </p>
+
+              {/* Background sync status (reopen and check). */}
+              {configExists && syncBg && syncBg.status !== "none" && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">Background sync:</span>
+                  <span className={
+                    syncBg.status === "done" ? "font-medium text-emerald-400"
+                    : syncBg.status === "error" ? "font-medium text-rose-400"
+                    : "font-medium text-sky-400"
+                  }>
+                    {syncBg.status === "running" ? "still running…" : syncBg.status}
+                  </span>
+                  {syncBg.at && <span className="text-muted-foreground">· submitted {syncBg.at}</span>}
+                  <Button type="button" variant="ghost" size="sm" onClick={() => checkSyncStatus(configId)}>Refresh</Button>
+                </div>
               )}
 
               {/* Run each step individually (uses the last saved config). */}
