@@ -40,7 +40,25 @@ export type CampaignConfigInput = {
   loadHistoryProcedure?: string
   updateHllProcedure?: string
   syncProcedure?: string
+  // Step 1 — initial source: a proc that fills the stage/upload table, or a
+  // view read directly into HLL (with a column mapping).
+  sourceKind?: string
+  sourceObject?: string
+  sourceMappingJson?: string | null
   isActive?: boolean
+}
+
+const IDENT_COL = /^[A-Za-z0-9_]+$/
+// Validate a { hllColumn: viewColumn } map for the view→HLL source; JSON or null.
+function validateSourceMapping(raw: unknown): string | null {
+  if (raw == null || typeof raw !== "object") return null
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const src = typeof v === "string" ? v.trim() : ""
+    if (src && IDENT_COL.test(k) && IDENT_COL.test(src)) out[k] = src
+  }
+  const keys = Object.keys(out)
+  return keys.length && keys.length <= 500 ? JSON.stringify(out) : null
 }
 
 /** Validate and normalise the request body. Returns the cleaned input or an error string. */
@@ -93,11 +111,24 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP_X(1)' }
   }
 
+  const sourceKind = body.sourceKind ? String(body.sourceKind).trim().toLowerCase() : "none"
+  if (!["none", "proc", "view"].includes(sourceKind)) {
+    return { error: "sourceKind must be none | proc | view" }
+  }
+  const sourceObject = body.sourceObject ? String(body.sourceObject).trim() : ""
+  if (sourceObject && !PROC_IDENT.test(sourceObject)) {
+    return { error: 'sourceObject must be "DATABASE.SCHEMA.NAME" with optional (args)' }
+  }
+  const sourceMappingJson = validateSourceMapping(body.sourceMapping)
+
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
 
   return {
     campaignId,
     campaignTitle: str(body.campaignTitle),
+    sourceKind,
+    sourceObject,
+    sourceMappingJson,
     sftpHost: str(body.sftpHost),
     sftpPort,
     sftpUsername: str(body.sftpUsername),
@@ -168,8 +199,20 @@ export async function POST(request: NextRequest) {
     ["LOAD_HISTORY_PROCEDURE", sqlStr(parsed.loadHistoryProcedure)],
     ["UPDATE_HLL_PROCEDURE", sqlStr(parsed.updateHllProcedure)],
     ["SYNC_PROCEDURE", sqlStr(parsed.syncProcedure)],
+    ["SOURCE_KIND", sqlStr(parsed.sourceKind)],
+    ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
+    ["SOURCE_MAPPING_JSON", parsed.sourceMappingJson ? sqlStr(parsed.sourceMappingJson) : "NULL"],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
   ]
+
+  // Add the Step-1 source columns to pre-existing config tables.
+  for (const col of ["SOURCE_KIND VARCHAR", "SOURCE_OBJECT VARCHAR", "SOURCE_MAPPING_JSON VARCHAR"]) {
+    try {
+      await executeSnowflakeQuery(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS ${col}`, SF_OPTS)
+    } catch {
+      /* already present */
+    }
+  }
 
   const updateSet = [
     ...cols.map(([c, v]) => `${c} = ${v}`),

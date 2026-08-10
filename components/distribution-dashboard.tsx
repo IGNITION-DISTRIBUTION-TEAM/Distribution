@@ -5286,6 +5286,9 @@ type CampaignConfig = {
   LOAD_HISTORY_PROCEDURE?: string | null
   UPDATE_HLL_PROCEDURE?: string | null
   SYNC_PROCEDURE?: string | null
+  SOURCE_KIND?: string | null
+  SOURCE_OBJECT?: string | null
+  SOURCE_MAPPING_JSON?: string | null
   IS_ACTIVE?: boolean | null
 }
 
@@ -5309,7 +5312,52 @@ function CampaignSettingsPanel() {
   const [loadHistoryProc, setLoadHistoryProc] = useState("")
   const [updateHllProc, setUpdateHllProc] = useState("")
   const [syncProcedure, setSyncProcedure] = useState("")
+  // Step 1 — initial source
+  const [sourceKind, setSourceKind] = useState<"none" | "proc" | "view">("none")
+  const [sourceObject, setSourceObject] = useState("")
+  const [sourceMapping, setSourceMapping] = useState<Record<string, string>>({})
+  const [hllCols, setHllCols] = useState<{ name: string; type: string }[]>([])
+  const [viewCols, setViewCols] = useState<{ name: string; type: string }[]>([])
+  const [colsLoading, setColsLoading] = useState(false)
+  const [colsMsg, setColsMsg] = useState<string | null>(null)
   const [isActive, setIsActive] = useState(true)
+
+  const loadSourceColumns = async () => {
+    if (!sourceObject.trim()) { setColsMsg("Enter the view name first."); return }
+    setColsLoading(true); setColsMsg(null)
+    try {
+      const [h, v] = await Promise.all([
+        fetch("/api/distribution/columns?object=hll").then((r) => r.json()),
+        fetch(`/api/distribution/columns?object=${encodeURIComponent(sourceObject.trim())}`).then((r) => r.json()),
+      ])
+      if (h.error) throw new Error(`HLL: ${h.error}`)
+      if (v.error) throw new Error(`View: ${v.error}`)
+      const hc = h.columns ?? []
+      const vc = v.columns ?? []
+      if (!vc.length) throw new Error("No columns found on the view (check name / grants).")
+      setHllCols(hc); setViewCols(vc)
+      setSourceMapping((m) => {
+        const next = { ...m }
+        for (const hcol of hc) {
+          if (next[hcol.name]) continue
+          const hit = vc.find((s: { name: string }) => s.name.toLowerCase() === hcol.name.toLowerCase())
+          if (hit) next[hcol.name] = hit.name
+        }
+        return next
+      })
+    } catch (e) {
+      setColsMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setColsLoading(false)
+    }
+  }
+  const setSrcMap = (hllCol: string, viewCol: string) =>
+    setSourceMapping((m) => {
+      const next = { ...m }
+      if (viewCol === "__none__") delete next[hllCol]
+      else next[hllCol] = viewCol
+      return next
+    })
   const [configLoading, setConfigLoading] = useState(false)
   const [configExists, setConfigExists] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -5372,6 +5420,10 @@ function CampaignSettingsPanel() {
     setLoadHistoryProc("")
     setUpdateHllProc("")
     setSyncProcedure("")
+    setSourceKind("none")
+    setSourceObject("")
+    setSourceMapping({})
+    setHllCols([]); setViewCols([]); setColsMsg(null)
     setIsActive(true)
     setConfigExists(false)
   }, [])
@@ -5405,6 +5457,10 @@ function CampaignSettingsPanel() {
           setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
           setUpdateHllProc(c.UPDATE_HLL_PROCEDURE ?? "")
           setSyncProcedure(c.SYNC_PROCEDURE ?? "")
+          setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
+          setSourceObject(c.SOURCE_OBJECT ?? "")
+          try { setSourceMapping(c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}) } catch { setSourceMapping({}) }
+          setHllCols([]); setViewCols([]); setColsMsg(null)
           setIsActive(c.IS_ACTIVE !== false)
           setConfigExists(true)
         } else {
@@ -5443,6 +5499,9 @@ function CampaignSettingsPanel() {
           loadHistoryProcedure: loadHistoryProc,
           updateHllProcedure: updateHllProc,
           syncProcedure,
+          sourceKind,
+          sourceObject,
+          sourceMapping,
           isActive,
         }),
       })
@@ -5613,6 +5672,78 @@ function CampaignSettingsPanel() {
               <p className="mt-2 text-xs text-amber-400/80">
                 Credentials are stored in plaintext in Snowflake. Restrict access to this table.
               </p>
+            </div>
+
+            <Separator />
+
+            <div>
+              <h4 className="mb-1 text-sm font-medium text-foreground">Initial source (Step 1)</h4>
+              <p className="mb-3 text-xs text-muted-foreground">
+                What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
+                target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
+                into the HLL table via a column mapping.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Source type</Label>
+                  <Select value={sourceKind} onValueChange={(v) => { setSourceKind(v as "none" | "proc" | "view"); setHllCols([]); setViewCols([]); setColsMsg(null) }}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— None —</SelectItem>
+                      <SelectItem value="proc">Stored procedure → stage table</SelectItem>
+                      <SelectItem value="view">View → HLL (direct)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {sourceKind !== "none" && (
+                  <div>
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">{sourceKind === "proc" ? "Procedure" : "View"} (DB.SCHEMA.NAME)</Label>
+                    <Input value={sourceObject} onChange={(e) => setSourceObject(e.target.value)} placeholder="DATABASE.SCHEMA.NAME" className="font-mono text-sm" />
+                  </div>
+                )}
+              </div>
+              {sourceKind === "proc" && (
+                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target table</span> set below; the &ldquo;Load into history&rdquo; procedure then moves those rows into HLL.</p>
+              )}
+              {sourceKind === "view" && (
+                <div className="mt-3">
+                  <div className="flex items-center gap-3">
+                    <Button type="button" variant="outline" size="sm" onClick={loadSourceColumns} disabled={colsLoading}>
+                      {colsLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…</> : <>Load columns &amp; map</>}
+                    </Button>
+                    {Object.keys(sourceMapping).length > 0 && <span className="text-xs text-muted-foreground">{Object.keys(sourceMapping).length} column(s) mapped</span>}
+                  </div>
+                  {colsMsg && <p className="mt-2 text-xs text-rose-400">{colsMsg}</p>}
+                  {hllCols.length > 0 && (
+                    <div className="mt-3 max-h-72 overflow-auto rounded-md border border-border">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-card">
+                          <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                            <th className="px-3 py-2 font-medium">HLL column</th>
+                            <th className="px-3 py-2 font-medium">View column</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hllCols.map((h) => (
+                            <tr key={h.name} className="border-t border-border/50">
+                              <td className="px-3 py-1.5"><span className="font-mono text-xs text-foreground">{h.name}</span> <span className="ml-1 text-[10px] text-muted-foreground">{h.type}</span></td>
+                              <td className="px-3 py-1.5">
+                                <Select value={sourceMapping[h.name] ?? "__none__"} onValueChange={(v) => setSrcMap(h.name, v)}>
+                                  <SelectTrigger className="h-8 w-full"><SelectValue placeholder="— skip —" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">— skip —</SelectItem>
+                                    {viewCols.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <Separator />
