@@ -5456,6 +5456,7 @@ type CampaignConfig = {
 type RunHistoryRow = {
   ID: number | string
   CREATED_AT: string | null
+  CONFIG_NAME: string | null
   STATUS: string | null
   RAN: number | string | null
   SUMMARY: string | null
@@ -5511,10 +5512,11 @@ function CampaignSettingsPanel() {
   const [lastRunMessage, setLastRunMessage] = useState<string | null>(null)
   const [history, setHistory] = useState<RunHistoryRow[]>([])
 
-  const loadHistory = useCallback(async (cfgId: number | null) => {
-    if (cfgId == null) { setHistory([]); return }
+  // Run history is shown for the whole campaign (all its configs).
+  const loadHistory = useCallback(async (cid: string) => {
+    if (!cid) { setHistory([]); return }
     try {
-      const res = await fetch(`/api/distribution/configs/${cfgId}/history`, { cache: "no-store" })
+      const res = await fetch(`/api/distribution/campaigns/${cid}/history`, { cache: "no-store" })
       const data = await res.json()
       setHistory(Array.isArray(data.rows) ? (data.rows as RunHistoryRow[]) : [])
     } catch { setHistory([]) }
@@ -5690,8 +5692,7 @@ function CampaignSettingsPanel() {
     setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
     setConfigExists(c.CONFIG_ID != null)
     setSettingsOpen(true)
-    loadHistory(c.CONFIG_ID != null ? Number(c.CONFIG_ID) : null)
-  }, [loadHistory])
+  }, [])
 
   // Load all configs for a campaign; select one (default first / "last" / by id).
   const loadConfigs = useCallback(async (cid: string, selectId?: number | "last") => {
@@ -5711,12 +5712,13 @@ function CampaignSettingsPanel() {
       if (selectId === "last") pick = list[list.length - 1]
       else if (typeof selectId === "number") pick = list.find((c) => Number(c.CONFIG_ID) === selectId) ?? list[0]
       loadConfigIntoForm(pick)
+      loadHistory(cid)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err))
     } finally {
       setConfigLoading(false)
     }
-  }, [loadConfigIntoForm, resetForm])
+  }, [loadConfigIntoForm, resetForm, loadHistory])
 
   // Reload configs when the campaign changes.
   useEffect(() => {
@@ -5796,7 +5798,7 @@ function CampaignSettingsPanel() {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
-      loadHistory(configId) // refresh the history list with this run
+      loadHistory(campaignId) // refresh the history list with this run
     }
   }
 
@@ -6313,6 +6315,7 @@ function CampaignSettingsPanel() {
                       <thead className="sticky top-0 bg-card">
                         <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
                           <th className="px-3 py-2 font-medium">When</th>
+                          <th className="px-3 py-2 font-medium">Automation</th>
                           <th className="px-3 py-2 font-medium">Status</th>
                           <th className="px-3 py-2 font-medium">Steps</th>
                           <th className="px-3 py-2 font-medium">Detail</th>
@@ -6323,6 +6326,7 @@ function CampaignSettingsPanel() {
                         {history.map((h) => (
                           <tr key={h.ID} className="border-t border-border/50 align-top">
                             <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{h.CREATED_AT ?? "—"}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 text-foreground">{h.CONFIG_NAME ?? "—"}</td>
                             <td className="px-3 py-1.5">
                               <span className={h.STATUS === "Success" ? "font-medium text-emerald-400" : "font-medium text-rose-400"}>{h.STATUS ?? "—"}</span>
                             </td>

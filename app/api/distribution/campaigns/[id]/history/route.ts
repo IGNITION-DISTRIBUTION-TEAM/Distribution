@@ -14,6 +14,7 @@ function parseId(raw: string): number | null {
 type HistoryRow = {
   ID: number | string
   CREATED_AT: string | null
+  CONFIG_NAME: string | null
   STATUS: string | null
   RAN: number | string | null
   SUMMARY: string | null
@@ -31,9 +32,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     await ensureRunHistoryTable()
     const rows = await executeSnowflakeQuery<HistoryRow>(
       `SELECT ID, TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
-              STATUS, RAN, SUMMARY, CREATED_BY
+              CONFIG_NAME, STATUS, RAN, SUMMARY, CREATED_BY
        FROM ${RUN_HISTORY_TABLE} WHERE CAMPAIGNID = ${campaignId}
-       ORDER BY ID DESC LIMIT 20`,
+       ORDER BY ID DESC LIMIT 50`,
       CONFIG_SF
     )
     return NextResponse.json({ rows })

@@ -93,10 +93,23 @@ export async function ensureRunHistoryTable(): Promise<void> {
      )`,
     CONFIG_SF_OPTS
   )
-  // Older history tables predate CONFIG_ID / CONFIG_NAME — add if missing.
-  for (const col of ["CONFIG_ID NUMBER", "CONFIG_NAME VARCHAR"]) {
-    try { await executeSnowflakeQuery(`ALTER TABLE ${RUN_HISTORY_TABLE} ADD COLUMN IF NOT EXISTS ${col}`, CONFIG_SF_OPTS) } catch { /* best-effort */ }
-  }
+  // Older history tables predate CONFIG_ID / CONFIG_NAME. Introspect and add
+  // any missing columns with a plain ALTER (don't rely on ADD COLUMN IF NOT
+  // EXISTS support). Without these columns the per-config write/read fail
+  // silently and no history shows.
+  try {
+    const existing = await executeSnowflakeQuery<{ COLUMN_NAME: string }>(
+      `SELECT COLUMN_NAME FROM ${CONFIG_SF_OPTS.database}.INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = '${CONFIG_SF_OPTS.schema}' AND TABLE_NAME = 'TSK_DISTRIBUTION_RUN_HISTORY'`,
+      CONFIG_SF_OPTS
+    )
+    const have = new Set(existing.map((r) => String(r.COLUMN_NAME).toUpperCase()))
+    for (const [name, type] of [["CONFIG_ID", "NUMBER"], ["CONFIG_NAME", "VARCHAR"]] as [string, string][]) {
+      if (!have.has(name)) {
+        try { await executeSnowflakeQuery(`ALTER TABLE ${RUN_HISTORY_TABLE} ADD COLUMN ${name} ${type}`, CONFIG_SF_OPTS) } catch { /* best-effort */ }
+      }
+    }
+  } catch { /* introspection best-effort */ }
 }
 
 function str(config: RunConfigRow, col: string): string {
