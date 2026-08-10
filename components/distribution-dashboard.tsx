@@ -439,7 +439,7 @@ function ManualContent() {
 
           {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} />}
           {source === "sftp" && <SftpSourcePanel />}
-          {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} />}
+          {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} campaignId={selectedCampaign.id} />}
         </div>
       )}
     </div>
@@ -2016,9 +2016,21 @@ function SftpSourcePanel() {
 
 // Runs one saved automation config (Step 1 source → load history → update HLL
 // → sync) via the config orchestrator. The config is edited in Settings.
-function SnowflakeSourcePanel({ configId, configName }: { configId: number; configName: string }) {
+function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: number; configName: string; campaignId: string }) {
   const [running, setRunning] = useState(false)
   const [steps, setSteps] = useState<StepView[]>([])
+  const [history, setHistory] = useState<RunHistoryRow[]>([])
+
+  const loadHistory = useCallback(async () => {
+    if (!campaignId) { setHistory([]); return }
+    try {
+      const res = await fetch(`/api/distribution/campaigns/${campaignId}/history`, { cache: "no-store" })
+      const data = await res.json()
+      setHistory(Array.isArray(data.rows) ? (data.rows as RunHistoryRow[]) : [])
+    } catch { setHistory([]) }
+  }, [campaignId])
+
+  useEffect(() => { loadHistory() }, [loadHistory])
 
   const run = async () => {
     setRunning(true)
@@ -2031,6 +2043,7 @@ function SnowflakeSourcePanel({ configId, configName }: { configId: number; conf
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+      loadHistory()
     }
   }
 
@@ -2058,6 +2071,43 @@ function SnowflakeSourcePanel({ configId, configName }: { configId: number; conf
           ))}
         </ul>
       )}
+
+      {/* Previous runs for this campaign (all its configs). */}
+      <div>
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Previous runs</div>
+        {history.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No runs recorded yet.</p>
+        ) : (
+          <div className="max-h-64 overflow-auto rounded-md border border-border">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card">
+                <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">When</th>
+                  <th className="px-3 py-2 font-medium">Automation</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Steps</th>
+                  <th className="px-3 py-2 font-medium">Detail</th>
+                  <th className="px-3 py-2 font-medium">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.ID} className="border-t border-border/50 align-top">
+                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{h.CREATED_AT ?? "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-foreground">{h.CONFIG_NAME ?? "—"}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={h.STATUS === "Success" ? "font-medium text-emerald-400" : "font-medium text-rose-400"}>{h.STATUS ?? "—"}</span>
+                    </td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{h.RAN ?? 0}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{h.SUMMARY ?? ""}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{h.CREATED_BY ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
