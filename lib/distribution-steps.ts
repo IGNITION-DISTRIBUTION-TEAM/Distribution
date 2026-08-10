@@ -38,6 +38,7 @@ export const CONFIGS_COLUMNS: [string, string][] = [
   ["SFTP_AUTH_TYPE", "VARCHAR"], ["UPLOAD_TARGET_TABLE", "VARCHAR"],
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
+  ["UPDATE_HLL_PROCEDURES", "VARCHAR"],
   ["LEAD_EXPIRY_DAYS", "NUMBER"], ["BATCH_NAME_TEMPLATE", "VARCHAR"],
   ["IS_ACTIVE", "BOOLEAN"],
   ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
@@ -125,23 +126,42 @@ export function isConfigActive(config: RunConfigRow): boolean {
   return v == null ? true : v === true || String(v).toUpperCase() === "TRUE"
 }
 
+// The update-HLL procedures for a config: the new multi list (UPDATE_HLL_PROCEDURES
+// JSON array), falling back to the legacy single UPDATE_HLL_PROCEDURE.
+export function getUpdateHllProcs(config: RunConfigRow): string[] {
+  const raw = str(config, "UPDATE_HLL_PROCEDURES")
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw)
+      if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+    } catch { /* fall through */ }
+  }
+  const single = str(config, "UPDATE_HLL_PROCEDURE")
+  return single ? [single] : []
+}
+
+// Short display name for a proc reference (last segment before any args).
+function procShortName(ref: string): string {
+  return ref.split("(")[0].split(".").pop() || ref
+}
+
 // The ordered steps that will actually run for this config. The initial source
-// is split into "run procedure" (CALL) and "load into HLL" (INSERT) so each is
-// a single statement that can be submitted async and polled independently.
+// is split into "run procedure" (CALL) and "load into HLL" (INSERT); the
+// update-HLL step expands into one step per selected procedure.
 export function planSteps(config: RunConfigRow): StepDef[] {
   const steps: StepDef[] = []
   const sk = str(config, "SOURCE_KIND").toLowerCase()
   if (sk === "proc") steps.push({ key: "source_proc", label: "Initial source — run procedure" })
   if (sk === "proc" || sk === "view") steps.push({ key: "source_load", label: "Initial source — load into HLL" })
   if (str(config, "LOAD_HISTORY_PROCEDURE")) steps.push({ key: "load_history", label: "Load into history" })
-  if (str(config, "UPDATE_HLL_PROCEDURE")) steps.push({ key: "update_hll", label: "Update HLL" })
+  const uh = getUpdateHllProcs(config)
+  uh.forEach((p, i) => steps.push({ key: `update_hll:${i}`, label: uh.length > 1 ? `Update HLL — ${procShortName(p)}` : "Update HLL" }))
   if (str(config, "SYNC_PROCEDURE")) steps.push({ key: "sync", label: "Sync" })
   return steps
 }
 
 const PROC_COL: Record<string, string> = {
   load_history: "LOAD_HISTORY_PROCEDURE",
-  update_hll: "UPDATE_HLL_PROCEDURE",
   sync: "SYNC_PROCEDURE",
 }
 
@@ -184,6 +204,16 @@ export async function buildStepSql(
       database: HLL_TABLE.split(".")[0],
       schema: HLL_TABLE.split(".")[1],
     }
+  }
+
+  // Update HLL — one of possibly several procedures (key "update_hll" or
+  // "update_hll:<index>").
+  if (key === "update_hll" || key.startsWith("update_hll:")) {
+    const list = getUpdateHllProcs(config)
+    const idx = key.includes(":") ? Number(key.split(":")[1]) : 0
+    const proc = list[idx] ?? ""
+    if (!RUN_PROC_IDENT.test(proc)) throw new Error(`Configured update-HLL procedure is invalid: ${proc || "(empty)"}`)
+    return { sql: buildCall(proc), ...dbSchemaOf(proc) }
   }
 
   const col = PROC_COL[key]

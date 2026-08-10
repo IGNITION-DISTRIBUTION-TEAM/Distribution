@@ -5439,6 +5439,7 @@ type CampaignConfig = {
   UPLOAD_TARGET_TABLE?: string | null
   LOAD_HISTORY_PROCEDURE?: string | null
   UPDATE_HLL_PROCEDURE?: string | null
+  UPDATE_HLL_PROCEDURES?: string | null
   SYNC_PROCEDURE?: string | null
   SOURCE_KIND?: string | null
   SOURCE_OBJECT?: string | null
@@ -5486,7 +5487,7 @@ function CampaignSettingsPanel() {
   const [remotePath, setRemotePath] = useState("")
   const [targetTable, setTargetTable] = useState("")
   const [loadHistoryProc, setLoadHistoryProc] = useState("")
-  const [updateHllProc, setUpdateHllProc] = useState("")
+  const [updateHllProcs, setUpdateHllProcs] = useState<string[]>([])
   const [syncProcedure, setSyncProcedure] = useState("")
   // Step 1 — initial source
   const [sourceKind, setSourceKind] = useState<"none" | "proc" | "view">("none")
@@ -5622,7 +5623,7 @@ function CampaignSettingsPanel() {
     setRemotePath("")
     setTargetTable("")
     setLoadHistoryProc("")
-    setUpdateHllProc("")
+    setUpdateHllProcs([])
     setSyncProcedure("")
     setSourceKind("none")
     setSourceObject("")
@@ -5650,7 +5651,11 @@ function CampaignSettingsPanel() {
     setRemotePath(c.SFTP_REMOTE_PATH ?? "")
     setTargetTable(c.UPLOAD_TARGET_TABLE ?? "")
     setLoadHistoryProc(c.LOAD_HISTORY_PROCEDURE ?? "")
-    setUpdateHllProc(c.UPDATE_HLL_PROCEDURE ?? "")
+    try {
+      const arr = c.UPDATE_HLL_PROCEDURES ? JSON.parse(c.UPDATE_HLL_PROCEDURES) : null
+      if (Array.isArray(arr) && arr.length) setUpdateHllProcs(arr.map((s: unknown) => String(s)))
+      else setUpdateHllProcs(c.UPDATE_HLL_PROCEDURE ? [c.UPDATE_HLL_PROCEDURE] : [])
+    } catch { setUpdateHllProcs(c.UPDATE_HLL_PROCEDURE ? [c.UPDATE_HLL_PROCEDURE] : []) }
     setSyncProcedure(c.SYNC_PROCEDURE ?? "")
     setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
     setSourceObject(c.SOURCE_OBJECT ?? "")
@@ -5726,7 +5731,7 @@ function CampaignSettingsPanel() {
           sftpHost: host, sftpPort: port, sftpUsername: username, sftpAuthType: authType,
           sftpPassword: password, sftpPrivateKey: privateKey, sftpRemotePath: remotePath,
           uploadTargetTable: targetTable, loadHistoryProcedure: loadHistoryProc,
-          updateHllProcedure: updateHllProc, syncProcedure,
+          updateHllProcedures: updateHllProcs, syncProcedure,
           sourceKind, sourceObject, sourceMapping,
           leadExpiryDays: Number(leadExpiryDays) || 45, batchNameTemplate: batchTemplate, isActive,
         }),
@@ -6160,28 +6165,45 @@ function CampaignSettingsPanel() {
                 </div>
                 <div>
                   <Label className="mb-1.5 block text-xs text-muted-foreground">
-                    Update HLL procedure
+                    Update HLL procedures{updateHllProcs.length > 0 && <span className="text-muted-foreground/70"> · {updateHllProcs.length} selected</span>}
                   </Label>
-                  <Select
-                    value={updateHllProc || NONE_PROC}
-                    onValueChange={(v) => setUpdateHllProc(v === NONE_PROC ? "" : v)}
-                  >
-                    <SelectTrigger className="font-mono text-sm">
-                      <SelectValue placeholder="Select a procedure..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE_PROC}>(none)</SelectItem>
-                      {hllProcs.map((p) => (
-                        <SelectItem key={String(p.PROC_INDEX)} value={p.PROC_NAME}>
-                          {p.PROC_NAME}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {hllProcs.length === 0 && (
-                    <p className="mt-1 text-xs text-muted-foreground">
+                  {hllProcs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
                       No procedures yet — add them under &quot;HLL update procedures&quot; below.
                     </p>
+                  ) : (
+                    <div className="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border p-2">
+                      {hllProcs.map((p) => {
+                        const on = updateHllProcs.includes(p.PROC_NAME)
+                        return (
+                          <button
+                            key={String(p.PROC_INDEX)}
+                            type="button"
+                            onClick={() =>
+                              setUpdateHllProcs((prev) => {
+                                const set = new Set(prev)
+                                if (set.has(p.PROC_NAME)) set.delete(p.PROC_NAME)
+                                else set.add(p.PROC_NAME)
+                                // keep the run order stable = master-list order
+                                return hllProcs.map((x) => x.PROC_NAME).filter((n) => set.has(n))
+                              })
+                            }
+                            className={cn(
+                              "flex items-center gap-2 rounded px-2 py-1 text-left font-mono text-xs",
+                              on ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "border-primary bg-primary/20" : "border-border")}>
+                              {on && <Check className="h-3 w-3 text-primary" />}
+                            </span>
+                            {p.PROC_NAME}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {updateHllProcs.length > 1 && (
+                    <p className="mt-1 text-xs text-muted-foreground">Runs in the order listed above.</p>
                   )}
                 </div>
                 <div>

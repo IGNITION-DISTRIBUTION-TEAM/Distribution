@@ -5,6 +5,7 @@ import {
   parseConfigBody,
   sqlStr,
   getActorEmail,
+  RUN_PROC_IDENT,
   TABLE as LEGACY_TABLE,
   SF_OPTS,
 } from "@/app/api/campaign-config/route"
@@ -27,7 +28,8 @@ function literalFor(type: string, value: unknown): string {
 }
 
 // Build the shared [column, value] pairs from a validated config input.
-function colsFromParsed(parsed: Record<string, unknown>): [string, string][] {
+// `updateHllList` is the (validated) list of update-HLL procedures to run.
+function colsFromParsed(parsed: Record<string, unknown>, updateHllList: string[]): [string, string][] {
   const port = (parsed.sftpPort as number | undefined) ?? 22
   const authType = (parsed.sftpAuthType as string | undefined) ?? "password"
   return [
@@ -42,7 +44,10 @@ function colsFromParsed(parsed: Record<string, unknown>): [string, string][] {
     ["SFTP_AUTH_TYPE", sqlStr(authType)],
     ["UPLOAD_TARGET_TABLE", sqlStr(parsed.uploadTargetTable)],
     ["LOAD_HISTORY_PROCEDURE", sqlStr(parsed.loadHistoryProcedure)],
-    ["UPDATE_HLL_PROCEDURE", sqlStr(parsed.updateHllProcedure)],
+    // First proc kept in the legacy single column for backwards compat; the
+    // full ordered list lives in UPDATE_HLL_PROCEDURES.
+    ["UPDATE_HLL_PROCEDURE", sqlStr(updateHllList[0] ?? "")],
+    ["UPDATE_HLL_PROCEDURES", updateHllList.length ? sqlStr(JSON.stringify(updateHllList)) : "NULL"],
     ["SYNC_PROCEDURE", sqlStr(parsed.syncProcedure)],
     ["SOURCE_KIND", sqlStr(parsed.sourceKind)],
     ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
@@ -121,9 +126,17 @@ export async function POST(request: NextRequest) {
   const configId = configIdRaw != null && /^[0-9]+$/.test(String(configIdRaw)) ? Number(configIdRaw) : null
   const actor = getActorEmail(request)
 
+  // Update-HLL procedures: the new multi list, falling back to the single field.
+  const rawList = Array.isArray(body.updateHllProcedures)
+    ? body.updateHllProcedures
+    : (parsed.updateHllProcedure ? [parsed.updateHllProcedure] : [])
+  const updateHllList = rawList.map((p) => String(p).trim()).filter(Boolean)
+  const badProc = updateHllList.find((p) => !RUN_PROC_IDENT.test(p))
+  if (badProc) return NextResponse.json({ error: `Update-HLL procedure is invalid: ${badProc}` }, { status: 400 })
+
   try {
     await ensureConfigsTable()
-    const cols: [string, string][] = [["CONFIG_NAME", sqlStr(name)], ...colsFromParsed(parsed as unknown as Record<string, unknown>)]
+    const cols: [string, string][] = [["CONFIG_NAME", sqlStr(name)], ...colsFromParsed(parsed as unknown as Record<string, unknown>, updateHllList)]
     if (configId !== null) {
       const setSql = [...cols.map(([c, v]) => `${c} = ${v}`), "UPDATED_AT = CURRENT_TIMESTAMP()", `UPDATED_BY = ${sqlStr(actor)}`].join(", ")
       await executeSnowflakeQuery(`UPDATE ${CONFIGS_TABLE} SET ${setSql} WHERE CONFIG_ID = ${configId}`, SF_OPTS)
