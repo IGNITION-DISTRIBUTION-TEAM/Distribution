@@ -48,6 +48,17 @@ function parseId(raw: string): number | null {
   return Number.isInteger(n) && n >= 0 ? n : null
 }
 
+// When Snowflake can't resolve a CALL target, it's almost always the exact
+// name/schema or the argument count (overload resolution). Add an actionable
+// hint for that error class; return "" otherwise.
+function callHint(message: string, procRef: string): string {
+  if (/unknown (user-defined )?function|does not exist or not authorized|invalid identifier/i.test(message)) {
+    const hasArgs = procRef.includes("(")
+    return ` — check that ${procRef.split("(")[0]} exists at that exact DATABASE.SCHEMA.NAME and that the argument count matches${hasArgs ? "" : " (if it takes an argument, configure it as NAME(1))"}.`
+  }
+  return ""
+}
+
 // A proc reference may carry a call-argument list (e.g. DB.SCHEMA.SP_X(1)).
 // Build the CALL statement and pull the DB/SCHEMA from the part before "(".
 function buildCall(procRef: string): { sql: string; database: string; schema: string } {
@@ -166,7 +177,7 @@ async function* runStepsGen(campaignId: number, config: RunConfig): AsyncGenerat
       yield emitEnd({ step, status: "success", message: `Ran ${proc}` })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      yield emitEnd({ step, status: "error", message: `Failed at ${proc}: ${message}` })
+      yield emitEnd({ step, status: "error", message: `Failed at ${proc}: ${message}${callHint(message, proc)}` })
       yield await done(campaignId, results); return
     }
   }
@@ -252,7 +263,7 @@ async function runInitialSource(
     return { step, status: "success", message: `Loaded ${label} into HLL${loaded}` }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { step, status: "error", message: `Initial source → HLL failed: ${message}` }
+    return { step, status: "error", message: `Initial source → HLL failed: ${message}${callHint(message, object)}` }
   }
 }
 
