@@ -98,6 +98,9 @@ import {
   TrendingUp,
   Recycle,
   Waves,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 import { useState, useCallback, useEffect, useMemo } from "react"
 import { cn } from "@/lib/utils"
@@ -1906,14 +1909,107 @@ function SnowflakeSourcePanel() {
   )
 }
 
+type AutomationTask = {
+  ID: number | string
+  NAME: string
+  DESCRIPTION: string | null
+  TASK_TYPE: string
+  TARGET: string | null
+  STATUS: string
+  SCHEDULE: string | null
+  CREATED_BY: string | null
+  CREATED_AT: string | null
+  UPDATED_AT: string | null
+}
+const TASK_TYPES = ["CRM", "Dialling", "Custom"]
+const TASK_STATUSES = ["Draft", "Active", "Paused", "Completed"]
+type TaskForm = { name: string; type: string; status: string; target: string; schedule: string; description: string }
+const EMPTY_FORM: TaskForm = { name: "", type: "Custom", status: "Draft", target: "", schedule: "", description: "" }
+
+function taskStatusClass(s: string): string {
+  switch (s) {
+    case "Active": return "border-emerald-500/30 bg-emerald-500/12 text-emerald-300"
+    case "Paused": return "border-amber-500/30 bg-amber-500/12 text-amber-300"
+    case "Completed": return "border-sky-500/30 bg-sky-500/12 text-sky-300"
+    default: return "border-border bg-muted text-muted-foreground"
+  }
+}
+
 function AutomationContent() {
+  const [tasks, setTasks] = useState<AutomationTask[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<null | "new" | AutomationTask>(null)
+  const [form, setForm] = useState<TaskForm>(EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
+  const [deleteTask, setDeleteTask] = useState<AutomationTask | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/distribution/tasks")
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Failed to load (${r.status})`)
+      setTasks(d.rows ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = (type = "Custom") => { setForm({ ...EMPTY_FORM, type }); setEditing("new") }
+  const openEdit = (t: AutomationTask) => {
+    setForm({ name: t.NAME, type: t.TASK_TYPE, status: t.STATUS, target: t.TARGET ?? "", schedule: t.SCHEDULE ?? "", description: t.DESCRIPTION ?? "" })
+    setEditing(t)
+  }
+  const setF = (k: keyof TaskForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    if (!form.name.trim()) { toast.error("Task name is required"); return }
+    setSaving(true)
+    try {
+      const isEdit = editing && editing !== "new"
+      const url = isEdit ? `/api/distribution/tasks/${(editing as AutomationTask).ID}` : "/api/distribution/tasks"
+      const r = await fetch(url, { method: isEdit ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(form) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Failed (${r.status})`)
+      toast.success(isEdit ? "Task updated" : "Task created")
+      setEditing(null)
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTask) return
+    try {
+      const r = await fetch(`/api/distribution/tasks/${deleteTask.ID}`, { method: "DELETE" })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Failed (${r.status})`)
+      toast.success("Task deleted")
+      setDeleteTask(null)
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-foreground">Automated Lead Distribution</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Set up automated workflows to distribute leads to dialling systems and CRM platforms.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold text-foreground">Automated Lead Distribution</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create, track and edit distribution automation tasks. Stored in Snowflake.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => openNew()}><Plus className="mr-2 h-4 w-4" /> New task</Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -1924,16 +2020,11 @@ function AutomationContent() {
             </div>
             <div>
               <h3 className="font-medium text-foreground">CRM Integration</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Connect to your CRM to automatically distribute leads in real-time.
-              </p>
-              <Button variant="outline" size="sm" className="mt-3">
-                Configure CRM
-              </Button>
+              <p className="mt-1 text-sm text-muted-foreground">Connect to your CRM to automatically distribute leads in real-time.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => openNew("CRM")}>Configure CRM</Button>
             </div>
           </div>
         </div>
-
         <div className="rounded-xl border border-border bg-card p-6">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -1941,45 +2032,124 @@ function AutomationContent() {
             </div>
             <div>
               <h3 className="font-medium text-foreground">Dialling System Integration</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Route leads to dialling systems for immediate agent engagement.
-              </p>
-              <Button variant="outline" size="sm" className="mt-3">
-                Configure Dialling
-              </Button>
+              <p className="mt-1 text-sm text-muted-foreground">Route leads to dialling systems for immediate agent engagement.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => openNew("Dialling")}>Configure Dialling</Button>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="text-lg font-semibold text-foreground">Active Distributions</h3>
-        <p className="mt-2 text-sm text-muted-foreground">
-          You currently have no active distribution workflows. Create your first automation above.
-        </p>
-      </div>
+      {editing !== null && (
+        <div className="rounded-xl border border-border bg-card p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-foreground">{editing === "new" ? "New automation task" : "Edit task"}</h3>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <Label htmlFor="task-name">Name</Label>
+              <Input id="task-name" className="mt-1" value={form.name} onChange={(e) => setF("name", e.target.value)} placeholder="e.g. Push new leads to dialler" />
+            </div>
+            <div>
+              <Label>Type</Label>
+              <Select value={form.type} onValueChange={(v) => setF("type", v)}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{TASK_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Status</Label>
+              <Select value={form.status} onValueChange={(v) => setF("status", v)}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{TASK_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="task-target">Target</Label>
+              <Input id="task-target" className="mt-1" value={form.target} onChange={(e) => setF("target", e.target.value)} placeholder="CRM / dialler / campaign" />
+            </div>
+            <div>
+              <Label htmlFor="task-schedule">Schedule</Label>
+              <Input id="task-schedule" className="mt-1" value={form.schedule} onChange={(e) => setF("schedule", e.target.value)} placeholder="e.g. Real-time, Daily 08:00" />
+            </div>
+            <div className="md:col-span-2">
+              <Label htmlFor="task-desc">Description</Label>
+              <Textarea id="task-desc" className="mt-1" value={form.description} onChange={(e) => setF("description", e.target.value)} placeholder="What this automation does…" rows={3} />
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button onClick={save} disabled={saving}>
+              {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : editing === "new" ? "Create task" : "Save changes"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Benefits of Automation</h3>
-        <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-            Reduce manual data entry errors
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-            Save time on repetitive tasks
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-            Ensure consistent data quality
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-            Enable real-time lead routing and engagement
-          </li>
-        </ul>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-foreground">Active Distributions</h3>
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading}><RefreshCw className={cn("mr-2 h-4 w-4", loading && "animate-spin")} /> Refresh</Button>
+        </div>
+        {error ? (
+          <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>
+        ) : loading ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading tasks…</div>
+        ) : tasks.length === 0 ? (
+          <p className="py-4 text-sm text-muted-foreground">No distribution tasks yet. Create your first one with “New task”.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Target</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>Updated</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tasks.map((t) => (
+                  <TableRow key={String(t.ID)}>
+                    <TableCell className="font-medium text-foreground">
+                      {t.NAME}
+                      {t.DESCRIPTION && <div className="text-xs font-normal text-muted-foreground">{t.DESCRIPTION}</div>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{t.TASK_TYPE}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.TARGET || "—"}</TableCell>
+                    <TableCell><Badge variant="outline" className={taskStatusClass(t.STATUS)}>{t.STATUS}</Badge></TableCell>
+                    <TableCell className="text-muted-foreground">{t.SCHEDULE || "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{t.UPDATED_AT || t.CREATED_AT || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(t)} aria-label="Edit"><Pencil className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-400 hover:text-rose-300" onClick={() => setDeleteTask(t)} aria-label="Delete"><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </div>
+
+      <AlertDialog open={!!deleteTask} onOpenChange={(o) => !o && setDeleteTask(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes “{deleteTask?.NAME}” from Snowflake. This can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-rose-600 text-white hover:bg-rose-700">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
