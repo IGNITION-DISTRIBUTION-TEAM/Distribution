@@ -272,7 +272,7 @@ function ManualContent() {
               onClick={() => setSource("snowflake")}
               icon={<Database className="h-5 w-5" />}
               title="Snowflake"
-              description="Run a stored procedure"
+              description="Run the saved distribution"
             />
           </div>
         </div>
@@ -288,13 +288,13 @@ function ManualContent() {
             <h3 className="font-medium text-foreground">
               {source === "file" && "Upload file"}
               {source === "sftp" && "SFTP connection"}
-              {source === "snowflake" && "Stored procedure"}
+              {source === "snowflake" && "Run distribution"}
             </h3>
           </div>
 
           {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} />}
           {source === "sftp" && <SftpSourcePanel />}
-          {source === "snowflake" && <SnowflakeSourcePanel />}
+          {source === "snowflake" && <SnowflakeSourcePanel campaignId={selectedCampaign.id} campaignTitle={selectedCampaign.title} />}
         </div>
       )}
     </div>
@@ -1869,42 +1869,83 @@ function SftpSourcePanel() {
   )
 }
 
-function SnowflakeSourcePanel() {
+// Runs the campaign's saved full-distribution config (Step 1 source → load
+// history → update HLL → sync) via the orchestrator. The config itself is
+// edited in Settings → Campaign automation.
+function SnowflakeSourcePanel({ campaignId, campaignTitle }: { campaignId: string; campaignTitle: string }) {
+  const [running, setRunning] = useState(false)
+  const [results, setResults] = useState<RunStepResult[] | null>(null)
+  const [noConfig, setNoConfig] = useState(false)
+
+  const run = async () => {
+    setRunning(true)
+    setResults(null)
+    setNoConfig(false)
+    try {
+      const res = await fetch(`/api/distribution/campaigns/${campaignId}/run`, { method: "POST" })
+      const data = await res.json()
+      if (Array.isArray(data.results)) setResults(data.results as RunStepResult[])
+      if (!res.ok && !Array.isArray(data.results)) {
+        // e.g. "No campaign config found" / "inactive" — surface clearly.
+        if (typeof data.error === "string" && /no campaign config/i.test(data.error)) setNoConfig(true)
+        throw new Error(data.error || `Run failed (${res.status})`)
+      }
+      const failed = Array.isArray(data.results)
+        ? (data.results as RunStepResult[]).some((r) => r.status === "error")
+        : !res.ok
+      if (failed) {
+        const bad = (data.results as RunStepResult[] | undefined)?.find((r) => r.status === "error")
+        toast.error(bad ? `${bad.step}: ${bad.message}` : "Distribution failed")
+      } else {
+        toast.success(`Distribution complete — ${data.ran ?? 0} step(s) ran`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-          <span>Stored procedure execution is not yet wired up — the form below collects the inputs.</span>
-        </div>
+      <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+        Runs the <span className="font-medium text-foreground">saved distribution config</span> for{" "}
+        <span className="font-medium text-foreground">{campaignTitle}</span> in order — Initial source → Load into
+        history → Update HLL → Sync — stopping at the first failure. Edit the config (source, mapping, procedures,
+        batch name, lead expiry) in <span className="font-medium text-foreground">Settings → Campaign automation</span>.
       </div>
 
-      <div>
-        <Label htmlFor="sp-name" className="mb-2 block text-sm text-muted-foreground">
-          Procedure (fully qualified)
-        </Label>
-        <input
-          id="sp-name"
-          placeholder="DATAWAREHOUSE.SCHEMA.PROCEDURE_NAME"
-          className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
-        />
-      </div>
-
-      <div>
-        <Label htmlFor="sp-args" className="mb-2 block text-sm text-muted-foreground">
-          Arguments (comma-separated, optional)
-        </Label>
-        <input
-          id="sp-args"
-          placeholder="'arg1', 123"
-          className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
-        />
-      </div>
-
-      <Button disabled>
-        <Database className="mr-2 h-4 w-4" />
-        Run stored procedure (coming soon)
+      <Button onClick={run} disabled={running}>
+        {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+        {running ? "Running…" : "Run full distribution"}
       </Button>
+
+      {noConfig && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <span>No saved configuration for this campaign yet. Set it up in Settings → Campaign automation, then run it here.</span>
+          </div>
+        </div>
+      )}
+
+      {results && (
+        <ul className="flex flex-col gap-1.5">
+          {results.map((r, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm">
+              {r.status === "success" ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+              ) : r.status === "error" ? (
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+              ) : (
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              <span className="font-medium text-foreground">{r.step}:</span>
+              <span className="text-muted-foreground">{r.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
