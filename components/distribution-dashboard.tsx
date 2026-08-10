@@ -1978,7 +1978,7 @@ function AutomationContent() {
   // Load HLL + source columns for the mapping UI, auto-matching by name.
   const loadColumns = async () => {
     const readFrom = form.sourceKind === "proc" ? form.sourceTable.trim() : form.sourceObject.trim()
-    if (!readFrom) { setColsMsg(form.sourceKind === "proc" ? "Enter the proc's output table first." : "Enter the view name first."); return }
+    if (!readFrom) { setColsMsg(form.sourceKind === "proc" ? "Enter the proc's output table or view first." : "Enter the view name first."); return }
     setColsLoading(true); setColsMsg(null)
     try {
       const [hllRes, srcRes] = await Promise.all([
@@ -2232,8 +2232,8 @@ function AutomationContent() {
               )}
               {form.sourceKind === "proc" && (
                 <div>
-                  <Label htmlFor="src-tbl">Output table to read (DB.SCHEMA.TABLE)</Label>
-                  <Input id="src-tbl" className="mt-1 font-mono text-xs" value={form.sourceTable} onChange={(e) => setF("sourceTable", e.target.value)} placeholder="DATAWAREHOUSE.SCHEMA.TABLE" />
+                  <Label htmlFor="src-tbl">Output to read — table or view (DB.SCHEMA.NAME)</Label>
+                  <Input id="src-tbl" className="mt-1 font-mono text-xs" value={form.sourceTable} onChange={(e) => setF("sourceTable", e.target.value)} placeholder="DATAWAREHOUSE.SCHEMA.NAME" />
                 </div>
               )}
             </div>
@@ -5342,7 +5342,7 @@ function CampaignSettingsPanel() {
   const loadSourceColumns = async () => {
     // Proc source maps FROM the stage/upload target table; view maps FROM the view.
     const readFrom = sourceKind === "proc" ? targetTable.trim() : sourceObject.trim()
-    if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target table (below) first." : "Enter the view name first."); return }
+    if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target (table or view) below first." : "Enter the view name first."); return }
     setColsLoading(true); setColsMsg(null)
     try {
       const [h, v] = await Promise.all([
@@ -5777,7 +5777,7 @@ function CampaignSettingsPanel() {
                 )}
               </div>
               {sourceKind === "proc" && (
-                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target table</span> set below. Then map that table&apos;s columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
+                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
               )}
               {sourceKind !== "none" && (
                 <div className="mt-3">
@@ -5794,7 +5794,7 @@ function CampaignSettingsPanel() {
                         <thead className="sticky top-0 bg-card">
                           <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                             <th className="px-3 py-2 font-medium">HLL column</th>
-                            <th className="px-3 py-2 font-medium">{sourceKind === "proc" ? "Upload table column" : "View column"}</th>
+                            <th className="px-3 py-2 font-medium">{sourceKind === "proc" ? "Upload column (table/view)" : "View column"}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -5872,11 +5872,11 @@ function CampaignSettingsPanel() {
               <h4 className="mb-3 text-sm font-medium text-foreground">Destination &amp; sync</h4>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <Label className="mb-1.5 block text-xs text-muted-foreground">Upload target table</Label>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Upload target (table or view)</Label>
                   <Input
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
-                    placeholder="DATABASE.SCHEMA.TABLE"
+                    placeholder="DATABASE.SCHEMA.NAME"
                     className="font-mono text-sm"
                   />
                 </div>

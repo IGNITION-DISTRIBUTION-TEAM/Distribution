@@ -135,8 +135,8 @@ async function runSourceToHll(
   // What we SELECT from: the proc's output table, or the view itself.
   const readFrom = kind === "proc" ? sourceTable : object
   if (kind === "proc" && (!sourceTable || !QUALIFIED.test(sourceTable))) {
-    await recordRun(taskId, "Error", `Source table (for the proc's output) must be DATABASE.SCHEMA.TABLE: ${sourceTable || "(empty)"}`)
-    return NextResponse.json({ error: "For a proc source, set the output table to read from." }, { status: 400 })
+    await recordRun(taskId, "Error", `Source (for the proc's output, a table or view) must be DATABASE.SCHEMA.NAME: ${sourceTable || "(empty)"}`)
+    return NextResponse.json({ error: "For a proc source, set the table or view to read from." }, { status: 400 })
   }
 
   // Parse + validate the mapping { hllColumn: sourceColumn }.

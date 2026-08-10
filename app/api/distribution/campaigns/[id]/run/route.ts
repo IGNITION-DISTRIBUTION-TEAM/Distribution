@@ -147,7 +147,7 @@ async function runInitialSource(
   // What we SELECT from: the proc's upload/stage table, or the view itself.
   const readFrom = kind === "proc" ? stageTable : object
   if (kind === "proc" && (!stageTable || !RUN_QUALIFIED.test(stageTable))) {
-    return { step, status: "error", message: `Upload target table (for the proc's output) must be DATABASE.SCHEMA.TABLE: ${stageTable || "(empty)"}` }
+    return { step, status: "error", message: `Upload target (for the proc's output, a table or view) must be DATABASE.SCHEMA.NAME: ${stageTable || "(empty)"}` }
   }
   if (kind === "view" && !RUN_QUALIFIED.test(object)) {
     return { step, status: "error", message: `View must be DATABASE.SCHEMA.NAME: ${object}` }
