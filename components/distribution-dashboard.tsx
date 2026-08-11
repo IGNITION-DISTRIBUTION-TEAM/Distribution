@@ -6024,7 +6024,7 @@ function CampaignSettingsPanel() {
           leadSource,
           sftpHost: host, sftpPort: port, sftpUsername: username, sftpAuthType: authType,
           sftpPassword: password, sftpPrivateKey: privateKey, sftpRemotePath: remotePath,
-          uploadTargetTable: targetTable, loadHistoryProcedure: loadHistoryProc,
+          uploadTargetTable: targetTable, loadHistoryProcedure: "",
           updateHllProcedures: updateHllProcs, syncProcedure,
           syncSourceView, syncTargetTable, syncColumns, syncBatchSize: syncBatch,
           sourceKind, sourceObject, sourceMapping,
@@ -6499,17 +6499,6 @@ function CampaignSettingsPanel() {
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
                     placeholder="DATABASE.SCHEMA.NAME"
-                    className="font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <Label className="mb-1.5 block text-xs text-muted-foreground">
-                    Load into history procedure
-                  </Label>
-                  <Input
-                    value={loadHistoryProc}
-                    onChange={(e) => setLoadHistoryProc(e.target.value)}
-                    placeholder="DATABASE.SCHEMA.PROC"
                     className="font-mono text-sm"
                   />
                 </div>
