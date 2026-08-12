@@ -78,7 +78,7 @@ export function rowsToCsv(columns: SnowflakeColumn[], rows: unknown[][]): string
   return [headerLine, ...dataLines].join("\r\n") + "\r\n"
 }
 
-function safeFilename(input: string): string {
+export function safeFilename(input: string): string {
   return (
     input
       .replace(/[\\/:*?"<>|\s]+/g, "_")

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { rowsToCsv } from "@/lib/dialler-csv"
+import { rowsToCsv, safeFilename } from "@/lib/dialler-csv"
 import { CONFIGS_TABLE, CONFIG_SF } from "@/lib/distribution-steps"
 import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
 
@@ -129,8 +129,22 @@ export async function GET(request: NextRequest) {
       schema: "DISTRIBUTION_DATA_APPLICATION",
     })
     const csv = rowsToCsv(columns, rows)
+
+    // Name the file after the BATCHNAME column value (as the daily files do).
+    // Fall back to distribution_<cid>_<date> when there's no usable batch name.
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "")
-    const filename = `distribution_${cid}_${stamp}.csv`
+    let filename = `distribution_${cid}_${stamp}.csv`
+    const batchIdx = columns.findIndex((c) => c.name.toUpperCase() === "BATCHNAME")
+    if (batchIdx >= 0) {
+      const distinct = Array.from(
+        new Set(rows.map((r) => r[batchIdx]).filter((v) => v !== null && v !== undefined))
+      ).map(String)
+      if (distinct.length === 1) {
+        filename = `${safeFilename(distinct[0])}.csv`
+      } else if (distinct.length > 1) {
+        filename = `${safeFilename(distinct[0])}_plus_${distinct.length - 1}_more.csv`
+      }
+    }
     return new NextResponse(csv, {
       status: 200,
       headers: {
