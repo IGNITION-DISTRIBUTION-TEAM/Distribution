@@ -500,6 +500,28 @@ function ManualContent() {
           {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} campaignId={selectedCampaign.id} />}
         </div>
       )}
+
+      {/* Step 4 — download the distributed data (snowflake distribution only) */}
+      {selectedCampaign && source === "snowflake" && configId != null && (
+        <div className="rounded-xl border border-border bg-card p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+              4
+            </span>
+            <h3 className="font-medium text-foreground">Download data</h3>
+          </div>
+          <p className="mb-4 text-sm text-muted-foreground">
+            After the sync, download today&apos;s distributed leads for campaign{" "}
+            <span className="font-medium text-foreground">{selectedCampaign.id}</span> in the CXM format
+            (CSV, UTF-8, no BOM).
+          </p>
+          <Button variant="outline" asChild>
+            <a href={`/api/distribution/export?campaignId=${selectedCampaign.id}`}>
+              <Download className="mr-2 h-4 w-4" /> Download data (CSV)
+            </a>
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2186,17 +2208,10 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={run} disabled={running} className="flex-1 min-w-[220px]">
-          {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
-          {running ? "Running…" : "Run full distribution"}
-        </Button>
-        <Button variant="outline" asChild>
-          <a href={`/api/distribution/export?campaignId=${campaignId}`}>
-            <Download className="mr-2 h-4 w-4" /> Download data (CSV)
-          </a>
-        </Button>
-      </div>
+      <Button onClick={run} disabled={running} className="w-full">
+        {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+        {running ? "Running…" : "Run full distribution"}
+      </Button>
 
       {/* Run each step individually. */}
       {plan.length > 0 && (
@@ -6657,13 +6672,6 @@ function CampaignSettingsPanel() {
                     {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
                     {running ? "Running…" : "Run full distribution"}
                   </Button>
-                  {campaignId && (
-                    <Button variant="outline" asChild>
-                      <a href={`/api/distribution/export?campaignId=${campaignId}`}>
-                        <Download className="mr-2 h-4 w-4" /> Download data (CSV)
-                      </a>
-                    </Button>
-                  )}
                 </div>
               </div>
 
@@ -6735,6 +6743,23 @@ function CampaignSettingsPanel() {
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* Final step — download the distributed data. */}
+              {campaignId && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background/40 p-3">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">Download data</div>
+                    <div className="text-xs text-muted-foreground">
+                      Today&apos;s distributed leads for campaign {campaignId} — CXM format (CSV, UTF-8, no BOM).
+                    </div>
+                  </div>
+                  <Button variant="outline" asChild>
+                    <a href={`/api/distribution/export?campaignId=${campaignId}`}>
+                      <Download className="mr-2 h-4 w-4" /> Download data (CSV)
+                    </a>
+                  </Button>
+                </div>
               )}
 
               {/* Run history — one row per completed run of this campaign. */}
