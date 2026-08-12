@@ -38,8 +38,8 @@ async function resolveLeadExpiryDays(cid: number): Promise<number> {
 function buildQuery(cid: number, expiryDays: number): string {
   return `with cte1 as (
   select a.IDNUMBER, a.LEADCUSTOMERID
-  from "DATAWAREHOUSE"."SILVERSURFER_LEAD_HEVO"."LEADCUSTOMER" a
-  join "DATAWAREHOUSE"."SILVERSURFER_LEAD_HEVO"."LEADCUSTOMERDETAILS" b on a.LeadCustomerId = b.LeadCustomerId
+  from "DATAWAREHOUSE"."SILVERSURFER"."LEAD_LEADCUSTOMER" a
+  join "DATAWAREHOUSE"."SILVERSURFER"."LEAD_LEADCUSTOMERDETAILS" b on a.LeadCustomerId = b.LeadCustomerId
   where CAMPAIGNID in (${cid})
 )
 SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
