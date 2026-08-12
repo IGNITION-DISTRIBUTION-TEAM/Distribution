@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
+import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { rowsToCsv } from "@/lib/dialler-csv"
+import { CONFIGS_TABLE, CONFIG_SF } from "@/lib/distribution-steps"
+import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -9,9 +11,31 @@ export const maxDuration = 300
 
 const HLL = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
 
+// Resolve the lead-expiry days configured for the campaign so the export's
+// LeadExpiry matches what was loaded into the HLL. A campaign can have several
+// automation configs — prefer an active one, then the most recently updated.
+// Best-effort: falls back to the default (45) if nothing is configured or the
+// lookup fails. Always returns a validated integer safe to interpolate.
+async function resolveLeadExpiryDays(cid: number): Promise<number> {
+  try {
+    const rows = await executeSnowflakeQuery<{ LEAD_EXPIRY_DAYS: unknown }>(
+      `SELECT LEAD_EXPIRY_DAYS FROM ${CONFIGS_TABLE}
+       WHERE CAMPAIGNID = ${cid} AND LEAD_EXPIRY_DAYS IS NOT NULL
+       ORDER BY COALESCE(IS_ACTIVE, TRUE) DESC, UPDATED_AT DESC NULLS LAST
+       LIMIT 1`,
+      CONFIG_SF
+    )
+    if (rows.length > 0) return normLeadExpiryDays(rows[0].LEAD_EXPIRY_DAYS)
+  } catch {
+    /* best-effort — fall back to the default below */
+  }
+  return DEFAULT_LEAD_EXPIRY_DAYS
+}
+
 // The distribution export in the agreed CXM format. `cid` is a validated
-// integer substituted into both campaign-id filters.
-function buildQuery(cid: number): string {
+// integer substituted into both campaign-id filters; `expiryDays` is a
+// validated integer used for the LeadExpiry column.
+function buildQuery(cid: number, expiryDays: number): string {
   return `with cte1 as (
   select a.IDNUMBER, a.LEADCUSTOMERID
   from "DATAWAREHOUSE"."SILVERSURFER_LEAD_HEVO"."LEADCUSTOMER" a
@@ -28,7 +52,7 @@ SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
      , CAMPAIGNID AS CAMPAIGNID
      , BATCHNAME AS BATCHNAME
      , CURRENT_DATE() AS CREATEDONDATE
-     , CURRENT_DATE() + 60 as LeadExpiry
+     , CURRENT_DATE() + ${expiryDays} as LeadExpiry
      , NULL AS BANK
      , NULL AS BANKACCOUNTTYPE
      , NULL AS BRANCHCODE
@@ -99,7 +123,8 @@ export async function GET(request: NextRequest) {
   const cid = Number(raw)
 
   try {
-    const { columns, rows } = await executeSnowflakeQueryWithMeta(buildQuery(cid), {
+    const expiryDays = await resolveLeadExpiryDays(cid)
+    const { columns, rows } = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays), {
       database: "DATAWAREHOUSE",
       schema: "DISTRIBUTION_DATA_APPLICATION",
     })
