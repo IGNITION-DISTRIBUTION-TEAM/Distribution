@@ -70,6 +70,14 @@ function csvEscape(value: unknown, type: string): string {
   return s
 }
 
+// Build a CSV string (UTF-8, no BOM) from Snowflake columns + rows, preserving
+// column order and header names. CRLF line endings.
+export function rowsToCsv(columns: SnowflakeColumn[], rows: unknown[][]): string {
+  const headerLine = columns.map((c) => csvEscape(c.name, "TEXT")).join(",")
+  const dataLines = rows.map((row) => row.map((v, i) => csvEscape(v, columns[i]?.type ?? "TEXT")).join(","))
+  return [headerLine, ...dataLines].join("\r\n") + "\r\n"
+}
+
 function safeFilename(input: string): string {
   return (
     input
@@ -108,11 +116,7 @@ export async function buildDiallerCsv(index: number): Promise<DiallerCsvResult> 
     throw new DiallerCsvError(`View ${viewName} returned no rows`, 404)
   }
 
-  const headerLine = colMeta.map((c) => csvEscape(c.name, "TEXT")).join(",")
-  const dataLines = rawRows.map((row) =>
-    row.map((value, i) => csvEscape(value, colMeta[i]?.type ?? "TEXT")).join(",")
-  )
-  const csv = [headerLine, ...dataLines].join("\r\n") + "\r\n"
+  const csv = rowsToCsv(colMeta, rawRows)
 
   // Filename: prefer the BATCHNAME column value, fall back to view name.
   const batchIdx = colMeta.findIndex((c) => c.name.toUpperCase() === "BATCHNAME")

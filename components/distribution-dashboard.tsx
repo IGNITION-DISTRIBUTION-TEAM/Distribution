@@ -90,6 +90,7 @@ import {
   ChevronsUpDown,
   ChevronDown,
   ChevronRight,
+  Download,
   Files,
   PlayCircle,
   Upload,
@@ -2185,10 +2186,17 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
         </div>
       )}
 
-      <Button onClick={run} disabled={running}>
-        {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
-        {running ? "Running…" : "Run full distribution"}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={run} disabled={running} className="flex-1 min-w-[220px]">
+          {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+          {running ? "Running…" : "Run full distribution"}
+        </Button>
+        <Button variant="outline" asChild>
+          <a href={`/api/distribution/export?campaignId=${campaignId}`}>
+            <Download className="mr-2 h-4 w-4" /> Download data (CSV)
+          </a>
+        </Button>
+      </div>
 
       {/* Run each step individually. */}
       {plan.length > 0 && (
@@ -6649,6 +6657,13 @@ function CampaignSettingsPanel() {
                     {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
                     {running ? "Running…" : "Run full distribution"}
                   </Button>
+                  {campaignId && (
+                    <Button variant="outline" asChild>
+                      <a href={`/api/distribution/export?campaignId=${campaignId}`}>
+                        <Download className="mr-2 h-4 w-4" /> Download data (CSV)
+                      </a>
+                    </Button>
+                  )}
                 </div>
               </div>
 
