@@ -6392,15 +6392,22 @@ function CampaignSettingsPanel() {
             </div>
             </>)}
 
-            {leadSource === "snowflake" && (<>
+            {(leadSource === "snowflake" || leadSource === "file") && (<>
             <Separator />
 
             <div>
-              <h4 className="mb-1 text-sm font-medium text-foreground">Initial source (Step 1)</h4>
+              <h4 className="mb-1 text-sm font-medium text-foreground">
+                {leadSource === "file" ? "Load into HLL" : "Initial source (Step 1)"}
+              </h4>
               <p className="mb-3 text-xs text-muted-foreground">
-                What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
-                target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
-                into the HLL table via a column mapping.
+                {leadSource === "file" ? (
+                  <>Once the file is uploaded to its staging table, a <b>view</b> (or the table itself) is read
+                  into the HLL table via a column mapping — this is the &ldquo;load into HLL&rdquo; step of the run.</>
+                ) : (
+                  <>What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
+                  target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
+                  into the HLL table via a column mapping.</>
+                )}
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -6409,8 +6416,8 @@ function CampaignSettingsPanel() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">— None —</SelectItem>
-                      <SelectItem value="proc">Stored procedure → stage table</SelectItem>
-                      <SelectItem value="view">View → HLL (direct)</SelectItem>
+                      {leadSource !== "file" && <SelectItem value="proc">Stored procedure → stage table</SelectItem>}
+                      <SelectItem value="view">{leadSource === "file" ? "View or table → HLL" : "View → HLL (direct)"}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -6516,15 +6523,17 @@ function CampaignSettingsPanel() {
             <div>
               <h4 className="mb-3 text-sm font-medium text-foreground">Destination &amp; sync</h4>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label className="mb-1.5 block text-xs text-muted-foreground">Upload target (table or view)</Label>
-                  <Input
-                    value={targetTable}
-                    onChange={(e) => setTargetTable(e.target.value)}
-                    placeholder="DATABASE.SCHEMA.NAME"
-                    className="font-mono text-sm"
-                  />
-                </div>
+                {leadSource !== "file" && (
+                  <div>
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">Upload target (table or view)</Label>
+                    <Input
+                      value={targetTable}
+                      onChange={(e) => setTargetTable(e.target.value)}
+                      placeholder="DATABASE.SCHEMA.NAME"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                )}
                 <div className="sm:col-span-2">
                   <Label className="mb-1.5 block text-xs text-muted-foreground">
                     Update HLL procedures{updateHllProcs.length > 0 && <span className="text-muted-foreground/70"> · {updateHllProcs.length}</span>}
@@ -6650,7 +6659,9 @@ function CampaignSettingsPanel() {
                 <div>
                   <div className="text-sm font-medium text-foreground">Run full distribution</div>
                   <div className="text-xs text-muted-foreground">
-                    Initial source → Load into history → Update HLL → Sync. Runs in order and stops at the first failure.
+                    {leadSource === "file"
+                      ? "Upload the file first, then run: Load into HLL → Update HLL → Sync. Runs in order and stops at the first failure."
+                      : "Initial source → Load into history → Update HLL → Sync. Runs in order and stops at the first failure."}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
