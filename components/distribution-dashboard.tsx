@@ -6392,17 +6392,42 @@ function CampaignSettingsPanel() {
             </div>
             </>)}
 
+            {leadSource === "file" && (<>
+            <Separator />
+
+            <div>
+              <h4 className="mb-1 text-sm font-medium text-foreground">Upload file to a table (Step 1)</h4>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Where uploaded leads land before they go to the HLL. Set the staging table here; the actual file
+                pick and the <b>file → table column mapping</b> are done on the{" "}
+                <span className="font-medium text-foreground">Manual Distribution</span> page (it&apos;s prefilled with
+                this table). &ldquo;Load into HLL&rdquo; below then reads this table into the HLL.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-muted-foreground">Staging table (DB.SCHEMA.NAME)</Label>
+                  <Input
+                    value={targetTable}
+                    onChange={(e) => setTargetTable(e.target.value)}
+                    placeholder="DATABASE.SCHEMA.NAME"
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+            </>)}
+
             {(leadSource === "snowflake" || leadSource === "file") && (<>
             <Separator />
 
             <div>
               <h4 className="mb-1 text-sm font-medium text-foreground">
-                {leadSource === "file" ? "Load into HLL" : "Initial source (Step 1)"}
+                {leadSource === "file" ? "Load into HLL (Step 2)" : "Initial source (Step 1)"}
               </h4>
               <p className="mb-3 text-xs text-muted-foreground">
                 {leadSource === "file" ? (
-                  <>Once the file is uploaded to its staging table, a <b>view</b> (or the table itself) is read
-                  into the HLL table via a column mapping — this is the &ldquo;load into HLL&rdquo; step of the run.</>
+                  <>Read the staging table (or a <b>view</b> over it) into the HLL table via a column mapping —
+                  the &ldquo;load into HLL&rdquo; step of the run.</>
                 ) : (
                   <>What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
                   target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
