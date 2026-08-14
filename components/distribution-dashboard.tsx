@@ -928,7 +928,22 @@ function UpdateHllSection({ campaignId }: { campaignId: string }) {
   )
 }
 
-function FileSourcePanel({ campaignId }: { campaignId: string }) {
+// The file upload + column-mapping flow (select → preview → create → map →
+// load), extracted so it can be reused both in the manual FileSourcePanel and
+// embedded directly in the campaign Settings (Step 1 · Upload file to a table).
+function FileUploadMapper({
+  campaignId,
+  targetTable: controlledTable,
+  onTargetTableChange,
+}: {
+  campaignId: string
+  // When provided, the target stage table is controlled by the parent (e.g. the
+  // Settings staging-table field), so both stay in sync and the internal
+  // config-prefill is skipped. When omitted, the component manages it itself.
+  targetTable?: string
+  onTargetTableChange?: (value: string) => void
+}) {
+  const controlled = controlledTable !== undefined
   const [file, setFile] = useState<File | null>(null)
   const [stage, setStage] = useState<"select" | "preview" | "create" | "map">("select")
 
@@ -937,7 +952,12 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [previewLoading, setPreviewLoading] = useState(false)
 
   // Mapping state
-  const [targetTable, setTargetTable] = useState("")
+  const [internalTable, setInternalTable] = useState("")
+  const targetTable = controlled ? (controlledTable as string) : internalTable
+  const setTargetTable = (value: string) => {
+    if (controlled) onTargetTableChange?.(value)
+    else setInternalTable(value)
+  }
   const [targetColumns, setTargetColumns] = useState<TargetColumn[] | null>(null)
   const [targetLoading, setTargetLoading] = useState(false)
   const [targetError, setTargetError] = useState<string | null>(null)
@@ -956,15 +976,11 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   const [loadedRows, setLoadedRows] = useState(0)
   const [loadDone, setLoadDone] = useState(false)
 
-  // Non-linear navigation between pipeline steps. Steps are independent — e.g.
-  // when the stage table is already loaded, jump straight to "history"/"verify".
-  const [section, setSection] = useState<"upload" | "history" | "verify" | "update">("upload")
-  const [historyProc, setHistoryProc] = useState("")
-
   // Pre-fill the target stage table from this campaign's saved automation
   // config (Settings → Campaign → UPLOAD_TARGET_TABLE). Best-effort: if the
   // config table or value is missing, the field stays blank and editable.
   useEffect(() => {
+    if (controlled) return // parent supplies the table; no internal prefill
     if (!campaignId) return
     let cancelled = false
     const load = async () => {
@@ -975,12 +991,8 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         if (cancelled) return
         const configured = data?.config?.UPLOAD_TARGET_TABLE
         if (typeof configured === "string" && configured.trim()) {
-          setTargetTable(configured.trim())
+          setInternalTable(configured.trim())
           setTargetFromConfig(true)
-        }
-        const proc = data?.config?.LOAD_HISTORY_PROCEDURE
-        if (typeof proc === "string" && proc.trim()) {
-          setHistoryProc(proc.trim())
         }
       } catch {
         // best-effort prefill — ignore network/config errors
@@ -990,7 +1002,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     return () => {
       cancelled = true
     }
-  }, [campaignId])
+  }, [campaignId, controlled])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -1186,9 +1198,6 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     setStage("select")
   }
 
-  // The file-upload sub-flow (select → preview → create → map → load). Rendered
-  // as the "upload" step of the pipeline; other steps don't need a file.
-  const renderUpload = () => {
   // ---- STAGE: select file
   if (stage === "select" || !preview) {
     return (
@@ -1551,7 +1560,35 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
       </AlertDialog>
     </div>
   )
-  }
+}
+
+// The manual file pipeline: the upload+mapping flow (FileUploadMapper) plus the
+// legacy load-history / verify / update-HLL steps, switchable via a tab bar.
+function FileSourcePanel({ campaignId }: { campaignId: string }) {
+  const [section, setSection] = useState<"upload" | "history" | "verify" | "update">("upload")
+  const [historyProc, setHistoryProc] = useState("")
+
+  // Best-effort prefill of the load-history procedure from saved config.
+  useEffect(() => {
+    if (!campaignId) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+        const proc = data?.config?.LOAD_HISTORY_PROCEDURE
+        if (typeof proc === "string" && proc.trim()) setHistoryProc(proc.trim())
+      } catch {
+        // best-effort prefill — ignore network/config errors
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
 
   const steps: { id: "upload" | "history" | "verify" | "update"; label: string }[] = [
     { id: "upload", label: "1 · Upload to stage" },
@@ -1570,7 +1607,6 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
             variant={section === s.id ? "default" : "outline"}
             size="sm"
             onClick={() => setSection(s.id)}
-            disabled={loading}
           >
             {s.label}
           </Button>
@@ -1580,7 +1616,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         Steps are independent — if the stage table is already loaded, skip straight to step 2 or 3.
       </p>
 
-      {section === "upload" && renderUpload()}
+      {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
       {section === "history" && <LoadHistorySection campaignId={campaignId} proc={historyProc} />}
       {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
       {section === "update" && <UpdateHllSection campaignId={campaignId} />}
@@ -6398,12 +6434,11 @@ function CampaignSettingsPanel() {
             <div>
               <h4 className="mb-1 text-sm font-medium text-foreground">Upload file to a table (Step 1)</h4>
               <p className="mb-3 text-xs text-muted-foreground">
-                Where uploaded leads land before they go to the HLL. Set the staging table here; the actual file
-                pick and the <b>file → table column mapping</b> are done on the{" "}
-                <span className="font-medium text-foreground">Manual Distribution</span> page (it&apos;s prefilled with
-                this table). &ldquo;Load into HLL&rdquo; below then reads this table into the HLL.
+                Where uploaded leads land before they go to the HLL. Set the staging table, then pick a file to
+                preview it, create the table if needed, and <b>map the file&apos;s columns to the table&apos;s columns</b>.
+                &ldquo;Load into HLL&rdquo; below then reads this table into the HLL.
               </p>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="mb-4 grid gap-4 sm:grid-cols-2">
                 <div>
                   <Label className="mb-1.5 block text-xs text-muted-foreground">Staging table (DB.SCHEMA.NAME)</Label>
                   <Input
@@ -6412,7 +6447,21 @@ function CampaignSettingsPanel() {
                     placeholder="DATABASE.SCHEMA.NAME"
                     className="font-mono text-sm"
                   />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Saved as the upload target; also prefilled below and on the Manual page.
+                  </p>
                 </div>
+              </div>
+              <div className="rounded-lg border border-border bg-background/40 p-4">
+                {campaignId ? (
+                  <FileUploadMapper
+                    campaignId={campaignId}
+                    targetTable={targetTable}
+                    onTargetTableChange={setTargetTable}
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">Select a campaign to upload a file.</p>
+                )}
               </div>
             </div>
             </>)}
