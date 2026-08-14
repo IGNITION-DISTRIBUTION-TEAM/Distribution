@@ -6436,7 +6436,8 @@ function CampaignSettingsPanel() {
               <p className="mb-3 text-xs text-muted-foreground">
                 Where uploaded leads land before they go to the HLL. Set the staging table, then pick a file to
                 preview it, create the table if needed, and <b>map the file&apos;s columns to the table&apos;s columns</b>.
-                &ldquo;Load into HLL&rdquo; below then reads this table into the HLL.
+                The staging table is <b>truncated before every load</b> (replaced, not appended). &ldquo;Load into
+                HLL&rdquo; below then reads this table into the HLL.
               </p>
               <div className="mb-4 grid gap-4 sm:grid-cols-2">
                 <div>
