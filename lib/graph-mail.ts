@@ -133,6 +133,104 @@ export function hasGraphMailPrivateKey(): boolean {
   return !!(process.env.GRAPH_MAIL_PRIVATE_KEY ?? "").trim()
 }
 
+export type PrivateKeyStatus = {
+  /** The env var is set to a non-empty value. */
+  present: boolean
+  /** The value loads as a usable private key (decrypting it if needed). */
+  usable: boolean
+  /** Human-readable diagnosis, safe to show in the UI. */
+  detail: string
+  keyType?: string
+  bits?: number
+  /** The value is an encrypted PEM. */
+  encrypted?: boolean
+  /** GRAPH_MAIL_KEY_PASSPHRASE is set. */
+  passphraseSet?: boolean
+}
+
+/**
+ * Diagnose the configured private key WITHOUT revealing it. Returns why the key
+ * is unusable (missing / not a PEM / encrypted without a passphrase / wrong
+ * passphrase) so the settings UI can say something actionable instead of just
+ * "not found".
+ */
+export function inspectGraphMailPrivateKey(): PrivateKeyStatus {
+  const raw = (process.env.GRAPH_MAIL_PRIVATE_KEY ?? "").trim()
+  const passphrase = (process.env.GRAPH_MAIL_KEY_PASSPHRASE ?? "").trim()
+  const passphraseSet = !!passphrase
+
+  if (!raw) {
+    return {
+      present: false,
+      usable: false,
+      passphraseSet,
+      detail:
+        "GRAPH_MAIL_PRIVATE_KEY is not set on this server. Add it to the environment (on Vercel: Project → Settings → Environment Variables, for the environment this deployment runs in) and redeploy — env var changes only apply to new deployments.",
+    }
+  }
+
+  let pem: string
+  try {
+    pem = readPrivateKeyPem()
+  } catch (error) {
+    // Set, but not recognisable as a PEM. Most often the whole
+    // `NAME="value"` line was pasted into the value box instead of just the key.
+    return {
+      present: true,
+      usable: false,
+      passphraseSet,
+      detail:
+        `GRAPH_MAIL_PRIVATE_KEY is set (${raw.length} characters) but is not a PEM private key. ` +
+        "Paste only the key itself — from -----BEGIN to -----END — with no variable name and no surrounding quotes. " +
+        `(${error instanceof Error ? error.message : String(error)})`,
+    }
+  }
+
+  const encrypted = /BEGIN ENCRYPTED PRIVATE KEY/.test(pem) || /DEK-Info:/.test(pem)
+  if (encrypted && !passphraseSet) {
+    return {
+      present: true,
+      usable: false,
+      encrypted: true,
+      passphraseSet,
+      detail:
+        "The key is an encrypted PEM but GRAPH_MAIL_KEY_PASSPHRASE is not set. Set the passphrase too, or re-export the key unencrypted (openssl ... -nodes).",
+    }
+  }
+
+  try {
+    const crypto = require("crypto") as typeof import("crypto")
+    const key = crypto.createPrivateKey(
+      passphraseSet ? { key: pem, passphrase } : pem
+    )
+    return {
+      present: true,
+      usable: true,
+      encrypted,
+      passphraseSet,
+      keyType: key.asymmetricKeyType,
+      bits: key.asymmetricKeyDetails?.modulusLength,
+      detail: `Private key loaded (${key.asymmetricKeyType?.toUpperCase() ?? "unknown"}${
+        key.asymmetricKeyDetails?.modulusLength
+          ? `, ${key.asymmetricKeyDetails.modulusLength} bits`
+          : ""
+      }${encrypted ? ", decrypted with the configured passphrase" : ""}).`,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const wrongPassphrase = /bad decrypt|wrong final block|DECRYPT/i.test(message)
+    return {
+      present: true,
+      usable: false,
+      encrypted,
+      passphraseSet,
+      detail: wrongPassphrase
+        ? "The key is encrypted and GRAPH_MAIL_KEY_PASSPHRASE does not decrypt it — check the passphrase."
+        : `The key is set but could not be loaded: ${message}`,
+    }
+  }
+}
+
 /**
  * Normalise the PEM private key from the environment. Accepts a raw PEM, a PEM
  * with escaped \n (common when pasting into a hosting provider's env UI), or
@@ -159,7 +257,21 @@ function readPrivateKeyPem(): string {
       "GRAPH_MAIL_PRIVATE_KEY is not a PEM private key (no -----BEGIN marker found)."
     )
   }
-  return pem
+
+  // Be tolerant of how the value was pasted: openssl's -nocerts output carries a
+  // "Bag Attributes" preamble, and it is easy to paste the whole
+  // GRAPH_MAIL_PRIVATE_KEY="..." line (or a quoted value) from a .env snippet.
+  // Extracting just the PEM block handles all of those. Any DEK-Info headers of
+  // a legacy encrypted key live inside the block, so they are preserved.
+  const block = pem.match(
+    /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/
+  )
+  if (!block) {
+    throw new Error(
+      "GRAPH_MAIL_PRIVATE_KEY has a -----BEGIN marker but no complete PRIVATE KEY block — the value looks truncated."
+    )
+  }
+  return block[0] + "\n"
 }
 
 const base64url = (buf: Buffer): string =>

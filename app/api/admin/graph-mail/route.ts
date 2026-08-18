@@ -3,7 +3,7 @@ import { requireSuperAdmin } from "@/lib/admin-guard"
 import {
   readGraphMailConfig,
   writeGraphMailConfig,
-  hasGraphMailPrivateKey,
+  inspectGraphMailPrivateKey,
   thumbprintToX5t,
 } from "@/lib/graph-mail"
 
@@ -19,8 +19,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const config = await readGraphMailConfig()
-    // The private key never leaves the server — report only whether it is set.
-    return NextResponse.json({ config, privateKeyPresent: hasGraphMailPrivateKey() })
+    // The private key never leaves the server — report only a diagnosis of it.
+    const keyStatus = inspectGraphMailPrivateKey()
+    return NextResponse.json({
+      config,
+      privateKeyPresent: keyStatus.present,
+      keyStatus,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/admin/graph-mail] GET error:", message)
@@ -68,10 +73,25 @@ export async function PUT(request: NextRequest) {
       { status: 400 }
     )
   }
-  // Enabling without a key would fail at the first send — catch it here.
-  if (enabled && !hasGraphMailPrivateKey()) {
+  // Enabling without a usable key would fail at the first send — catch it here,
+  // and save the rest of the config anyway so the work isn't lost.
+  const keyStatus = inspectGraphMailPrivateKey()
+  if (enabled && !keyStatus.usable) {
+    try {
+      await writeGraphMailConfig(
+        { mailbox, tenantId, clientId, thumbprint, enabled: false },
+        guard.email
+      )
+    } catch {
+      // fall through to the error below — reporting the key problem matters more
+    }
     return NextResponse.json(
-      { error: "Cannot enable sending: GRAPH_MAIL_PRIVATE_KEY is not set on the server." },
+      {
+        error: `Settings saved, but sending was left OFF: ${keyStatus.detail}`,
+        config: await readGraphMailConfig().catch(() => null),
+        privateKeyPresent: keyStatus.present,
+        keyStatus,
+      },
       { status: 400 }
     )
   }
@@ -79,7 +99,12 @@ export async function PUT(request: NextRequest) {
   try {
     await writeGraphMailConfig({ mailbox, tenantId, clientId, thumbprint, enabled }, guard.email)
     const config = await readGraphMailConfig()
-    return NextResponse.json({ ok: true, config, privateKeyPresent: hasGraphMailPrivateKey() })
+    return NextResponse.json({
+      ok: true,
+      config,
+      privateKeyPresent: keyStatus.present,
+      keyStatus,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/admin/graph-mail] PUT error:", message)

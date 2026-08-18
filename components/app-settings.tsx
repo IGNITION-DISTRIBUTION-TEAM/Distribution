@@ -1198,6 +1198,12 @@ function GraphMailPanel() {
     updatedBy: null,
   })
   const [privateKeyPresent, setPrivateKeyPresent] = useState(false)
+  const [keyStatus, setKeyStatus] = useState<{
+    present: boolean
+    usable: boolean
+    detail: string
+    passphraseSet?: boolean
+  } | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1220,6 +1226,7 @@ function GraphMailPanel() {
       setEnabled(c.enabled)
       setMeta({ updatedAt: c.updatedAt, updatedBy: c.updatedBy })
       setPrivateKeyPresent(!!data.privateKeyPresent)
+      setKeyStatus(data.keyStatus ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1240,10 +1247,16 @@ function GraphMailPanel() {
         body: JSON.stringify({ mailbox, tenantId, clientId, thumbprint, enabled }),
       })
       const data = await r.json()
+      // A 400 from the enable guardrail still returns the saved config and the
+      // key diagnosis — reflect both before surfacing the message.
+      if (data.keyStatus) setKeyStatus(data.keyStatus)
+      if (typeof data.privateKeyPresent === "boolean") setPrivateKeyPresent(data.privateKeyPresent)
+      if (data.config) {
+        const saved = data.config as GraphMailConfig
+        setMeta({ updatedAt: saved.updatedAt, updatedBy: saved.updatedBy })
+        setEnabled(saved.enabled)
+      }
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
-      const c = data.config as GraphMailConfig
-      setMeta({ updatedAt: c.updatedAt, updatedBy: c.updatedBy })
-      setPrivateKeyPresent(!!data.privateKeyPresent)
       toast.success("Email settings saved")
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -1362,15 +1375,33 @@ function GraphMailPanel() {
           on the server.
         </p>
 
-        <div className="mt-4 flex items-center gap-2 text-sm">
+        <div className="mt-4 flex items-start gap-2 text-sm">
           <span
             className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              privateKeyPresent ? "bg-emerald-400" : "bg-rose-400"
+              "mt-1.5 inline-block h-2 w-2 flex-shrink-0 rounded-full",
+              loading
+                ? "bg-muted-foreground"
+                : keyStatus?.usable
+                ? "bg-emerald-400"
+                : keyStatus?.present
+                ? "bg-amber-400"
+                : "bg-rose-400"
             )}
           />
           {loading ? (
             <span className="text-muted-foreground">Checking...</span>
+          ) : keyStatus ? (
+            <span
+              className={cn(
+                keyStatus.usable
+                  ? "text-emerald-300"
+                  : keyStatus.present
+                  ? "text-amber-200"
+                  : "text-rose-300"
+              )}
+            >
+              {keyStatus.detail}
+            </span>
           ) : privateKeyPresent ? (
             <span className="text-emerald-300">Private key is present on the server.</span>
           ) : (
@@ -1379,6 +1410,16 @@ function GraphMailPanel() {
             </span>
           )}
         </div>
+        {!loading && keyStatus && !keyStatus.usable && (
+          <div className="mt-3 flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={load}>
+              Re-check
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              After adding the variable, redeploy first — then re-check.
+            </span>
+          </div>
+        )}
 
         <div className="mt-4 rounded-lg border border-border bg-background/40 p-4 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">Setting it up (once)</p>
@@ -1401,6 +1442,27 @@ node scripts/graph-cert-check.mjs key.pem DWH_automation-app-public.cer
             Step 2 confirms the private key really matches the certificate registered in Azure and prints
             the thumbprint for the field above — worth doing, since a mismatch otherwise only shows up as
             an opaque Azure AD error. Run it on your own machine, never a shared one.
+          </p>
+          <p className="mt-3 font-medium text-foreground">Where the variable goes</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            <li>
+              <span className="text-foreground">Deployed (Vercel):</span> Project → Settings → Environment
+              Variables. Tick the environment this deployment actually runs in (Production and Preview are
+              separate), then <span className="text-foreground">redeploy</span> — Vercel only applies
+              variables to new deployments, so an existing deployment keeps seeing nothing.
+            </li>
+            <li>
+              <span className="text-foreground">Local dev:</span> add it to{" "}
+              <span className="font-mono">.env.local</span> and restart{" "}
+              <span className="font-mono">npm run dev</span>.
+            </li>
+          </ul>
+          <p className="mt-2">
+            Paste <span className="text-foreground">only the key</span> into the value box — from{" "}
+            <span className="font-mono">-----BEGIN</span> to <span className="font-mono">-----END</span>,
+            with no <span className="font-mono">GRAPH_MAIL_PRIVATE_KEY=</span> prefix and no surrounding
+            quotes. (The generated snippet file is in <span className="font-mono">.env</span> format, which
+            is right for <span className="font-mono">.env.local</span> but not for Vercel&apos;s value box.)
           </p>
           <p className="mt-2">
             To keep the key encrypted at rest, drop <span className="font-mono">-nodes</span> and also set{" "}
