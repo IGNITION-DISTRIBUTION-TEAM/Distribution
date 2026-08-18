@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Switch } from "@/components/ui/switch"
 import {
   Table,
   TableBody,
@@ -102,6 +103,7 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
             <TabsTrigger value="allowed-roles">Allowed roles</TabsTrigger>
             <TabsTrigger value="department-access">Department access</TabsTrigger>
             <TabsTrigger value="super-admins">Super admins</TabsTrigger>
+            <TabsTrigger value="email">Email</TabsTrigger>
           </TabsList>
 
           <TabsContent value="map-user" className="mt-4">
@@ -122,6 +124,10 @@ export function AppSettings({ onBack }: { onBack: () => void }) {
 
           <TabsContent value="super-admins" className="mt-4">
             <SuperAdminsPanel />
+          </TabsContent>
+
+          <TabsContent value="email" className="mt-4">
+            <GraphMailPanel />
           </TabsContent>
         </Tabs>
       </main>
@@ -1160,6 +1166,272 @@ function SuperAdminsPanel() {
             </TableBody>
           </Table>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// --- Email (Microsoft Graph, app-only certificate auth) -------------------
+//
+// Sends as a dedicated mailbox via Graph using the client-credentials flow with
+// certificate authentication. Only the non-secret identifiers are editable
+// here; the certificate private key lives in a server environment variable and
+// is never sent to the browser.
+type GraphMailConfig = {
+  mailbox: string
+  tenantId: string
+  clientId: string
+  thumbprint: string
+  enabled: boolean
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+function GraphMailPanel() {
+  const [mailbox, setMailbox] = useState("")
+  const [tenantId, setTenantId] = useState("")
+  const [clientId, setClientId] = useState("")
+  const [thumbprint, setThumbprint] = useState("")
+  const [enabled, setEnabled] = useState(false)
+  const [meta, setMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({
+    updatedAt: null,
+    updatedBy: null,
+  })
+  const [privateKeyPresent, setPrivateKeyPresent] = useState(false)
+
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState<"token" | "send" | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [testTo, setTestTo] = useState("")
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch("/api/admin/graph-mail", { cache: "no-store" })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      const c = data.config as GraphMailConfig
+      setMailbox(c.mailbox)
+      setTenantId(c.tenantId)
+      setClientId(c.clientId)
+      setThumbprint(c.thumbprint)
+      setEnabled(c.enabled)
+      setMeta({ updatedAt: c.updatedAt, updatedBy: c.updatedBy })
+      setPrivateKeyPresent(!!data.privateKeyPresent)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const r = await fetch("/api/admin/graph-mail", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mailbox, tenantId, clientId, thumbprint, enabled }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      const c = data.config as GraphMailConfig
+      setMeta({ updatedAt: c.updatedAt, updatedBy: c.updatedBy })
+      setPrivateKeyPresent(!!data.privateKeyPresent)
+      toast.success("Email settings saved")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runTest = async (mode: "token" | "send") => {
+    setTesting(mode)
+    try {
+      const r = await fetch("/api/admin/graph-mail/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mode === "send" ? { mode, to: testTo } : { mode }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      toast.success(data.message || "Test succeeded")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Outbound email (Microsoft Graph)</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The app authenticates as itself (client-credentials flow with certificate authentication) to get
+          an app-only token, then posts to{" "}
+          <span className="font-mono text-xs">/users/&lt;mailbox&gt;/sendMail</span>. The registration is
+          scoped to this one mailbox only.
+        </p>
+
+        {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label className="mb-1 block text-sm">Sending mailbox</Label>
+            <Input
+              value={mailbox}
+              onChange={(e) => setMailbox(e.target.value)}
+              placeholder="DWH_automation@ignitiongroup.co.za"
+              className="font-mono text-sm"
+              disabled={loading}
+            />
+          </div>
+          <div>
+            <Label className="mb-1 block text-sm">Directory (tenant) ID</Label>
+            <Input
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="font-mono text-sm"
+              disabled={loading}
+            />
+          </div>
+          <div>
+            <Label className="mb-1 block text-sm">Application (client) ID</Label>
+            <Input
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="font-mono text-sm"
+              disabled={loading}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Label className="mb-1 block text-sm">Certificate thumbprint (SHA-1, hex)</Label>
+            <Input
+              value={thumbprint}
+              onChange={(e) => setThumbprint(e.target.value)}
+              placeholder="A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"
+              className="font-mono text-sm"
+              disabled={loading}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Spaces and colons are stripped automatically.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center justify-between rounded-lg border border-border bg-background/40 p-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">Enable sending</p>
+            <p className="text-xs text-muted-foreground">
+              When off, the app keeps the config but refuses to send.
+            </p>
+          </div>
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={loading} />
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <p className="text-xs text-muted-foreground">
+            {meta.updatedAt
+              ? `Last saved ${new Date(meta.updatedAt).toLocaleString()}${
+                  meta.updatedBy ? ` by ${meta.updatedBy}` : ""
+                }`
+              : "Not saved yet."}
+          </p>
+          <Button onClick={save} disabled={saving || loading}>
+            {saving ? "Saving..." : "Save settings"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Certificate private key</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The private key is a credential that can send mail as this mailbox, so it is{" "}
+          <span className="text-foreground">not</span> stored in the database or editable here. It is read
+          from the <span className="font-mono text-xs">GRAPH_MAIL_PRIVATE_KEY</span> environment variable
+          on the server.
+        </p>
+
+        <div className="mt-4 flex items-center gap-2 text-sm">
+          <span
+            className={cn(
+              "inline-block h-2 w-2 rounded-full",
+              privateKeyPresent ? "bg-emerald-400" : "bg-rose-400"
+            )}
+          />
+          {loading ? (
+            <span className="text-muted-foreground">Checking...</span>
+          ) : privateKeyPresent ? (
+            <span className="text-emerald-300">Private key is present on the server.</span>
+          ) : (
+            <span className="text-rose-300">
+              No private key found — sending cannot be enabled until it is set.
+            </span>
+          )}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-border bg-background/40 p-4 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Setting it up (once)</p>
+          <p className="mt-2">
+            Azure issues the certificate as a password-protected{" "}
+            <span className="font-mono">.pfx</span>. Node cannot read PKCS#12 directly, so convert it to a
+            PEM private key and set that as the environment variable:
+          </p>
+          <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground">
+{`# enter the .pfx password when prompted
+openssl pkcs12 -in cert.pfx -nocerts -nodes -out key.pem
+
+# then set on the server (contents of key.pem):
+GRAPH_MAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----"`}
+          </pre>
+          <p className="mt-2">
+            To keep the key encrypted at rest, drop <span className="font-mono">-nodes</span> and also set{" "}
+            <span className="font-mono">GRAPH_MAIL_KEY_PASSPHRASE</span>. A base64 blob of the PEM, or a
+            PEM with escaped newlines, is accepted too. Restart the app after changing it.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h3 className="font-medium text-foreground">Test</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Tests run against the saved settings and ignore the enable toggle, so you can verify before
+          switching it on.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <Button variant="outline" onClick={() => runTest("token")} disabled={!!testing || loading}>
+            {testing === "token" ? "Checking..." : "Verify certificate auth"}
+          </Button>
+          <div className="min-w-[260px] flex-1">
+            <Label className="mb-1 block text-sm">Send a test message to</Label>
+            <Input
+              value={testTo}
+              onChange={(e) => setTestTo(e.target.value)}
+              placeholder="you@ignitiongroup.co.za"
+              className="font-mono text-sm"
+              disabled={loading}
+            />
+          </div>
+          <Button onClick={() => runTest("send")} disabled={!!testing || loading || !testTo.trim()}>
+            {testing === "send" ? "Sending..." : "Send test"}
+          </Button>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          &ldquo;Verify certificate auth&rdquo; only mints a token — it does not send mail.
+        </p>
       </div>
     </div>
   )
