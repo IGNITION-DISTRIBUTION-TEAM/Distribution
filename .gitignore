@@ -10,3 +10,14 @@ node_modules/
 .DS_Store
 .vercel
 tsconfig.tsbuildinfo
+
+# Certificate / key material — never commit these. The Graph mail certificate
+# (see scripts/graph-cert-check.mjs) is handled locally and lives only in the
+# server's environment variables.
+.env-snippet.txt
+*.pfx
+*.p12
+*.pem
+*.cer
+*.crt
+*.key

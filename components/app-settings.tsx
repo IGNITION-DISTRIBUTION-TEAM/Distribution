@@ -1388,18 +1388,24 @@ function GraphMailPanel() {
             PEM private key and set that as the environment variable:
           </p>
           <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground">
-{`# enter the .pfx password when prompted
-openssl pkcs12 -in cert.pfx -nocerts -nodes -out key.pem
+{`# 1. convert the .pfx (enter the certificate password when prompted)
+openssl pkcs12 -in DWH_automation-app-private.pfx -nocerts -nodes -out key.pem
 
-# then set on the server (contents of key.pem):
-GRAPH_MAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
-...
------END PRIVATE KEY-----"`}
+# 2. verify the key, print the thumbprint, write an env-ready value
+node scripts/graph-cert-check.mjs key.pem DWH_automation-app-public.cer
+
+# 3. paste the value into Vercel > Settings > Environment Variables,
+#    redeploy, then delete key.pem and .env-snippet.txt`}
           </pre>
+          <p className="mt-2">
+            Step 2 confirms the private key really matches the certificate registered in Azure and prints
+            the thumbprint for the field above — worth doing, since a mismatch otherwise only shows up as
+            an opaque Azure AD error. Run it on your own machine, never a shared one.
+          </p>
           <p className="mt-2">
             To keep the key encrypted at rest, drop <span className="font-mono">-nodes</span> and also set{" "}
             <span className="font-mono">GRAPH_MAIL_KEY_PASSPHRASE</span>. A base64 blob of the PEM, or a
-            PEM with escaped newlines, is accepted too. Restart the app after changing it.
+            PEM with escaped newlines, is accepted too. Redeploy after changing it.
           </p>
         </div>
       </div>
