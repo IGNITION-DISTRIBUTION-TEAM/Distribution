@@ -15,9 +15,30 @@ export const maxDuration = 60
  * the earliest SCHEDULEDATE per account — the test extract contained an account
  * with two rows flagged as first collection, so the flag alone is not unique.
  *
+ * Definitions, as confirmed by the business:
+ *   FTC = the first collection was paid IN FULL
+ *   FID = the exact inverse of FTC
+ *
+ * So on the matured base the two are complementary and sum to 100%. Disputes
+ * and suspensions therefore count as defaults; the reason breakdown still
+ * reports them separately so the composition stays visible.
+ *
  *   base = accounts whose first collection has been attempted
  *   FTC  = those where PAID_FLAG = 1
  *   FID  = those where PAID_FLAG = 0, split by UNPAID_GROUP_DESCRIPTION
+ *
+ * On "in full": this extract cannot express a partial settlement. TOTAL,
+ * BILLED_AMOUNT_INCL_VAT and DC_INSTRUCTEDAMOUNT are always equal, so there is
+ * no collected-amount separate from the amount instructed — an attempt is paid
+ * or it is not. PAID_FLAG was checked against UNPAID_GROUP_DESCRIPTION and
+ * TRANSACTIONCLASSNAME across the sample with no disagreement, so "in full" is
+ * taken from PAID_FLAG. If the billing platform can record a partial
+ * settlement, that amount is NOT in this feed and would need adding before the
+ * distinction can be enforced here.
+ *
+ * Note PRODUCTPRICE is not the amount due: billed amounts legitimately differ
+ * from it (pro-rata, plan changes, discounts), so it must not be used to infer
+ * underpayment.
  *
  * Score bands are derived from the raw SCORE in 50-point buckets, deliberately
  * NOT from SCOREGROUP: the existing SCOREGROUP labels are narrow percentile

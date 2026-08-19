@@ -1215,9 +1215,16 @@ function QualityMixReport() {
 
           <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
             <p>
-              First collection is the earliest row flagged ISFIRSTCOLLECTION per account; FTC means it
-              paid, FID means it did not. Bands come from the raw score, not SCOREGROUP — the existing
-              SCOREGROUP labels are percentile bands that cross the round boundaries the business uses.
+              <span className="text-foreground">FTC</span> is a first collection paid in full;{" "}
+              <span className="text-foreground">FID</span> is the exact inverse, so on the matured base
+              the two sum to 100% and disputes and suspensions count as defaults (their share is in the
+              reason breakdown). The first collection is the earliest row flagged ISFIRSTCOLLECTION per
+              account.
+            </p>
+            <p>
+              Bands come from the raw score, not SCOREGROUP — the existing SCOREGROUP labels are
+              percentile bands that cross the round boundaries the business uses (887 to 907 straddles
+              900).
             </p>
             <p>
               Acquisition cost is not in the billing feed, so margin over CAC is not shown yet. Send
