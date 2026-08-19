@@ -30,6 +30,13 @@ import {
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -111,10 +118,11 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
     title: "Customer quality",
     items: [
-      { label: "Quality mix overview", view: "quality" },
-      { label: "Score mix over time", view: null },
-      { label: "FTC / FID by score band", view: null },
-      { label: "VAS attachment rate", view: null },
+      // One report covers score mix, FTC/FID and VAS attachment — they share a
+      // base (accounts written) and reading them apart invites wrong compares.
+      { label: "Quality mix (FTC / FID)", view: "quality" },
+      // Needs commission and lead cost per sale, which the billing feed has not
+      // got, so it stays unselectable rather than showing a half-answer.
       { label: "Margin over acquisition cost", view: null },
     ],
   },
@@ -715,7 +723,134 @@ function CampaignPerformanceReport() {
  * scope and the exact fields required, so the spec lives where the business can
  * see it rather than only in email.
  */
+type BandRow = {
+  band: string
+  accounts: number
+  base: number
+  ftc: number
+  fid: number
+  pending: number
+  ftcRate: number | null
+  fidRate: number | null
+  vasRate: number | null
+  avgPrice: number | null
+  mixShare: number | null
+}
+type CohortRow = {
+  cohort: string
+  band: string
+  accounts: number
+  base: number
+  ftc: number
+  fid: number
+  pending: number
+  ftcRate: number | null
+  fidRate: number | null
+}
+type QualityPayload = {
+  startDate: string
+  endDate: string
+  bandOrder: string[]
+  bands: BandRow[]
+  cohorts: CohortRow[]
+  reasons: { reason: string; accounts: number }[]
+  productGroups: string[]
+  totals: {
+    accounts: number
+    base: number
+    ftc: number
+    fid: number
+    pending: number
+    ftcRate: number | null
+    fidRate: number | null
+    vasRate: number | null
+  }
+}
+
+// Colour ramp low -> high score, so the mix bar reads at a glance.
+const BAND_COLOUR: Record<string, string> = {
+  "<600": "bg-rose-500",
+  "600-649": "bg-orange-500",
+  "650-699": "bg-amber-500",
+  "700-749": "bg-yellow-500",
+  "750-799": "bg-lime-500",
+  "800-849": "bg-emerald-500",
+  "850-899": "bg-teal-500",
+  "900+": "bg-sky-500",
+  unknown: "bg-zinc-600",
+}
+
+// The band the business is currently asking about — highlighted so it is
+// findable without hunting down the table.
+const FOCUS_BAND = "650-699"
+
+/**
+ * Customer quality mix — FTC / FID by credit score band from the billing
+ * extract. Bands are derived from the raw score in 50-point buckets to match
+ * how the business talks about them.
+ */
 function QualityMixReport() {
+  const [startDate, setStartDate] = useState(isoDaysAgo(180))
+  const [endDate, setEndDate] = useState(isoDaysAgo(0))
+  const [productGroup, setProductGroup] = useState("")
+  const [data, setData] = useState<QualityPayload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notConfigured, setNotConfigured] = useState(false)
+
+  const run = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ startDate, endDate })
+      if (productGroup) params.set("productGroup", productGroup)
+      const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
+        cache: "no-store",
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setNotConfigured(!!json.notConfigured)
+        throw new Error(json.error || `HTTP ${res.status}`)
+      }
+      setNotConfigured(false)
+      setData(json as QualityPayload)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [startDate, endDate, productGroup])
+
+  useEffect(() => {
+    run()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cohort rows arrive as cohort x band; roll up to a per-month view plus the
+  // focus band's share, which is what "is the spread balancing out?" needs.
+  const cohortSummary = useMemo(() => {
+    if (!data) return []
+    const byCohort = new Map<
+      string,
+      { cohort: string; accounts: number; base: number; ftc: number; pending: number; bands: Map<string, number> }
+    >()
+    for (const r of data.cohorts) {
+      const e =
+        byCohort.get(r.cohort) ??
+        { cohort: r.cohort, accounts: 0, base: 0, ftc: 0, pending: 0, bands: new Map<string, number>() }
+      e.accounts += r.accounts
+      e.base += r.base
+      e.ftc += r.ftc
+      e.pending += r.pending
+      e.bands.set(r.band, (e.bands.get(r.band) ?? 0) + r.accounts)
+      byCohort.set(r.cohort, e)
+    }
+    return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
+  }, [data])
+
+  const focus = data?.bands.find((b) => b.band === FOCUS_BAND)
+
   return (
     <>
       <div className="mb-6 flex items-start gap-3">
@@ -723,107 +858,377 @@ function QualityMixReport() {
         <div>
           <h2 className="text-xl font-semibold text-foreground">Customer quality mix</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Sales mix by credit score band, with FTC and FID by sale cohort — does the score mix we
-            are writing hold up once it bills?
+            FTC and FID by credit score band, on sale cohorts. Bands are derived from the raw score in
+            50-point buckets.
           </p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
-          <div className="text-sm text-amber-100">
-            <p className="font-medium">Waiting on the sales and billing feed.</p>
-            <p className="mt-1 text-amber-100/80">
-              The fields needed are listed below. Once the two datasets are available in Snowflake
-              this tab renders the report — nothing else is blocking it.
-            </p>
+      {/* ---- filters ---- */}
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales from</Label>
+            <Input
+              type="date"
+              value={startDate}
+              max={endDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales to</Label>
+            <Input
+              type="date"
+              value={endDate}
+              min={startDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          <div className="min-w-[220px]">
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Product</Label>
+            <Select value={productGroup || "__all"} onValueChange={(v) => setProductGroup(v === "__all" ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="All products" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">All products</SelectItem>
+                {(data?.productGroups ?? []).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={run} disabled={loading}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Run report
+          </Button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          {[90, 180, 365].map((d) => (
+            <button
+              key={d}
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => {
+                setStartDate(isoDaysAgo(d))
+                setEndDate(isoDaysAgo(0))
+              }}
+            >
+              Last {d === 365 ? "12 months" : `${Math.round(d / 30)} months`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {notConfigured && (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+            <div className="text-amber-100">
+              <p className="font-medium">Billing source not configured.</p>
+              <p className="mt-1 text-amber-100/80">
+                Set <span className="font-mono">QUALITY_MIX_SOURCE_TABLE</span> to the billing extract in
+                Snowflake (<span className="font-mono">DATABASE.SCHEMA.OBJECT</span>) and redeploy. The
+                report expects the columns from the billing feed: ACCOUNTNO, SALESDATE, SCORE,
+                ISFIRSTCOLLECTION, PAID_FLAG, UNPAID_GROUP_DESCRIPTION, VAS_BUTTON_FLAG,
+                PRODUCT_GROUPS, PRODUCTPRICE, SCHEDULEDATE, BILLINGDATE.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="font-medium text-foreground">What it will show</h3>
-          <ul className="mt-3 space-y-2.5 text-sm text-muted-foreground">
-            <li>
-              <span className="text-foreground">Score mix over time</span> — share of sales by credit
-              score band per day and week, so a shift like 650–699 reaching ~50% of a day is visible
-              against its own trend rather than as a one-day surprise.
-            </li>
-            <li>
-              <span className="text-foreground">FTC rate by score band</span> — of the sales in a
-              cohort whose first collection has fallen due, how many collected first time.
-            </li>
-            <li>
-              <span className="text-foreground">FID rate by score band</span> — the same cohort base,
-              how many defaulted on that first collection.
-            </li>
-            <li>
-              <span className="text-foreground">Cohort maturity</span> — cohorts too young to have a
-              first billing date are shown as pending, never as 0% default. This is the difference
-              between a report that reassures and one that misleads.
-            </li>
-            <li>
-              <span className="text-foreground">VAS attachment rate</span> — by score band and price
-              point, to track the ~60% → ~55% move after the price increase.
-            </li>
-            <li>
-              <span className="text-foreground">Margin over acquisition cost</span> — expected
-              revenue net of CAC per score band, so the mix decision is made on profitability and not
-              on default rate alone.
-            </li>
-            <li>
-              <span className="text-foreground">6-month rolling score view</span> — FTC/FID and margin
-              by score band for the current product over a rolling 6 months, to indicate which bands
-              are worth selling into.
-            </li>
-          </ul>
+      {error && !notConfigured && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{error}</span>
         </div>
+      )}
 
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="font-medium text-foreground">Fields required</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            One row per sale, and one row per collection attempt, joined on a common account key.
-          </p>
+      {data && (
+        <>
+          {/* ---- headline ---- */}
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Accounts written" value={fmtInt(data.totals.accounts)} />
+            <StatTile
+              label="FTC rate"
+              value={fmtPct(data.totals.ftcRate)}
+              sub={`${fmtInt(data.totals.ftc)} of ${fmtInt(data.totals.base)} matured`}
+            />
+            <StatTile
+              label="FID rate"
+              value={fmtPct(data.totals.fidRate)}
+              sub={`${fmtInt(data.totals.fid)} first-time defaults`}
+            />
+            <StatTile
+              label="VAS attachment"
+              value={fmtPct(data.totals.vasRate)}
+              sub={
+                data.totals.pending > 0
+                  ? `${fmtInt(data.totals.pending)} accounts not yet billed`
+                  : "all accounts billed"
+              }
+            />
+          </div>
 
-          <p className="mt-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Sales — one row per sale
-          </p>
-          <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-            <li>Account / sale ID (join key)</li>
-            <li>Sale date (and time if available)</li>
-            <li>Credit score at time of sale — the raw value, not only the band</li>
-            <li>Product / package and price point (monthly recurring amount)</li>
-            <li>VAS attached (yes/no), VAS product, VAS amount</li>
-            <li>Campaign ID or name, and channel</li>
-            <li>Debit order / billing day, and payment method</li>
-            <li>Sale status and cancellation date, if cancelled</li>
-            <li>Acquisition cost — commission plus lead/media cost</li>
-          </ul>
+          {data.totals.pending > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {fmtInt(data.totals.pending)} account
+              {data.totals.pending === 1 ? " has" : "s have"} no first collection yet and{" "}
+              <span className="text-foreground">are excluded from the FTC/FID rates</span> rather than
+              counted as paid — a young cohort must not read as 0% default.
+            </p>
+          )}
 
-          <p className="mt-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Billing — one row per collection attempt
-          </p>
-          <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-            <li>Account / sale ID (same key as above)</li>
-            <li>Instalment or attempt sequence number — needed to identify the first</li>
-            <li>Collection due date and action date</li>
-            <li>Amount due and amount actually collected</li>
-            <li>Outcome status and reason code (e.g. insufficient funds, disputed)</li>
-            <li>Retry indicator, and reversal date/flag if reversed later</li>
-          </ul>
+          {/* ---- score mix bar ---- */}
+          <div className="mt-5 rounded-xl border border-border bg-card p-5">
+            <h3 className="font-medium text-foreground">Score mix of accounts written</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {data.startDate} to {data.endDate}
+              {focus?.mixShare != null && (
+                <>
+                  {" · "}
+                  <span className="text-amber-200">
+                    {FOCUS_BAND} is {fmtPct(focus.mixShare)} of the mix
+                  </span>
+                </>
+              )}
+            </p>
+            <div className="mt-4 flex h-6 w-full overflow-hidden rounded-md">
+              {data.bands.map((b) =>
+                b.mixShare && b.mixShare > 0 ? (
+                  <div
+                    key={b.band}
+                    className={cn(BAND_COLOUR[b.band] ?? "bg-zinc-600", "h-full")}
+                    style={{ width: `${b.mixShare * 100}%` }}
+                    title={`${b.band}: ${fmtInt(b.accounts)} accounts (${fmtPct(b.mixShare)})`}
+                  />
+                ) : null
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+              {data.bands.map((b) => (
+                <span key={b.band} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className={cn("h-2 w-2 rounded-full", BAND_COLOUR[b.band] ?? "bg-zinc-600")} />
+                  {b.band} · {fmtPct(b.mixShare)}
+                </span>
+              ))}
+            </div>
+          </div>
 
-          <p className="mt-4 text-xs text-muted-foreground">
-            Six months of sales plus their billing outcomes covers the rolling view. No customer
-            names, ID numbers or contact details are needed — a hashed account key is enough.
-          </p>
-        </div>
-      </div>
+          {/* ---- by band ---- */}
+          <div className="mt-5 rounded-xl border border-border bg-card">
+            <div className="border-b border-border px-5 py-4">
+              <h3 className="font-medium text-foreground">FTC / FID by score band</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Base excludes accounts with no first collection yet.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Score band</TableHead>
+                    <TableHead className="text-right">Mix</TableHead>
+                    <TableHead className="text-right">Accounts</TableHead>
+                    <TableHead className="text-right">Matured base</TableHead>
+                    <TableHead className="text-right">Pending</TableHead>
+                    <TableHead className="text-right">FTC</TableHead>
+                    <TableHead className="text-right">FTC %</TableHead>
+                    <TableHead className="text-right">FID</TableHead>
+                    <TableHead className="text-right">FID %</TableHead>
+                    <TableHead className="text-right">VAS %</TableHead>
+                    <TableHead className="text-right">Avg price</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.bands.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                        No accounts in this period.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data.bands.map((b) => (
+                    <TableRow
+                      key={b.band}
+                      className={b.band === FOCUS_BAND ? "bg-amber-500/5" : undefined}
+                    >
+                      <TableCell>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={cn("h-2 w-2 rounded-full", BAND_COLOUR[b.band] ?? "bg-zinc-600")}
+                          />
+                          <span className={b.band === FOCUS_BAND ? "font-medium text-foreground" : ""}>
+                            {b.band}
+                          </span>
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">{fmtPct(b.mixShare)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{fmtInt(b.accounts)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{fmtInt(b.base)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {b.pending > 0 ? fmtInt(b.pending) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">{fmtInt(b.ftc)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm text-emerald-300">
+                        {fmtPct(b.ftcRate)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">{fmtInt(b.fid)}</TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right font-mono text-sm",
+                          b.fidRate !== null && b.fidRate >= 0.2 ? "text-rose-300" : "text-muted-foreground"
+                        )}
+                      >
+                        {fmtPct(b.fidRate)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {fmtPct(b.vasRate)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {b.avgPrice === null ? "—" : `R${b.avgPrice.toFixed(2)}`}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+
+          {/* ---- cohort trend + reasons ---- */}
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border border-border bg-card">
+              <div className="border-b border-border px-5 py-4">
+                <h3 className="font-medium text-foreground">By sale cohort</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Mix and first-collection outcome per sale month.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Cohort</TableHead>
+                      <TableHead className="min-w-[120px]">Mix</TableHead>
+                      <TableHead className="text-right">{FOCUS_BAND}</TableHead>
+                      <TableHead className="text-right">Accounts</TableHead>
+                      <TableHead className="text-right">FTC %</TableHead>
+                      <TableHead className="text-right">Pending</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cohortSummary.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
+                          No cohorts in this period.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {cohortSummary.map((c) => {
+                      const focusN = c.bands.get(FOCUS_BAND) ?? 0
+                      return (
+                        <TableRow key={c.cohort}>
+                          <TableCell className="font-mono text-xs">{c.cohort}</TableCell>
+                          <TableCell>
+                            <div className="flex h-2.5 w-full overflow-hidden rounded-full">
+                              {data.bandOrder.map((band) => {
+                                const n = c.bands.get(band) ?? 0
+                                if (n === 0) return null
+                                return (
+                                  <div
+                                    key={band}
+                                    className={cn(BAND_COLOUR[band] ?? "bg-zinc-600", "h-full")}
+                                    style={{ width: `${(n / c.accounts) * 100}%` }}
+                                    title={`${band}: ${n}`}
+                                  />
+                                )
+                              })}
+                            </div>
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              "text-right font-mono text-sm",
+                              focusN / c.accounts >= 0.4 ? "text-amber-200" : "text-muted-foreground"
+                            )}
+                          >
+                            {fmtPct(c.accounts > 0 ? focusN / c.accounts : null)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm">
+                            {fmtInt(c.accounts)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm text-emerald-300">
+                            {fmtPct(c.base > 0 ? c.ftc / c.base : null)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                            {c.pending > 0 ? fmtInt(c.pending) : "—"}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card">
+              <div className="border-b border-border px-5 py-4">
+                <h3 className="font-medium text-foreground">Why first collections failed</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Unpaid reason on the first collection.
+                </p>
+              </div>
+              <div className="p-5">
+                {data.reasons.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No first-time defaults in this period.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {data.reasons.map((r) => {
+                      const share = data.totals.fid > 0 ? r.accounts / data.totals.fid : 0
+                      return (
+                        <div key={r.reason}>
+                          <div className="flex items-baseline justify-between text-sm">
+                            <span className="text-foreground">{r.reason}</span>
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {fmtInt(r.accounts)} · {fmtPct(share)}
+                            </span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                            <div
+                              className="h-full rounded-full bg-rose-500/70"
+                              style={{ width: `${share * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
+            <p>
+              First collection is the earliest row flagged ISFIRSTCOLLECTION per account; FTC means it
+              paid, FID means it did not. Bands come from the raw score, not SCOREGROUP — the existing
+              SCOREGROUP labels are percentile bands that cross the round boundaries the business uses.
+            </p>
+            <p>
+              Acquisition cost is not in the billing feed, so margin over CAC is not shown yet. Send
+              commission and lead cost per sale and it can be added to this table.
+            </p>
+          </div>
+        </>
+      )}
     </>
   )
 }
-
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-card p-5">
