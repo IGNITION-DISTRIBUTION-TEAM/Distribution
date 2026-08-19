@@ -14,7 +14,21 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarFooter,
+  SidebarInset,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { Separator } from "@/components/ui/separator"
 import {
   Command,
   CommandEmpty,
@@ -29,6 +43,7 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Check,
+  ChevronRight,
   ChevronsUpDown,
   Download,
   LineChart as LineChartIcon,
@@ -85,60 +100,152 @@ const fmtInt = (n: number) => n.toLocaleString()
 const fmtPct = (v: number | null) =>
   v === null ? "—" : `${(v * 100).toFixed(v * 100 >= 10 ? 1 : 2)}%`
 
+// Sidebar navigation, same shape as the other departments. `view` is the
+// in-app report to render; null means the report isn't built yet (shown as
+// "soon" and not selectable), which is how the quality reports appear until the
+// sales and billing feed lands.
+type ReportItem = { label: string; view: ReportView | null }
+type ReportView = "quality" | "campaign"
+
+const SECTIONS: { title: string; items: ReportItem[] }[] = [
+  {
+    title: "Customer quality",
+    items: [
+      { label: "Quality mix overview", view: "quality" },
+      { label: "Score mix over time", view: null },
+      { label: "FTC / FID by score band", view: null },
+      { label: "VAS attachment rate", view: null },
+      { label: "Margin over acquisition cost", view: null },
+    ],
+  },
+  {
+    title: "Campaigns",
+    items: [{ label: "Campaign performance", view: "campaign" }],
+  },
+]
+
 export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
+  const [active, setActive] = useState<ReportItem>(SECTIONS[0].items[0])
+  // Only two sections here, so both start open rather than collapsed.
+  const [openSections, setOpenSections] = useState<Set<string>>(
+    new Set(SECTIONS.map((s) => s.title))
+  )
+  const toggleSection = (title: string) =>
+    setOpenSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(title)) next.delete(title)
+      else next.add(title)
+      return next
+    })
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-        <div className="flex items-center gap-3">
-          {onBack && (
+    <SidebarProvider>
+      <Sidebar className="border-r border-border">
+        <SidebarHeader>
+          <div className="flex items-center gap-2 px-2">
+            <LineChartIcon className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">Reporting</span>
+          </div>
+        </SidebarHeader>
+        <Separator />
+        <SidebarContent className="gap-0.5">
+          {SECTIONS.map((section) => {
+            const isOpen = openSections.has(section.title)
+            const hasActive = section.items.some((it) => it.label === active.label)
+            return (
+              <SidebarGroup key={section.title} className="py-0.5">
+                <button
+                  type="button"
+                  onClick={() => toggleSection(section.title)}
+                  aria-expanded={isOpen}
+                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                >
+                  <ChevronRight
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${
+                      isOpen ? "rotate-90" : ""
+                    }`}
+                  />
+                  <span className="flex-1 truncate text-left">{section.title}</span>
+                  {hasActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
+                </button>
+                {isOpen && (
+                  <SidebarGroupContent className="pl-1.5">
+                    <SidebarMenu>
+                      {section.items.map((item) => {
+                        const selectable = item.view !== null
+                        return (
+                          <SidebarMenuItem key={item.label}>
+                            <SidebarMenuButton
+                              onClick={() => selectable && setActive(item)}
+                              isActive={active.label === item.label}
+                              disabled={!selectable}
+                              tooltip={
+                                selectable ? item.label : `${item.label} (awaiting sales/billing data)`
+                              }
+                              className={selectable ? "" : "opacity-50"}
+                            >
+                              <span className="truncate">{item.label}</span>
+                              {!selectable && (
+                                <span className="ml-auto text-[10px] text-muted-foreground">soon</span>
+                              )}
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        )
+                      })}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                )}
+              </SidebarGroup>
+            )
+          })}
+        </SidebarContent>
+        <SidebarFooter>
+          <div className="space-y-3">
+            <div className="px-2 text-sm">
+              <p className="font-medium text-foreground">{user?.name}</p>
+              <p className="text-xs text-muted-foreground">{user?.email}</p>
+            </div>
+            {onBack && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onBack}
+                className="w-full justify-start text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Departments
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
-              onClick={onBack}
-              className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+              onClick={logout}
+              className="w-full justify-start text-muted-foreground hover:text-foreground"
             >
-              <ArrowLeft className="h-4 w-4" />
-              Departments
+              <LogOut className="mr-2 h-4 w-4" />
+              Logout
             </Button>
-          )}
-          <span className="text-sm font-medium text-muted-foreground">Reporting Department</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right text-xs">
-            <p className="font-medium text-foreground">{user?.name}</p>
-            <p className="text-muted-foreground">{user?.email}</p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Logout
-          </Button>
+        </SidebarFooter>
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <SidebarTrigger />
+            <span className="truncate text-sm font-medium text-foreground">{active.label}</span>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-7xl px-6 py-8">
+            {active.view === "quality" && <QualityMixReport />}
+            {active.view === "campaign" && <CampaignPerformanceReport />}
+          </div>
         </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-6 py-8">
-        <Tabs defaultValue="quality" className="w-full">
-          <TabsList>
-            <TabsTrigger value="quality">Customer quality mix</TabsTrigger>
-            <TabsTrigger value="campaign">Campaign performance</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="quality" className="mt-5">
-            <QualityMixReport />
-          </TabsContent>
-
-          <TabsContent value="campaign" className="mt-5">
-            <CampaignPerformanceReport />
-          </TabsContent>
-        </Tabs>
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
 
