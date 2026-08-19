@@ -2,6 +2,7 @@
 // server (auth/session, admin API) and client (department picker, settings).
 export const DEPARTMENT_IDS = [
   "distribution", "dialler", "spot", "edc", "tickets", "engaige", "spot-report",
+  "reporting",
 ] as const
 
 export type DepartmentId = (typeof DEPARTMENT_IDS)[number]
@@ -14,6 +15,7 @@ export const DEPARTMENT_LABELS: Record<DepartmentId, string> = {
   tickets: "Tickets",
   engaige: "EngAIge",
   "spot-report": "Spot Report",
+  reporting: "Reporting",
 }
 
 export function isDepartmentId(value: string): value is DepartmentId {
