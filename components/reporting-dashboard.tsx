@@ -1879,6 +1879,9 @@ function MarginReport() {
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
   const [brand, setBrand] = useState("")
   const [cacInput, setCacInput] = useState("")
+  // Score order by default: the bands are an ordered scale, and reading the
+  // curve matters more than the league table. Ranking stays one click away.
+  const [order, setOrder] = useState<"band" | "value">("band")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1931,18 +1934,23 @@ function MarginReport() {
   // "which bands are worth selling into", so order by the answer.
   const rows = useMemo(() => {
     const bands = data?.bands ?? []
-    return [...bands]
+    const mapped = [...bands]
       .filter((b) => b.accounts > 0)
       .map((b) => ({
         ...b,
         margin: b.collectedPerAccount == null || cac == null ? null : b.collectedPerAccount - cac,
       }))
-      .sort((a, b) =>
-        cac == null
-          ? (b.collectedPerAccount ?? 0) - (a.collectedPerAccount ?? 0)
-          : (b.margin ?? 0) - (a.margin ?? 0)
-      )
-  }, [data, cac])
+    if (order === "band") {
+      // bandSort is the leading number of the label, so '908+' sorts after
+      // '887 to 907' instead of alphabetically before it.
+      return mapped.sort((a, b) => a.bandSort - b.bandSort || a.band.localeCompare(b.band))
+    }
+    return mapped.sort((a, b) =>
+      cac == null
+        ? (b.collectedPerAccount ?? 0) - (a.collectedPerAccount ?? 0)
+        : (b.margin ?? 0) - (a.margin ?? 0)
+    )
+  }, [data, cac, order])
 
   const rand = (v: number | null) =>
     v == null ? "—" : `R${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
@@ -2010,6 +2018,29 @@ function MarginReport() {
               className="w-[190px] font-mono text-sm"
             />
           </div>
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Order</Label>
+            <div className="flex overflow-hidden rounded-md border border-border">
+              {([
+                { id: "band", label: "Score band" },
+                { id: "value", label: cac == null ? "Revenue" : "Margin" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setOrder(opt.id)}
+                  className={cn(
+                    "px-3 py-2 text-xs transition-colors",
+                    order === opt.id
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <Button onClick={run} disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Run report
@@ -2069,7 +2100,13 @@ function MarginReport() {
           <div className="mt-5 rounded-xl border border-border bg-card">
             <div className="border-b border-border px-5 py-4">
               <h3 className="font-medium text-foreground">
-                By score band — ranked by {cac == null ? "revenue" : "margin"} per account
+                By score band
+                {order === "value" && (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    — ranked by {cac == null ? "revenue" : "margin"} per account
+                  </span>
+                )}
               </h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {data.startDate} to {data.endDate}. Bands with more accounts carry more weight in any
