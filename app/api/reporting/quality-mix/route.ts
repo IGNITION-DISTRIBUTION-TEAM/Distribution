@@ -41,6 +41,13 @@ export const maxDuration = 60
  * settlement, that amount is NOT in this feed and would need adding before the
  * distinction can be enforced here.
  *
+ * Revenue is realised, not billed: COLLECTED sums BILLED_AMOUNT (ex VAT) over
+ * the attempts that actually paid, across the account's whole history in the
+ * window. It supports margin-over-acquisition-cost, but the acquisition cost
+ * itself is NOT in this feed — no commission, lead or media cost column exists —
+ * so margin can only be completed once that arrives, or modelled against an
+ * explicit assumption.
+ *
  * Note PRODUCTPRICE is not the amount due: billed amounts legitimately differ
  * from it (pro-rata, plan changes, discounts), so it must not be used to infer
  * underpayment.
@@ -223,9 +230,23 @@ export async function GET(request: NextRequest) {
       FROM scoped
       WHERE ${IS_FIRST}
     ),
+    rev AS (
+      -- Realised revenue: what was actually collected, ex VAT, across every
+      -- attempt on the account — not the nominal PRODUCTPRICE, which differs
+      -- from the billed amount via pro-rata, plan changes and discounts.
+      SELECT
+        ACCOUNTNO,
+        SUM(IFF(${PAID} = 1, COALESCE(TRY_TO_NUMBER(TO_VARCHAR(BILLED_AMOUNT)), 0), 0))
+          AS COLLECTED,
+        SUM(IFF(${PAID} = 1, 1, 0)) AS PAID_COLLECTIONS,
+        COUNT(*) AS ATTEMPTS
+      FROM scoped
+      GROUP BY ACCOUNTNO
+    ),
     banded AS (
       SELECT
         ACCOUNTNO, SALE_DATE, VAS_FLAG, PRICE, PAID, REASON,
+        COLLECTED, PAID_COLLECTIONS, ATTEMPTS,
         BRAND_VAL AS BRAND,
         ${
           bandMode === "scoregroup"
@@ -242,6 +263,7 @@ export async function GET(request: NextRequest) {
         -- every row here IS a first collection, so nothing is pending
         0 AS PENDING
       FROM first_ranked
+      LEFT JOIN rev USING (ACCOUNTNO)
       WHERE RN = 1
     ),
     joined AS (
@@ -261,6 +283,8 @@ export async function GET(request: NextRequest) {
         BAND: string
         BAND_SORT: number | string
         ACCOUNTS: number | string
+        COLLECTED: number | string | null
+        PAID_COLLECTIONS: number | string | null
         BASE: number | string
         FTC: number | string
         PENDING: number | string
@@ -272,6 +296,8 @@ export async function GET(request: NextRequest) {
            BAND,
            MIN(BAND_SORT) AS BAND_SORT,
            COUNT(*) AS ACCOUNTS,
+           SUM(COALESCE(COLLECTED, 0)) AS COLLECTED,
+           SUM(COALESCE(PAID_COLLECTIONS, 0)) AS PAID_COLLECTIONS,
            SUM(IFF(PENDING = 0, 1, 0)) AS BASE,
            SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)) AS FTC,
            SUM(PENDING) AS PENDING,
@@ -286,6 +312,8 @@ export async function GET(request: NextRequest) {
         BAND: string
         BAND_SORT: number | string
         ACCOUNTS: number | string
+        COLLECTED: number | string | null
+        PAID_COLLECTIONS: number | string | null
         BASE: number | string
         FTC: number | string
         PENDING: number | string
@@ -388,6 +416,9 @@ export async function GET(request: NextRequest) {
           ftcRate: rate(ftc, base),
           fidRate: rate(base - ftc, base),
           vasRate: rate(num(r.VAS_ACCOUNTS), accounts),
+          collected: num(r.COLLECTED),
+          collectedPerAccount: accounts > 0 ? num(r.COLLECTED) / accounts : null,
+          paidCollections: num(r.PAID_COLLECTIONS),
           avgPrice: numOrNull(r.AVG_PRICE),
         }
       })
@@ -404,6 +435,7 @@ export async function GET(request: NextRequest) {
     const totalFtc = bandRows.reduce((s, r) => s + r.ftc, 0)
     const totalPending = num(notBilled[0]?.N)
     const totalVas = byBand.reduce((s, r) => s + num(r.VAS_ACCOUNTS), 0)
+    const totalCollected = byBand.reduce((s, r) => s + num(r.COLLECTED), 0)
 
     const cohorts = byCohort.map((r) => {
       const base = num(r.BASE)
@@ -471,6 +503,8 @@ export async function GET(request: NextRequest) {
         ftcRate: rate(totalFtc, totalBase),
         fidRate: rate(totalBase - totalFtc, totalBase),
         vasRate: rate(totalVas, totalAccounts),
+        collected: totalCollected,
+        collectedPerAccount: totalAccounts > 0 ? totalCollected / totalAccounts : null,
       },
     })
   } catch (error) {

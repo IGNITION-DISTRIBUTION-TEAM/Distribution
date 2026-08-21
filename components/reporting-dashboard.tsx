@@ -52,6 +52,7 @@ import {
   Check,
   ChevronRight,
   ChevronsUpDown,
+  Coins,
   Download,
   LineChart as LineChartIcon,
   Loader2,
@@ -122,7 +123,7 @@ const fmtPct = (v: number | null) =>
 // "soon" and not selectable), which is how the quality reports appear until the
 // sales and billing feed lands.
 type ReportItem = { label: string; view: ReportView | null }
-type ReportView = "quality" | "campaign"
+type ReportView = "quality" | "margin" | "campaign"
 
 const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
@@ -131,9 +132,9 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
       // One report covers score mix, FTC/FID and VAS attachment — they share a
       // base (accounts written) and reading them apart invites wrong compares.
       { label: "Quality mix (FTC / FID)", view: "quality" },
-      // Needs commission and lead cost per sale, which the billing feed has not
-      // got, so it stays unselectable rather than showing a half-answer.
-      { label: "Margin over acquisition cost", view: null },
+      // Revenue side is real; acquisition cost is not in the feed, so the report
+      // completes margin against an explicit, user-entered assumption.
+      { label: "Revenue & margin", view: "margin" },
     ],
   },
   {
@@ -259,6 +260,7 @@ export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="w-full px-6 py-8">
             {active.view === "quality" && <QualityMixReport />}
+            {active.view === "margin" && <MarginReport />}
             {active.view === "campaign" && <CampaignPerformanceReport />}
           </div>
         </div>
@@ -746,6 +748,9 @@ type BandRow = {
   vasRate: number | null
   avgPrice: number | null
   mixShare: number | null
+  collected: number
+  collectedPerAccount: number | null
+  paidCollections: number
 }
 type CohortRow = {
   cohort: string
@@ -783,6 +788,8 @@ type QualityPayload = {
     ftcRate: number | null
     fidRate: number | null
     vasRate: number | null
+    collected: number
+    collectedPerAccount: number | null
   }
 }
 
@@ -1807,6 +1814,291 @@ function ReasonTrendChart({
         </ResponsiveContainer>
       </div>
     </div>
+  )
+}
+
+/**
+ * Revenue per account by score band, and margin once an acquisition cost is
+ * supplied.
+ *
+ * Revenue here is REALISED — what actually collected, ex VAT, across every
+ * attempt on the account in the window — not billed and not the nominal product
+ * price. Acquisition cost is NOT in the billing feed (no commission, lead or
+ * media cost column exists), so margin is computed against a cost the user
+ * enters. That is deliberately a modelling assumption and is labelled as one; it
+ * is not passed off as measured.
+ */
+function MarginReport() {
+  const [startDate, setStartDate] = useState(isoDaysAgo(180))
+  const [endDate, setEndDate] = useState(isoDaysAgo(0))
+  const [brand, setBrand] = useState("")
+  const [cacInput, setCacInput] = useState("")
+  const [data, setData] = useState<QualityPayload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notConfigured, setNotConfigured] = useState(false)
+
+  const cac = useMemo(() => {
+    const v = Number(cacInput)
+    return Number.isFinite(v) && v > 0 ? v : null
+  }, [cacInput])
+
+  const run = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ startDate, endDate, bandMode: "scoregroup" })
+      if (brand) params.set("brand", brand)
+      const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
+        cache: "no-store",
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setNotConfigured(!!json.notConfigured)
+        throw new Error(json.error || `HTTP ${res.status}`)
+      }
+      setNotConfigured(false)
+      setData(json as QualityPayload)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [startDate, endDate, brand])
+
+  useEffect(() => {
+    run()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const firstRender = useRef(true)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    run()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brand])
+
+  // Ranked by margin when a cost is given, else by revenue — the question is
+  // "which bands are worth selling into", so order by the answer.
+  const rows = useMemo(() => {
+    const bands = data?.bands ?? []
+    return [...bands]
+      .filter((b) => b.accounts > 0)
+      .map((b) => ({
+        ...b,
+        margin: b.collectedPerAccount == null || cac == null ? null : b.collectedPerAccount - cac,
+      }))
+      .sort((a, b) =>
+        cac == null
+          ? (b.collectedPerAccount ?? 0) - (a.collectedPerAccount ?? 0)
+          : (b.margin ?? 0) - (a.margin ?? 0)
+      )
+  }, [data, cac])
+
+  const rand = (v: number | null) =>
+    v == null ? "—" : `R${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+
+  return (
+    <>
+      <div className="mb-6 flex items-start gap-3">
+        <Coins className="mt-1 h-6 w-6 text-muted-foreground" />
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Revenue &amp; margin</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Realised revenue per account by score band. Enter an acquisition cost to see margin and
+            rank the bands worth selling into.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales from</Label>
+            <Input
+              type="date"
+              value={startDate}
+              max={endDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales to</Label>
+            <Input
+              type="date"
+              value={endDate}
+              min={startDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          <div className="min-w-[200px]">
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Brand</Label>
+            <Select value={brand || "__all"} onValueChange={(v) => setBrand(v === "__all" ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="All brands" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">All brands</SelectItem>
+                {(data?.brands ?? []).map((b) => (
+                  <SelectItem key={b} value={b}>
+                    {b}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">
+              Acquisition cost per sale (R)
+            </Label>
+            <Input
+              value={cacInput}
+              onChange={(e) => setCacInput(e.target.value)}
+              placeholder="e.g. 150"
+              inputMode="decimal"
+              className="w-[190px] font-mono text-sm"
+            />
+          </div>
+          <Button onClick={run} disabled={loading}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Run report
+          </Button>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Revenue is what actually collected, ex VAT, across every attempt in the window — not billed,
+          and not the nominal product price.
+        </p>
+      </div>
+
+      {notConfigured && <NotConfiguredPanel />}
+
+      {error && !notConfigured && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+          <div className="text-amber-100">
+            <p className="font-medium">Acquisition cost is not in the billing feed.</p>
+            <p className="mt-1 text-amber-100/80">
+              No commission, lead or media cost column exists in it, so any margin below is modelled
+              against the figure you typed — an <span className="text-amber-50">assumption</span>, not a
+              measurement, and flat across every band. Send commission and lead cost per sale and this
+              becomes real, per-band and per-product.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {data && data.totals.accounts > 0 && (
+        <>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Accounts" value={fmtInt(data.totals.accounts)} />
+            <StatTile label="Collected (ex VAT)" value={rand(data.totals.collected)} />
+            <StatTile
+              label="Revenue per account"
+              value={rand(data.totals.collectedPerAccount)}
+              sub="realised, this window"
+            />
+            <StatTile
+              label="Margin per account"
+              value={
+                cac == null || data.totals.collectedPerAccount == null
+                  ? "—"
+                  : rand(data.totals.collectedPerAccount - cac)
+              }
+              sub={cac == null ? "enter an acquisition cost" : `at R${cac} CAC (assumed)`}
+            />
+          </div>
+
+          <div className="mt-5 rounded-xl border border-border bg-card">
+            <div className="border-b border-border px-5 py-4">
+              <h3 className="font-medium text-foreground">
+                By score band — ranked by {cac == null ? "revenue" : "margin"} per account
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {data.startDate} to {data.endDate}. Bands with more accounts carry more weight in any
+                decision; a high per-account figure on a handful of accounts is noise.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Score band</TableHead>
+                    <TableHead className="text-right">Accounts</TableHead>
+                    <TableHead className="text-right">FTC %</TableHead>
+                    <TableHead className="text-right">Collected</TableHead>
+                    <TableHead className="text-right">Revenue / account</TableHead>
+                    <TableHead className="text-right">Margin / account</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((b) => (
+                    <TableRow key={b.band}>
+                      <TableCell>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={cn("h-2 w-2 rounded-full", bandColour(b.band, data.bandOrder))}
+                          />
+                          {b.band}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {fmtInt(b.accounts)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {fmtPct(b.ftcRate)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {rand(b.collected)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {rand(b.collectedPerAccount)}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right font-mono text-sm",
+                          b.margin == null
+                            ? "text-muted-foreground"
+                            : b.margin >= 0
+                            ? "text-emerald-300"
+                            : "text-rose-300"
+                        )}
+                      >
+                        {rand(b.margin)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs text-muted-foreground">
+            Revenue is collected-to-date within the window, so newer sales have had fewer billing
+            cycles to accumulate it and will look worse than older ones. Compare bands over the same
+            window, and do not read this as lifetime value.
+          </p>
+        </>
+      )}
+
+      {data && data.totals.accounts === 0 && !notConfigured && (
+        <div className="mt-4 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+          No sales between {data.startDate} and {data.endDate}.
+        </div>
+      )}
+    </>
   )
 }
 
