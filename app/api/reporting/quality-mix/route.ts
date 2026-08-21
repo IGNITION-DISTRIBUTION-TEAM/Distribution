@@ -283,7 +283,7 @@ export async function GET(request: NextRequest) {
     //
     // Every branch must expose the same column list and types, hence the casts
     // on the columns a branch does not use.
-    const [agg, options, notBilled, bandOptions] = await Promise.all([
+    const [agg, options, notBilled, freshness, bandOptions] = await Promise.all([
       executeSnowflakeQuery<{
         KIND: string
         K1: string | null
@@ -400,6 +400,37 @@ export async function GET(request: NextRequest) {
          WHERE f.ACCOUNTNO IS NULL`,
         SF
       ),
+      // How far the feed actually reaches, and how much of the requested window
+      // has a first collection at all. Without this, a month with no sales in the
+      // source is indistinguishable from a month the report dropped.
+      executeSnowflakeQuery<{
+        MAX_SALE: string | null
+        MIN_SALE: string | null
+        MAX_BILLING: string | null
+        SALES_IN_WINDOW: number | string
+        FIRSTS_IN_WINDOW: number | string
+        LAST_SALE_IN_WINDOW: string | null
+        LAST_FIRST_SALE_IN_WINDOW: string | null
+      }>(
+        `WITH scoped AS (
+           SELECT * FROM ${table} ${where}
+         )
+         SELECT
+           (SELECT TO_CHAR(MAX(TRY_TO_DATE(TO_VARCHAR(SALESDATE))), 'YYYY-MM-DD')
+              FROM ${table}) AS MAX_SALE,
+           (SELECT TO_CHAR(MIN(TRY_TO_DATE(TO_VARCHAR(SALESDATE))), 'YYYY-MM-DD')
+              FROM ${table}) AS MIN_SALE,
+           (SELECT TO_CHAR(MAX(TRY_TO_DATE(TO_VARCHAR(BILLINGDATE))), 'YYYY-MM-DD')
+              FROM ${table}) AS MAX_BILLING,
+           COUNT(DISTINCT ACCOUNTNO) AS SALES_IN_WINDOW,
+           COUNT(DISTINCT IFF(${IS_FIRST}, ACCOUNTNO, NULL)) AS FIRSTS_IN_WINDOW,
+           TO_CHAR(MAX(TRY_TO_DATE(TO_VARCHAR(SALESDATE))), 'YYYY-MM-DD')
+             AS LAST_SALE_IN_WINDOW,
+           TO_CHAR(MAX(IFF(${IS_FIRST}, TRY_TO_DATE(TO_VARCHAR(SALESDATE)), NULL)), 'YYYY-MM-DD')
+             AS LAST_FIRST_SALE_IN_WINDOW
+         FROM scoped`,
+        SF
+      ),
       // Score bands available under the current brand/product, ignoring the band
       // filter itself so the picker never collapses to the current selection.
       executeSnowflakeQuery<{ BAND: string | null; BAND_SORT: number | string }>(
@@ -505,6 +536,22 @@ export async function GET(request: NextRequest) {
         ...new Set(options.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean)),
       ].sort(),
       bandOptions: bandOptions.map((r) => String(r.BAND ?? "unknown")).filter(Boolean),
+      // Freshness: what the source holds vs what was asked for. The report shows
+      // this so an empty recent month reads as "the feed stops here", not as a
+      // reporting bug.
+      dataThrough: {
+        sales: freshness[0]?.MAX_SALE ? String(freshness[0].MAX_SALE) : null,
+        salesFrom: freshness[0]?.MIN_SALE ? String(freshness[0].MIN_SALE) : null,
+        billing: freshness[0]?.MAX_BILLING ? String(freshness[0].MAX_BILLING) : null,
+        lastSaleInWindow: freshness[0]?.LAST_SALE_IN_WINDOW
+          ? String(freshness[0].LAST_SALE_IN_WINDOW)
+          : null,
+        lastSaleWithFirstCollection: freshness[0]?.LAST_FIRST_SALE_IN_WINDOW
+          ? String(freshness[0].LAST_FIRST_SALE_IN_WINDOW)
+          : null,
+        salesInWindow: num(freshness[0]?.SALES_IN_WINDOW),
+        withFirstCollection: num(freshness[0]?.FIRSTS_IN_WINDOW),
+      },
       brandProducts: options
         .map((r) => ({
           brand: String(r.BRAND ?? "").trim(),

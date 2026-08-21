@@ -159,6 +159,65 @@ async function fetchJson<T>(url: string): Promise<{ ok: boolean; status: number;
   }
 }
 
+/**
+ * States how far the feed reaches, and flags the two ways a recent month goes
+ * missing: the source has no sales that late, or those sales exist but have not
+ * had a first collection yet so they are outside the FTC/FID base.
+ */
+function FreshnessNote({
+  dataThrough,
+  endDate,
+}: {
+  dataThrough: NonNullable<QualityPayload["dataThrough"]>
+  endDate: string
+}) {
+  const { sales, billing, lastSaleInWindow, lastSaleWithFirstCollection } = dataThrough
+  const gap = !!sales && sales < endDate
+  const notYetBilled =
+    dataThrough.salesInWindow - dataThrough.withFirstCollection
+
+  return (
+    <div
+      className={cn(
+        "mt-4 rounded-lg border p-4 text-xs",
+        gap ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-card"
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <span className={gap ? "text-amber-100" : "text-muted-foreground"}>
+          Sales data through{" "}
+          <span className="font-mono text-foreground">{sales ?? "unknown"}</span>
+        </span>
+        <span className="text-muted-foreground">
+          Billing through <span className="font-mono text-foreground">{billing ?? "unknown"}</span>
+        </span>
+        {lastSaleInWindow && (
+          <span className="text-muted-foreground">
+            Latest sale in this window{" "}
+            <span className="font-mono text-foreground">{lastSaleInWindow}</span>
+          </span>
+        )}
+      </div>
+      {gap && (
+        <p className="mt-2 text-amber-100/80">
+          The window runs to {endDate} but the feed stops at {sales}, so there is nothing to show
+          after that date — the months are absent from the source, not dropped by the report.
+        </p>
+      )}
+      {notYetBilled > 0 && (
+        <p className="mt-2 text-muted-foreground">
+          {fmtInt(notYetBilled)} account{notYetBilled === 1 ? "" : "s"} in this window have no first
+          collection yet, so they carry no FTC/FID and contribute no cohort row
+          {lastSaleWithFirstCollection
+            ? `; the newest sale that has billed is ${lastSaleWithFirstCollection}`
+            : ""}
+          .
+        </p>
+      )}
+    </div>
+  )
+}
+
 const fmtInt = (n: number) => n.toLocaleString()
 const fmtPct = (v: number | null) =>
   v === null ? "—" : `${(v * 100).toFixed(v * 100 >= 10 ? 1 : 2)}%`
@@ -822,6 +881,15 @@ type QualityPayload = {
   brands: string[]
   brandProducts: { brand: string; product: string }[]
   bandOptions: string[]
+  dataThrough?: {
+    sales: string | null
+    salesFrom: string | null
+    billing: string | null
+    lastSaleInWindow: string | null
+    lastSaleWithFirstCollection: string | null
+    salesInWindow: number
+    withFirstCollection: number
+  }
   bandMode: "derived" | "scoregroup"
   totals: {
     accounts: number
@@ -1349,6 +1417,8 @@ function QualityMixReport() {
           </span>
         </div>
       </div>
+
+      {data?.dataThrough && <FreshnessNote dataThrough={data.dataThrough} endDate={endDate} />}
 
       {notConfigured && <NotConfiguredPanel />}
 
@@ -2051,6 +2121,8 @@ function MarginReport() {
           and not the nominal product price.
         </p>
       </div>
+
+      {data?.dataThrough && <FreshnessNote dataThrough={data.dataThrough} endDate={endDate} />}
 
       {notConfigured && <NotConfiguredPanel />}
 
