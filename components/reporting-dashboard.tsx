@@ -830,25 +830,26 @@ const FOCUS_BAND = "650-699"
 const FTC_COLOUR = "#0284c7"
 const FID_COLOUR = "#ea580c"
 
-// A cohort whose first collections have largely not fallen due yet has a rate
-// computed on a handful of accounts; it swings wildly and means little. Mark it
-// rather than hide it.
+// A band whose matured base is tiny gives a rate that swings on a couple of
+// accounts. Mark those points rather than hide them.
 const MATURITY_FLOOR = 0.5
+const MIN_RELIABLE_BASE = 30
 
 type TrendPoint = {
-  cohort: string
+  band: string
   ftcPct: number | null
   fidPct: number | null
   accounts: number
   base: number
   pending: number
-  maturity: number
   thin: boolean
 }
 
-function FtcFidTrendChart({ points }: { points: TrendPoint[] }) {
-  const last = points[points.length - 1]
+function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
   const thinCount = points.filter((p) => p.thin).length
+  // Many percentile labels ("662 to 672") crowd the axis, so angle them once
+  // there are more than a handful.
+  const crowded = points.length > 8
 
   // Direct-label only the final point of each line, so identity does not rest
   // on colour alone without putting a number on every point.
@@ -886,34 +887,29 @@ function FtcFidTrendChart({ points }: { points: TrendPoint[] }) {
     <div className="mt-5 rounded-xl border border-border bg-card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">FTC and FID rate by sale cohort</h3>
+          <h3 className="font-medium text-foreground">FTC and FID rate by score band</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Share of each month&apos;s matured accounts whose first collection paid (FTC) or did not
-            (FID). The two are complementary by definition, so the lines mirror each other about 50%.
+            Share of each band&apos;s matured accounts whose first collection paid (FTC) or did not
+            (FID), lowest score on the left. The two are complementary by definition, so the lines
+            mirror each other about 50%.
           </p>
         </div>
-        {last && (
-          <p className="text-xs text-muted-foreground">
-            latest <span className="font-mono text-foreground">{last.cohort}</span> ·{" "}
-            <span className="font-mono" style={{ color: FTC_COLOUR }}>
-              FTC {last.ftcPct == null ? "—" : `${last.ftcPct.toFixed(1)}%`}
-            </span>{" "}
-            ·{" "}
-            <span className="font-mono" style={{ color: FID_COLOUR }}>
-              FID {last.fidPct == null ? "—" : `${last.fidPct.toFixed(1)}%`}
-            </span>
-          </p>
-        )}
       </div>
 
       <div className="mt-4 h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={points} margin={{ top: 8, right: 48, bottom: 0, left: -12 }}>
+          <LineChart
+            data={points}
+            margin={{ top: 8, right: 48, bottom: crowded ? 48 : 0, left: -12 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis
-              dataKey="cohort"
+              dataKey="band"
+              interval={0}
+              angle={crowded ? -35 : 0}
+              textAnchor={crowded ? "end" : "middle"}
+              height={crowded ? 56 : 30}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-              minTickGap={16}
             />
             <YAxis
               domain={[0, 100]}
@@ -937,7 +933,7 @@ function FtcFidTrendChart({ points }: { points: TrendPoint[] }) {
               // Volume is a different scale, so it belongs in the tooltip rather
               // than as a second axis on the plot.
               labelFormatter={(label: string) => {
-                const p = points.find((x) => x.cohort === label)
+                const p = points.find((x) => x.band === label)
                 if (!p) return label
                 return `${label} — ${p.base.toLocaleString()} of ${p.accounts.toLocaleString()} matured${
                   p.pending > 0 ? `, ${p.pending.toLocaleString()} pending` : ""
@@ -975,9 +971,8 @@ function FtcFidTrendChart({ points }: { points: TrendPoint[] }) {
 
       {thinCount > 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Hollow points mark {thinCount} cohort{thinCount === 1 ? "" : "s"} under{" "}
-          {Math.round(MATURITY_FLOOR * 100)}% matured — the rate there rests on few accounts and will
-          move as the rest fall due.
+          Hollow points mark {thinCount} band{thinCount === 1 ? "" : "s"} with too few matured
+          accounts to read a rate from — treat those points as indicative only.
         </p>
       )}
     </div>
@@ -1053,21 +1048,23 @@ function QualityMixReport() {
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
 
-  // Trend series for the chart. Rates are over the MATURED base, so a cohort
-  // that has not billed yet contributes no misleading 0%.
+  // Chart series: FTC/FID by score band, in the score order the API returns.
+  // Rates are over the MATURED base, so a band whose accounts have not billed
+  // yet contributes no misleading 0%.
   const trend = useMemo<TrendPoint[]>(
     () =>
-      cohortSummary.map((c) => ({
-        cohort: c.cohort,
-        ftcPct: c.base > 0 ? (c.ftc / c.base) * 100 : null,
-        fidPct: c.base > 0 ? ((c.base - c.ftc) / c.base) * 100 : null,
-        accounts: c.accounts,
-        base: c.base,
-        pending: c.pending,
-        maturity: c.accounts > 0 ? c.base / c.accounts : 0,
-        thin: c.accounts > 0 && c.base / c.accounts < MATURITY_FLOOR,
+      (data?.bands ?? []).map((b) => ({
+        band: b.band,
+        ftcPct: b.ftcRate == null ? null : b.ftcRate * 100,
+        fidPct: b.fidRate == null ? null : b.fidRate * 100,
+        accounts: b.accounts,
+        base: b.base,
+        pending: b.pending,
+        thin:
+          b.base < MIN_RELIABLE_BASE ||
+          (b.accounts > 0 && b.base / b.accounts < MATURITY_FLOOR),
       })),
-    [cohortSummary]
+    [data]
   )
 
   const focus =
@@ -1368,7 +1365,7 @@ function QualityMixReport() {
             </div>
           </div>
 
-          {trend.length > 1 && <FtcFidTrendChart points={trend} />}
+          {trend.length > 1 && <FtcFidByBandChart points={trend} />}
 
           {/* ---- cohort trend + reasons ---- */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
