@@ -925,23 +925,7 @@ function QualityMixReport() {
         </div>
       </div>
 
-      {notConfigured && (
-        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
-            <div className="text-amber-100">
-              <p className="font-medium">Billing source not configured.</p>
-              <p className="mt-1 text-amber-100/80">
-                Set <span className="font-mono">QUALITY_MIX_SOURCE_TABLE</span> to the billing extract in
-                Snowflake (<span className="font-mono">DATABASE.SCHEMA.OBJECT</span>) and redeploy. The
-                report expects the columns from the billing feed: ACCOUNTNO, SALESDATE, SCORE,
-                ISFIRSTCOLLECTION, PAID_FLAG, UNPAID_GROUP_DESCRIPTION, VAS_BUTTON_FLAG,
-                PRODUCT_GROUPS, PRODUCTPRICE, SCHEDULEDATE, BILLINGDATE.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {notConfigured && <NotConfiguredPanel />}
 
       {error && !notConfigured && (
         <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
@@ -1236,6 +1220,110 @@ function QualityMixReport() {
     </>
   )
 }
+/**
+ * Shown when QUALITY_MIX_SOURCE_TABLE is unset. Rather than only naming the
+ * variable, it can search Snowflake's column metadata for objects carrying the
+ * billing feed's signature columns, so the table name does not have to be
+ * hunted for by hand.
+ */
+function NotConfiguredPanel() {
+  const [candidates, setCandidates] = useState<
+    { table: string; matched: number; required: number; missing: string[] }[] | null
+  >(null)
+  const [searchedVia, setSearchedVia] = useState<string | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+
+  const discover = async () => {
+    setSearching(true)
+    setSearchError(null)
+    try {
+      const res = await fetch("/api/reporting/quality-mix/discover", { cache: "no-store" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      setCandidates(json.candidates ?? [])
+      setSearchedVia(json.searchedVia ?? null)
+      if ((json.candidates ?? []).length === 0) {
+        setSearchError("No object in reach carries these columns. Name the table manually.")
+      }
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : String(e))
+      setCandidates(null)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+        <div className="min-w-0 flex-1 text-amber-100">
+          <p className="font-medium">Billing source not configured.</p>
+          <p className="mt-1 text-amber-100/80">
+            Set <span className="font-mono">QUALITY_MIX_SOURCE_TABLE</span> to the billing extract in
+            Snowflake (<span className="font-mono">DATABASE.SCHEMA.OBJECT</span>) and redeploy. Expected
+            columns: ACCOUNTNO, SALESDATE, SCORE, ISFIRSTCOLLECTION, PAID_FLAG,
+            UNPAID_GROUP_DESCRIPTION, VAS_BUTTON_FLAG, PRODUCT_GROUPS, PRODUCTPRICE, SCHEDULEDATE,
+            BILLINGDATE.
+          </p>
+          <p className="mt-2 text-xs text-amber-100/70">
+            <span className="font-mono">scripts/quality-mix.sql</span> builds a view with exactly these
+            columns if you would rather point at a purpose-made object.
+          </p>
+
+          <div className="mt-4 flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={discover} disabled={searching}>
+              {searching && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {searching ? "Searching..." : "Find the table"}
+            </Button>
+            <span className="text-xs text-amber-100/60">
+              Searches column metadata only — reads no data. Super-admin only.
+            </span>
+          </div>
+
+          {searchError && <p className="mt-3 text-xs text-rose-300">{searchError}</p>}
+
+          {candidates && candidates.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs text-amber-100/70">
+                Candidates{searchedVia ? ` — searched ${searchedVia}` : ""}. Copy the best match into the
+                environment variable.
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {candidates.map((c) => (
+                  <div
+                    key={c.table}
+                    className="rounded-md border border-border bg-background/60 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="font-mono text-xs text-foreground">{c.table}</span>
+                      <span
+                        className={cn(
+                          "text-[11px]",
+                          c.missing.length === 0 ? "text-emerald-300" : "text-muted-foreground"
+                        )}
+                      >
+                        {c.matched}/{c.required} columns
+                        {c.missing.length === 0 ? " · complete" : ""}
+                      </span>
+                    </div>
+                    {c.missing.length > 0 && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        missing: <span className="font-mono">{c.missing.join(", ")}</span>
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-card p-5">
