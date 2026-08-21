@@ -19,6 +19,11 @@ export const maxDuration = 60
  *   FTC = the first collection was paid IN FULL
  *   FID = the exact inverse of FTC
  *
+ * The headline rates are the UNWEIGHTED MEAN of the bands' rates — every band
+ * counts once, whatever its size. The pooled, volume-weighted rate is returned
+ * beside it as ftcRateOverall/fidRateOverall; the two separate when the mix is
+ * uneven, and only the pooled one describes what the book actually cost.
+ *
  * So on the matured base the two are complementary and sum to 100%. Disputes
  * and suspensions therefore count as defaults; the reason breakdown still
  * reports them separately so the composition stays visible.
@@ -491,6 +496,21 @@ export async function GET(request: NextRequest) {
     const totalVas = byBand.reduce((s, r) => s + num(r.VAS_ACCOUNTS), 0)
     const totalCollected = byBand.reduce((s, r) => s + num(r.COLLECTED), 0)
 
+    // Headline FTC/FID as the UNWEIGHTED MEAN of the bands' own rates — each
+    // band counts once regardless of size. This is what the business asked to
+    // see, and it answers "how does a typical band perform" rather than "what
+    // did this book cost". The volume-weighted rate is kept alongside it
+    // (ftcRateOverall/fidRateOverall) because the two diverge whenever the mix
+    // is uneven: a large weak band drags the weighted figure well below the mean.
+    // Bands with no matured base have no rate and are excluded from the mean
+    // rather than counted as zero.
+    const bandsWithRate = bandRows.filter((r) => r.ftcRate !== null)
+    const meanFtc =
+      bandsWithRate.length > 0
+        ? bandsWithRate.reduce((acc, r) => acc + (r.ftcRate ?? 0), 0) / bandsWithRate.length
+        : null
+    const meanFid = meanFtc === null ? null : 1 - meanFtc
+
     const cohorts = byCohort.map((r) => {
       const base = num(r.BASE)
       const ftc = num(r.FTC)
@@ -570,8 +590,13 @@ export async function GET(request: NextRequest) {
         ftc: totalFtc,
         fid: totalBase - totalFtc,
         pending: totalPending,
-        ftcRate: rate(totalFtc, totalBase),
-        fidRate: rate(totalBase - totalFtc, totalBase),
+        // Average across the score bands (each band weighted equally).
+        ftcRate: meanFtc,
+        fidRate: meanFid,
+        bandsCounted: bandsWithRate.length,
+        // The same measures pooled over all accounts, for comparison.
+        ftcRateOverall: rate(totalFtc, totalBase),
+        fidRateOverall: rate(totalBase - totalFtc, totalBase),
         vasRate: rate(totalVas, totalAccounts),
         collected: totalCollected,
         collectedPerAccount: totalAccounts > 0 ? totalCollected / totalAccounts : null,

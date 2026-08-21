@@ -921,6 +921,9 @@ type QualityPayload = {
     vasRate: number | null
     collected: number
     collectedPerAccount: number | null
+    bandsCounted: number
+    ftcRateOverall: number | null
+    fidRateOverall: number | null
   }
 }
 
@@ -1489,12 +1492,16 @@ function QualityMixReport() {
             <StatTile
               label="FTC rate"
               value={fmtPct(data.totals.ftcRate)}
-              sub={`${fmtInt(data.totals.ftc)} of ${fmtInt(data.totals.base)} matured`}
+              sub={`avg of ${fmtInt(data.totals.bandsCounted)} score bands · ${fmtPct(
+                data.totals.ftcRateOverall
+              )} across all accounts`}
             />
             <StatTile
               label="FID rate"
               value={fmtPct(data.totals.fidRate)}
-              sub={`${fmtInt(data.totals.fid)} first-time defaults`}
+              sub={`avg of ${fmtInt(data.totals.bandsCounted)} score bands · ${fmtPct(
+                data.totals.fidRateOverall
+              )} across all accounts`}
             />
             <StatTile
               label="VAS attachment"
@@ -1506,6 +1513,13 @@ function QualityMixReport() {
               }
             />
           </div>
+
+          <p className="mt-3 text-xs text-muted-foreground">
+            The headline is the <span className="text-foreground">average across the score bands</span>,
+            each band counting once. The second figure pools every account, so it leans towards the
+            bands you wrote most of — the two separate when the mix is uneven, and only the pooled one
+            describes what the book actually cost.
+          </p>
 
           {data.totals.pending > 0 && (
             <p className="mt-3 text-xs text-muted-foreground">
