@@ -1183,6 +1183,20 @@ function QualityMixReport() {
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
 
+  // Blended FTC per sale month, for the over-time chart.
+  const ftcTrend = useMemo(
+    () =>
+      cohortSummary.map((c) => ({
+        cohort: c.cohort,
+        ftcPct: c.base > 0 ? (c.ftc / c.base) * 100 : null,
+        accounts: c.accounts,
+        base: c.base,
+        pending: c.pending,
+        thin: c.accounts > 0 && c.base / c.accounts < MATURITY_FLOOR,
+      })),
+    [cohortSummary]
+  )
+
   // Chart series: FTC/FID by score band, in the score order the API returns.
   // Rates are over the MATURED base, so a band whose accounts have not billed
   // yet contributes no misleading 0%.
@@ -1591,6 +1605,8 @@ function QualityMixReport() {
 
           {trend.length > 1 && <FtcFidByBandChart points={trend} />}
 
+          <FtcOverTimeChart points={ftcTrend} />
+
           {/* ---- cohort trend + reasons ---- */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
             <div className="rounded-xl border border-border bg-card">
@@ -1829,6 +1845,141 @@ function NotConfiguredPanel() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Blended FTC rate by sale month — the trend the band curve cannot show.
+ *
+ * One series, so no legend: the title names it. FID is omitted deliberately;
+ * being the exact inverse it would be a mirror line carrying no extra
+ * information. Volume is a different scale and stays in the tooltip rather than
+ * becoming a second axis.
+ *
+ * The rate is over each cohort's MATURED base, and cohorts that are mostly not
+ * yet billed get a hollow point — the newest month always rests on few accounts
+ * and moves as the rest fall due.
+ */
+function FtcOverTimeChart({
+  points,
+}: {
+  points: {
+    cohort: string
+    ftcPct: number | null
+    accounts: number
+    base: number
+    pending: number
+    thin: boolean
+  }[]
+}) {
+  const withRate = points.filter((p) => p.ftcPct != null)
+  if (withRate.length < 2) return null
+
+  const first = withRate[0]
+  const last = withRate[withRate.length - 1]
+  const delta =
+    first.ftcPct != null && last.ftcPct != null ? last.ftcPct - first.ftcPct : null
+  const thinCount = points.filter((p) => p.thin).length
+
+  const dot = (props: { cx?: number; cy?: number; index?: number }) => {
+    const { cx, cy, index } = props
+    if (cx == null || cy == null) return <g />
+    const thin = index != null && points[index]?.thin
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill={thin ? "hsl(var(--card))" : FTC_COLOUR}
+        stroke={FTC_COLOUR}
+        strokeWidth={2}
+      />
+    )
+  }
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-card p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <h3 className="font-medium text-foreground">FTC rate over time</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Blended first-time collection rate per sale month, across every band in the current
+            filter. Because it is blended, it moves with the score mix as well as with performance.
+          </p>
+        </div>
+        {delta != null && (
+          <p className="text-xs text-muted-foreground">
+            {first.cohort} → {last.cohort}{" "}
+            <span
+              className={cn(
+                "font-mono",
+                delta > 0.5 ? "text-emerald-300" : delta < -0.5 ? "text-rose-300" : "text-foreground"
+              )}
+            >
+              {delta >= 0 ? "+" : ""}
+              {delta.toFixed(1)} pts
+            </span>
+          </p>
+        )}
+      </div>
+
+      <div className="mt-4 h-64 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 8, right: 40, bottom: 0, left: -12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis
+              dataKey="cohort"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              minTickGap={16}
+            />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 25, 50, 75, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            />
+            <RTooltip
+              cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "3 3" }}
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "0.5rem",
+                fontSize: "0.8125rem",
+              }}
+              labelStyle={{ color: "hsl(var(--foreground))" }}
+              formatter={(value: number | string) => [
+                value == null ? "—" : `${Number(value).toFixed(1)}%`,
+                "FTC %",
+              ]}
+              labelFormatter={(label: string) => {
+                const p = points.find((x) => x.cohort === label)
+                if (!p) return label
+                return `${label} — ${p.base.toLocaleString()} of ${p.accounts.toLocaleString()} matured${
+                  p.pending > 0 ? `, ${p.pending.toLocaleString()} pending` : ""
+                }`
+              }}
+            />
+            <Line
+              type="monotone"
+              dataKey="ftcPct"
+              name="FTC %"
+              stroke={FTC_COLOUR}
+              strokeWidth={2}
+              dot={dot}
+              activeDot={{ r: 6 }}
+              connectNulls
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {thinCount > 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Hollow points mark {thinCount} cohort{thinCount === 1 ? "" : "s"} under{" "}
+          {Math.round(MATURITY_FLOOR * 100)}% matured — those rates will move as the rest bill.
+        </p>
+      )}
     </div>
   )
 }
