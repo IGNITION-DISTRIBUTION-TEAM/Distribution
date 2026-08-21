@@ -66,6 +66,7 @@ import {
   CartesianGrid,
   Tooltip as RTooltip,
   Legend,
+  ReferenceLine,
 } from "recharts"
 import {
   DistributedDashboardPanel,
@@ -395,6 +396,21 @@ type QualityPayload = {
   brands: string[]
   brandProducts: { brand: string; product: string }[]
   bandOptions: string[]
+  forecast?: {
+    weeks: {
+      week: string
+      accounts: number
+      base: number
+      actualFtc: number | null
+      predictedFtc: number | null
+      maturity: number
+      projected: boolean
+    }[]
+    forwardWeeks: number
+    trailingPredicted: number | null
+    maeWeeks: number
+    mae: number | null
+  }
   filters?: {
     bands: string[]
     products: string[]
@@ -1257,6 +1273,8 @@ function QualityMixReport() {
             </div>
           </div>
 
+          {data.forecast && <ForecastChart forecast={data.forecast} />}
+
           {trend.length > 1 && <FtcFidByBandChart points={trend} />}
 
           <FtcOverTimeChart points={ftcTrend} />
@@ -1589,6 +1607,170 @@ function PriceByBandPanel({
         Price is the product&apos;s nominal amount; collected is the average of what a successful
         collection actually took, ex VAT. The two differ through pro-rata, plan changes and
         discounts.
+      </div>
+    </div>
+  )
+}
+
+// Predicted line. Sky is FTC actual elsewhere in this report, so the projection
+// takes a third hue rather than reusing the FID orange and implying a different
+// measure. Validated with the sky/orange pair across all pairs on this surface.
+const PREDICTED_COLOUR = "#7c3aed"
+
+/**
+ * FTC/FID outlook: what the sales already written should collect once they bill,
+ * plus six weeks held at the recent mix.
+ *
+ * The forecast is a MIX forecast — each band's matured FTC rate applied to a
+ * week's score mix. That is what makes it possible at all: the recent sales
+ * exist, only their first collections have not fallen due, so their outcome is
+ * implied by who was written rather than guessed from a trend.
+ *
+ * FID is not drawn. It is the exact inverse of FTC, so a second pair of lines
+ * would mirror the first about 50% and add nothing; the FID figures are in the
+ * callout and the tooltip instead.
+ */
+function ForecastChart({
+  forecast,
+}: {
+  forecast: NonNullable<QualityPayload["forecast"]>
+}) {
+  const points = forecast.weeks
+  if (points.length < 3) return null
+
+  const lastActual = [...points].reverse().find((p) => p.actualFtc !== null)
+  const firstProjected = points.find((p) => p.projected)
+  const pred = forecast.trailingPredicted
+
+  const pct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`)
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-medium text-foreground">
+            FTC / FID outlook — next {forecast.forwardWeeks} weeks
+          </h3>
+          <p className="mt-0.5 max-w-2xl text-xs text-muted-foreground">
+            Each band&apos;s matured FTC rate applied to the score mix actually written that week.
+            Recent weeks can be projected because the sales already exist — only their first
+            collections have not fallen due yet.
+          </p>
+        </div>
+        {pred !== null && (
+          <div className="rounded-lg border border-border bg-background/40 px-4 py-2 text-right">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              At the recent mix
+            </p>
+            <p className="mt-0.5 font-mono text-sm">
+              <span style={{ color: PREDICTED_COLOUR }}>FTC {pct(pred)}</span>
+              <span className="text-muted-foreground"> · </span>
+              <span className="text-rose-300">FID {pct(1 - pred)}</span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 h-72 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 8, right: 24, bottom: 0, left: -12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis
+              dataKey="week"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              minTickGap={20}
+            />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 25, 50, 75, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            />
+            <RTooltip
+              cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "3 3" }}
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "0.5rem",
+                fontSize: "0.8125rem",
+              }}
+              labelStyle={{ color: "hsl(var(--foreground))" }}
+              formatter={(value: number | string, name: string) => {
+                if (value == null) return ["—", name]
+                const v = Number(value)
+                return [`${v.toFixed(1)}% (FID ${(100 - v).toFixed(1)}%)`, name]
+              }}
+              labelFormatter={(label: string) => {
+                const p = points.find((x) => x.week === label)
+                if (!p) return label
+                if (p.projected) return `week of ${label} — projected, no sales yet`
+                return `week of ${label} — ${p.base.toLocaleString()} of ${p.accounts.toLocaleString()} billed`
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" }} />
+            {firstProjected && (
+              <ReferenceLine
+                x={firstProjected.week}
+                stroke="hsl(var(--muted-foreground))"
+                strokeDasharray="4 4"
+                label={{
+                  value: "projected",
+                  position: "insideTopRight",
+                  fill: "hsl(var(--muted-foreground))",
+                  fontSize: 10,
+                }}
+              />
+            )}
+            <Line
+              type="monotone"
+              dataKey={(p: { actualFtc: number | null }) =>
+                p.actualFtc == null ? null : p.actualFtc * 100
+              }
+              name="FTC actual"
+              stroke={FTC_COLOUR}
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              activeDot={{ r: 6 }}
+              connectNulls={false}
+            />
+            <Line
+              type="monotone"
+              dataKey={(p: { predictedFtc: number | null }) =>
+                p.predictedFtc == null ? null : p.predictedFtc * 100
+              }
+              name="FTC predicted from mix"
+              stroke={PREDICTED_COLOUR}
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              dot={false}
+              connectNulls
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+        {forecast.mae !== null && (
+          <p>
+            Where both lines exist on well-billed weeks, the prediction has been out by an average of{" "}
+            <span className="font-mono text-foreground">
+              {(forecast.mae * 100).toFixed(1)} points
+            </span>{" "}
+            across {fmtInt(forecast.maeWeeks)} week{forecast.maeWeeks === 1 ? "" : "s"} — judge the
+            projection by that gap, not by the line looking smooth.
+          </p>
+        )}
+        <p>
+          This forecasts the effect of the <span className="text-foreground">score mix</span> only. It
+          holds each band&apos;s collection performance at its historical rate, so a band that starts
+          collecting worse will not show up here until it bills — the actual line is drawn alongside
+          precisely so that divergence is visible.
+        </p>
+        <p>
+          Past the {lastActual ? `week of ${lastActual.week}` : "last billed week"} there are no sales
+          yet, so the projection holds the last four weeks&apos; mix. Read it as &ldquo;if we keep
+          writing this mix&rdquo;, not as a sales forecast. FID is the exact inverse of FTC throughout.
+        </p>
       </div>
     </div>
   )

@@ -320,6 +320,25 @@ export async function GET(request: NextRequest) {
          UNION ALL
 
          SELECT
+           'week',
+           TO_CHAR(DATE_TRUNC('WEEK', SALE_DATE), 'YYYY-MM-DD'),
+           BAND,
+           MIN(BAND_SORT),
+           COUNT(*),
+           SUM(IFF(PENDING = 0, 1, 0)),
+           SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)),
+           SUM(PENDING),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS FLOAT),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER)
+         FROM joined
+         WHERE SALE_DATE IS NOT NULL
+         GROUP BY 2, 3
+
+         UNION ALL
+
+         SELECT
            'reason',
            COALESCE(NULLIF(TRIM(REASON), ''), '(not given)'),
            CAST(NULL AS VARCHAR),
@@ -510,6 +529,7 @@ FROM scoped`,
       .filter((r) => r.KIND === "reason")
       .sort((a, b) => num(b.ACCOUNTS) - num(a.ACCOUNTS))
     const reasonMonthRows = agg.filter((r) => r.KIND === "reasonMonth")
+    const weekRows = agg.filter((r) => r.KIND === "week")
 
     const bandRows = byBand
       .map((r) => {
@@ -563,6 +583,105 @@ FROM scoped`,
         : null
     const meanFid = meanFtc === null ? null : 1 - meanFtc
 
+    // ---- Forecast -------------------------------------------------------
+    // Method: each band's MATURED FTC rate is treated as that band's expected
+    // performance, and a week's predicted rate is its score mix weighted by
+    // those rates:
+    //
+    //   predicted(week) = SUM(accounts_b * ftcRate_b) / SUM(accounts_b)
+    //
+    // This is a MIX forecast. It answers "given what we wrote, what will it
+    // collect", which is knowable before the bills land, and it is why recent
+    // weeks can be projected at all: the sales already exist, only their first
+    // collections have not fallen due.
+    //
+    // It assumes each band keeps performing as it has. If collections
+    // deteriorate WITHIN a band, this will not see it — the actual line is
+    // plotted alongside for exactly that reason, so the method can be judged
+    // against the weeks where both exist.
+    const bandRate = new Map<string, number>()
+    for (const b of bandRows) {
+      if (b.ftcRate !== null && b.base > 0) bandRate.set(b.band, b.ftcRate)
+    }
+
+    type WeekAgg = { week: string; accounts: number; base: number; ftc: number; mix: Map<string, number> }
+    const weeks = new Map<string, WeekAgg>()
+    for (const r of weekRows) {
+      const week = String(r.K1)
+      const band = String(r.K2 ?? "unknown")
+      const e =
+        weeks.get(week) ?? { week, accounts: 0, base: 0, ftc: 0, mix: new Map<string, number>() }
+      const n = num(r.ACCOUNTS)
+      e.accounts += n
+      e.base += num(r.BASE)
+      e.ftc += num(r.FTC)
+      e.mix.set(band, (e.mix.get(band) ?? 0) + n)
+      weeks.set(week, e)
+    }
+
+    // Predicted rate implied by a set of band counts.
+    const predictFrom = (mix: Map<string, number>): number | null => {
+      let weighted = 0
+      let covered = 0
+      for (const [band, n] of mix) {
+        const rate = bandRate.get(band)
+        if (rate === undefined) continue // band has no matured history to lean on
+        weighted += rate * n
+        covered += n
+      }
+      return covered > 0 ? weighted / covered : null
+    }
+
+    const weekList = [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week))
+    const observed = weekList.map((w) => ({
+      week: w.week,
+      accounts: w.accounts,
+      base: w.base,
+      // Actual only where the week has actually billed.
+      actualFtc: w.base > 0 ? w.ftc / w.base : null,
+      predictedFtc: predictFrom(w.mix),
+      maturity: w.accounts > 0 ? w.base / w.accounts : 0,
+      projected: false,
+    }))
+
+    // Forward weeks: hold the trailing four weeks' mix, since no sales exist yet
+    // for them. This is explicitly "if we keep writing this mix", not a
+    // prediction of what will be sold.
+    const FORWARD_WEEKS = 6
+    const trailing = new Map<string, number>()
+    for (const w of weekList.slice(-4)) {
+      for (const [band, n] of w.mix) trailing.set(band, (trailing.get(band) ?? 0) + n)
+    }
+    const trailingPredicted = predictFrom(trailing)
+    const forward: typeof observed = []
+    if (weekList.length > 0 && trailingPredicted !== null) {
+      const last = weekList[weekList.length - 1].week
+      for (let i = 1; i <= FORWARD_WEEKS; i++) {
+        const d = new Date(`${last}T00:00:00Z`)
+        d.setUTCDate(d.getUTCDate() + 7 * i)
+        forward.push({
+          week: d.toISOString().slice(0, 10),
+          accounts: 0,
+          base: 0,
+          actualFtc: null,
+          predictedFtc: trailingPredicted,
+          maturity: 0,
+          projected: true,
+        })
+      }
+    }
+
+    // How well the method has done where both numbers exist: mean absolute
+    // error in percentage points, on weeks that are meaningfully matured.
+    const scored = observed.filter(
+      (w) => w.actualFtc !== null && w.predictedFtc !== null && w.maturity >= 0.8
+    )
+    const mae =
+      scored.length > 0
+        ? scored.reduce((acc, w) => acc + Math.abs((w.actualFtc ?? 0) - (w.predictedFtc ?? 0)), 0) /
+          scored.length
+        : null
+
     const cohorts = byCohort.map((r) => {
       const base = num(r.BASE)
       const ftc = num(r.FTC)
@@ -595,6 +714,15 @@ FROM scoped`,
         reason: String(r.K1 ?? "(not given)"),
         accounts: num(r.ACCOUNTS),
       })),
+      forecast: {
+        weeks: [...observed, ...forward],
+        forwardWeeks: FORWARD_WEEKS,
+        trailingPredicted,
+        // Mean absolute error in rate terms on well-matured weeks, so the chart
+        // can state how far off the method has been rather than implying none.
+        maeWeeks: scored.length,
+        mae,
+      },
       reasonsByMonth: reasonMonthRows.map((r) => ({
         month: String(r.K1),
         reason: String(r.K2 ?? "(not given)"),
