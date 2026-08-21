@@ -136,7 +136,18 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const startDate = searchParams.get("startDate") ?? ""
   const endDate = searchParams.get("endDate") ?? startDate
-  const productGroup = (searchParams.get("productGroup") ?? "").trim()
+  // Products are multi-select. `productGroup` (singular) is still accepted so an
+  // existing link keeps working.
+  const products = Array.from(
+    new Set(
+      [
+        ...(searchParams.get("products") ?? "").split(","),
+        searchParams.get("productGroup") ?? "",
+      ]
+        .map((v) => v.trim())
+        .filter(Boolean)
+    )
+  )
   const campaignName = (searchParams.get("campaignName") ?? "").trim()
   const brand = (searchParams.get("brand") ?? "").trim()
   // Which banding to report on. "scoregroup" uses the business's own SCOREGROUP
@@ -160,7 +171,9 @@ export async function GET(request: NextRequest) {
   // the source is inconsistent about spacing.
   const filters = [
     `TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'`,
-    productGroup ? `PRODUCT_GROUPS = '${escSql(productGroup)}'` : "",
+    products.length > 0
+      ? `PRODUCT_GROUPS IN (${products.map((p) => `'${escSql(p)}'`).join(",")})`
+      : "",
     campaignName ? `CAMPAIGNNAME = '${escSql(campaignName)}'` : "",
     brand ? `UPPER(REPLACE(BRAND, ' ', '')) = '${escSql(brand.replace(/ /g, "").toUpperCase())}'` : "",
   ].filter(Boolean)
@@ -415,7 +428,7 @@ export async function GET(request: NextRequest) {
         }))
         .filter((r) => r.brand && r.product),
       filters: {
-        productGroup: productGroup || null,
+        products,
         campaignName: campaignName || null,
         brand: brand || null,
       },

@@ -987,7 +987,8 @@ function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
 function QualityMixReport() {
   const [startDate, setStartDate] = useState(isoDaysAgo(180))
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
-  const [productGroup, setProductGroup] = useState("")
+  const [products, setProducts] = useState<string[]>([])
+  const [productOpen, setProductOpen] = useState(false)
   const [brand, setBrand] = useState("")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
@@ -999,7 +1000,7 @@ function QualityMixReport() {
     setError(null)
     try {
       const params = new URLSearchParams({ startDate, endDate })
-      if (productGroup) params.set("productGroup", productGroup)
+      if (products.length > 0) params.set("products", products.join(","))
       if (brand) params.set("brand", brand)
       params.set("bandMode", "scoregroup")
       const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
@@ -1018,7 +1019,7 @@ function QualityMixReport() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate, productGroup, brand])
+  }, [startDate, endDate, products, brand])
 
   useEffect(() => {
     run()
@@ -1036,7 +1037,7 @@ function QualityMixReport() {
     }
     run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand, productGroup])
+  }, [brand, products])
 
   // Cohort rows arrive as cohort x band; roll up to a per-month view plus the
   // focus band's share, which is what "is the spread balancing out?" needs.
@@ -1087,13 +1088,14 @@ function QualityMixReport() {
     return [...new Set(pairs.filter((p) => p.brand === brand).map((p) => p.product))].sort()
   }, [data, brand])
 
-  // Changing brand can strip the chosen product out of the list; clear it so the
+  // Changing brand can strip chosen products out of the list; drop those so the
   // filters can never describe a combination that returns nothing.
   useEffect(() => {
-    if (productGroup && productOptions.length > 0 && !productOptions.includes(productGroup)) {
-      setProductGroup("")
-    }
-  }, [productOptions, productGroup])
+    if (products.length === 0 || productOptions.length === 0) return
+    const kept = products.filter((p) => productOptions.includes(p))
+    if (kept.length !== products.length) setProducts(kept)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productOptions])
 
     // Rank the lines by period total so the same reasons stay on the chart as the
   // month-by-month ordering wobbles — colour follows the reason, not its rank
@@ -1139,21 +1141,60 @@ function QualityMixReport() {
               className="w-[150px]"
             />
           </div>
-          <div className="min-w-[220px]">
+          <div className="min-w-[240px]">
             <Label className="mb-1.5 block text-xs text-muted-foreground">Product</Label>
-            <Select value={productGroup || "__all"} onValueChange={(v) => setProductGroup(v === "__all" ? "" : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="All products" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">All products</SelectItem>
-                {productOptions.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={productOpen} onOpenChange={setProductOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-between font-normal">
+                  <span className="truncate">
+                    {products.length === 0
+                      ? "All products"
+                      : products.length === 1
+                      ? products[0]
+                      : products.length + " products"}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 flex-shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[300px] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search products..." />
+                  <CommandList>
+                    <CommandEmpty>No product found.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem onSelect={() => setProducts([])}>
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            products.length === 0 ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        All products
+                      </CommandItem>
+                      {productOptions.map((p) => (
+                        <CommandItem
+                          key={p}
+                          value={p}
+                          onSelect={() =>
+                            setProducts((prev) =>
+                              prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+                            )
+                          }
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              products.includes(p) ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <span className="truncate">{p}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="min-w-[200px]">
             <Label className="mb-1.5 block text-xs text-muted-foreground">Brand</Label>
