@@ -1850,6 +1850,7 @@ function QualityMixReport() {
                 )}
               </div>
             </div>
+            <PriceByBandPanel bands={data.bands} bandOrder={data.bandOrder} />
           </div>
 
           {data.reasonsByMonth.length > 0 && topReasons.length > 0 && (
@@ -1987,6 +1988,96 @@ function NotConfiguredPanel() {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Average pricing by score band, next to what actually collected per successful
+ * collection.
+ *
+ * Price alone answers little — it is usually near-flat across bands, since the
+ * product is priced by product, not by credit score. The pair is the useful bit:
+ * if nominal price is flat while realised collection falls with score, the
+ * cheaper-to-acquire bands are not cheaper to serve, they simply pay less often.
+ */
+function PriceByBandPanel({
+  bands,
+  bandOrder,
+}: {
+  bands: BandRow[]
+  bandOrder: string[]
+}) {
+  const rows = bands.filter((b) => b.avgPrice !== null && b.accounts > 0)
+  if (rows.length === 0) return null
+
+  const maxPrice = Math.max(...rows.map((b) => b.avgPrice ?? 0), 1)
+  const prices = rows.map((b) => b.avgPrice ?? 0)
+  const lo = Math.min(...prices)
+  const hi = Math.max(...prices)
+  // Flat pricing is the expected case; say so explicitly rather than leaving the
+  // reader to eyeball 20 near-identical bars.
+  const spreadPct = hi > 0 ? ((hi - lo) / hi) * 100 : 0
+  const flat = spreadPct < 10
+
+  const rand = (v: number | null) =>
+    v == null ? "—" : `R${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="font-medium text-foreground">Average price by score band</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {flat ? (
+            <>
+              Priced within {spreadPct.toFixed(0)}% across every band — price does not follow score,
+              so differences in value come from how often it collects, not what it costs.
+            </>
+          ) : (
+            <>
+              Price ranges {rand(lo)} to {rand(hi)} across bands — a {spreadPct.toFixed(0)}% spread,
+              so pricing does vary with score.
+            </>
+          )}
+        </p>
+      </div>
+      <div className="max-h-[420px] overflow-y-auto p-5">
+        <div className="space-y-2.5">
+          {rows.map((b) => {
+            const realised = b.paidCollections > 0 ? b.collected / b.paidCollections : null
+            return (
+              <div key={b.band}>
+                <div className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "h-2 w-2 flex-shrink-0 rounded-full",
+                        bandColour(b.band, bandOrder)
+                      )}
+                    />
+                    <span className="truncate text-foreground">{b.band}</span>
+                  </span>
+                  <span className="flex-shrink-0 font-mono text-muted-foreground">
+                    <span className="text-foreground">{rand(b.avgPrice)}</span>
+                    {realised !== null && <> · {rand(realised)} collected</>}
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                  <div
+                    className={cn("h-full rounded-full", bandColour(b.band, bandOrder))}
+                    style={{ width: `${((b.avgPrice ?? 0) / maxPrice) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+        Price is the product&apos;s nominal amount; collected is the average of what a successful
+        collection actually took, ex VAT. The two differ through pro-rata, plan changes and
+        discounts.
       </div>
     </div>
   )
