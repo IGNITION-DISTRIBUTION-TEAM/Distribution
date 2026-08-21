@@ -125,12 +125,19 @@ WITH scoped AS (
           BETWEEN DATEADD(MONTH, -6, CURRENT_DATE()) AND CURRENT_DATE()
 ),
 accounts AS (
-    -- one row per account, with its sale attributes. 0 scores and 0 prices are
-    -- nulled so MAX() ignores placeholders instead of letting them win.
+    -- STRICTLY one row per account. BRAND and SCOREGROUP are taken with MAX()
+    -- rather than added to the GROUP BY: they were constant per account in the
+    -- sample, but if a single account ever carries two brands (cross-sell, or a
+    -- brand rename mid-life) then grouping by them splits the account into two
+    -- rows, both of which match the same first-collection row on ACCOUNTNO —
+    -- double-counting that account's FTC/FID. MAX() cannot inflate.
+    -- 0 scores and 0 prices are nulled so MAX() ignores placeholders.
     SELECT
         ACCOUNTNO,
         MIN(TRY_TO_DATE(TO_VARCHAR(SALESDATE)))                       AS SALE_DATE,
         MAX(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0))              AS SCORE_NUM,
+        MAX(SCOREGROUP)                                               AS SCOREGROUP,
+        MAX(REPLACE(BRAND, ' ', ''))                                  AS BRAND,
         MAX(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(VAS_BUTTON_FLAG)), 0))  AS VAS_FLAG
     FROM scoped
     GROUP BY ACCOUNTNO
@@ -157,13 +164,19 @@ joined AS (
         a.ACCOUNTNO,
         a.SALE_DATE,
         a.VAS_FLAG,
+        a.BRAND,
+        a.SCOREGROUP AS BAND,           -- the business's own banding
+        -- Kept alongside it: the round 50-point band. SCOREGROUP is percentile
+        -- based ('662 to 672', '887 to 907') and its labels cross the round
+        -- boundaries, so a question phrased as "650 to 699" cannot be answered
+        -- from BAND alone — 887 to 907 even straddles 900.
         CASE
             WHEN a.SCORE_NUM IS NULL   THEN 'unknown'
             WHEN a.SCORE_NUM < 600     THEN '<600'
             WHEN a.SCORE_NUM >= 900    THEN '900+'
             ELSE TO_VARCHAR(FLOOR(a.SCORE_NUM / 50) * 50) || '-'
               || TO_VARCHAR(FLOOR(a.SCORE_NUM / 50) * 50 + 49)
-        END AS BAND,
+        END AS BAND_50,
         f.PAID,
         f.REASON,
         IFF(f.ACCOUNTNO IS NULL, 1, 0) AS PENDING   -- no first collection yet
@@ -171,9 +184,16 @@ joined AS (
     LEFT JOIN firsts f ON f.ACCOUNTNO = a.ACCOUNTNO
 )
 SELECT
+    BRAND,
     BAND,
+    BAND_50,
     COUNT(*)                                                AS ACCOUNTS,
-    ROUND(100 * RATIO_TO_REPORT(COUNT(*)) OVER (), 1)        AS MIX_PCT,
+    -- Mix within the brand — this is the one to read when asking "what share of
+    -- THIS brand's sales came from that band".
+    ROUND(100 * RATIO_TO_REPORT(COUNT(*)) OVER (PARTITION BY BRAND), 1)
+                                                            AS MIX_PCT_IN_BRAND,
+    -- Mix across everything, so brands are comparable against the whole book.
+    ROUND(100 * RATIO_TO_REPORT(COUNT(*)) OVER (), 1)        AS MIX_PCT_OVERALL,
     SUM(IFF(PENDING = 0, 1, 0))                             AS MATURED_BASE,
     SUM(PENDING)                                            AS PENDING,
     SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0))                AS FTC,
@@ -185,14 +205,16 @@ SELECT
               / NULLIF(SUM(IFF(PENDING = 0, 1, 0)), 0), 1)  AS FID_PCT,
     ROUND(100 * SUM(IFF(VAS_FLAG = 1, 1, 0)) / COUNT(*), 1) AS VAS_PCT
 FROM joined
-GROUP BY BAND
+GROUP BY BRAND, BAND, BAND_50
 ORDER BY
-    -- keep bands in score order, not alphabetical
-    CASE BAND
+    BRAND,
+    -- score order, not alphabetical: '908+' would otherwise sort before '662 to 672'
+    CASE BAND_50
         WHEN '<600' THEN 1 WHEN '600-649' THEN 2 WHEN '650-699' THEN 3
         WHEN '700-749' THEN 4 WHEN '750-799' THEN 5 WHEN '800-849' THEN 6
         WHEN '850-899' THEN 7 WHEN '900+' THEN 8 ELSE 9
-    END;
+    END,
+    BAND;
 
 
 -- ============================================================================
