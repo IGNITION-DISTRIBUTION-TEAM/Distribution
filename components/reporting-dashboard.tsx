@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -901,6 +901,12 @@ type QualityPayload = {
   brands: string[]
   brandProducts: { brand: string; product: string }[]
   bandOptions: string[]
+  filters?: {
+    bands: string[]
+    products: string[]
+    campaignName: string | null
+    brand: string | null
+  }
   dataThrough?: {
     sales: string | null
     salesFrom: string | null
@@ -1171,19 +1177,6 @@ function QualityMixReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Re-run when a dropdown changes, so a heading can never describe stale data.
-  // Dates keep the explicit button: a part-typed date would fire a query per
-  // keystroke.
-  const firstRender = useRef(true)
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false
-      return
-    }
-    run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand, products, bandFilter])
-
   // Cohort rows arrive as cohort x band; roll up to a per-month view plus the
   // focus band's share, which is what "is the spread balancing out?" needs.
   const cohortSummary = useMemo(() => {
@@ -1205,6 +1198,22 @@ function QualityMixReport() {
     }
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
+
+  // Filters are applied only on Run report, so the controls hold a PENDING
+  // selection while the charts below still show the previous run. Anything whose
+  // label depends on a filter must therefore read the APPLIED filters off the
+  // payload, never this pending state — otherwise a heading describes data that
+  // is not on screen.
+  const appliedBands = data?.filters?.bands ?? []
+  const sameSet = (a: string[], b: string[]) =>
+    a.length === b.length && [...a].sort().join("|") === [...b].sort().join("|")
+  const dirty = !!data && (
+    startDate !== data.startDate ||
+    endDate !== data.endDate ||
+    (brand || null) !== (data.filters?.brand ?? null) ||
+    !sameSet(products, data.filters?.products ?? []) ||
+    !sameSet(bandFilter, appliedBands)
+  )
 
   // Export exactly the rows the average was taken over, so a spreadsheet check
   // reconciles against the same population rather than a hand-copied subset.
@@ -1481,11 +1490,17 @@ function QualityMixReport() {
               </PopoverContent>
             </Popover>
           </div>
-          <Button onClick={run} disabled={loading}>
+          <Button onClick={run} disabled={loading} className={cn(dirty && "ring-2 ring-primary/60")}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Run report
           </Button>
         </div>
+        {dirty && (
+          <p className="mt-3 text-xs text-amber-200">
+            Filters changed — the figures below are still from the previous run. Click Run report to
+            apply.
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-4">
           {[90, 180, 365].map((d) => (
             <button
@@ -1507,7 +1522,9 @@ function QualityMixReport() {
         </div>
       </div>
 
-      {data?.dataThrough && <FreshnessNote dataThrough={data.dataThrough} endDate={endDate} />}
+      {data?.dataThrough && (
+        <FreshnessNote dataThrough={data.dataThrough} endDate={data.endDate} />
+      )}
 
       {notConfigured && <NotConfiguredPanel />}
 
@@ -1631,7 +1648,7 @@ function QualityMixReport() {
                   <TableRow>
                     <TableHead>Score band</TableHead>
                     <TableHead className="text-right">
-                      {bandFilter.length > 0 ? "Mix of selected" : "Mix"}
+                      {appliedBands.length > 0 ? "Mix of selected" : "Mix"}
                     </TableHead>
                     <TableHead className="text-right">Accounts</TableHead>
                     <TableHead className="text-right">Matured base</TableHead>
@@ -2375,16 +2392,6 @@ function MarginReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const firstRender = useRef(true)
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false
-      return
-    }
-    run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand])
-
   // Ranked by margin when a cost is given, else by revenue — the question is
   // "which bands are worth selling into", so order by the answer.
   const rows = useMemo(() => {
@@ -2406,6 +2413,12 @@ function MarginReport() {
         : (b.margin ?? 0) - (a.margin ?? 0)
     )
   }, [data, cac, order])
+
+  const marginDirty = !!data && (
+    startDate !== data.startDate ||
+    endDate !== data.endDate ||
+    (brand || null) !== (data.filters?.brand ?? null)
+  )
 
   const rand = (v: number | null) =>
     v == null ? "—" : `R${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
@@ -2496,18 +2509,31 @@ function MarginReport() {
               ))}
             </div>
           </div>
-          <Button onClick={run} disabled={loading}>
+          <Button
+            onClick={run}
+            disabled={loading}
+            className={cn(marginDirty && "ring-2 ring-primary/60")}
+          >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Run report
           </Button>
         </div>
+        {marginDirty && (
+          <p className="mt-3 text-xs text-amber-200">
+            Filters changed — the figures below are still from the previous run. Click Run report to
+            apply.
+          </p>
+        )}
         <p className="mt-3 text-xs text-muted-foreground">
           Revenue is what actually collected, ex VAT, across every attempt in the window — not billed,
-          and not the nominal product price.
+          and not the nominal product price. The acquisition cost applies immediately; it is a
+          client-side calculation and needs no re-run.
         </p>
       </div>
 
-      {data?.dataThrough && <FreshnessNote dataThrough={data.dataThrough} endDate={endDate} />}
+      {data?.dataThrough && (
+        <FreshnessNote dataThrough={data.dataThrough} endDate={data.endDate} />
+      )}
 
       {notConfigured && <NotConfiguredPanel />}
 
