@@ -275,71 +275,102 @@ export async function GET(request: NextRequest) {
     )`
 
   try {
-    // NB: order must match the query order below.
-    // NB: order must match the query order below.
-    const [byBand, byCohort, reasons, options, notBilled, bandOptions, reasonsByMonth] =
-      await Promise.all([
+    // The per-account CTE is expensive: it scans every collection attempt in the
+    // window. Running it once per metric meant five full scans per request and
+    // tipped the function over its time limit on the live volume, which surfaced
+    // as a non-JSON platform error. All four aggregations now come back from ONE
+    // statement, discriminated by KIND, so the CTE is evaluated a single time.
+    //
+    // Every branch must expose the same column list and types, hence the casts
+    // on the columns a branch does not use.
+    const [agg, options, notBilled, bandOptions] = await Promise.all([
       executeSnowflakeQuery<{
-        BAND: string
-        BAND_SORT: number | string
+        KIND: string
+        K1: string | null
+        K2: string | null
+        BAND_SORT: number | string | null
         ACCOUNTS: number | string
+        BASE: number | string | null
+        FTC: number | string | null
+        PENDING: number | string | null
+        VAS_ACCOUNTS: number | string | null
+        AVG_PRICE: number | string | null
         COLLECTED: number | string | null
         PAID_COLLECTIONS: number | string | null
-        BASE: number | string
-        FTC: number | string
-        PENDING: number | string
-        VAS_ACCOUNTS: number | string
-        AVG_PRICE: number | string | null
       }>(
         `${accountCte}
          SELECT
-           BAND,
+           'band' AS KIND,
+           BAND AS K1,
+           CAST(NULL AS VARCHAR) AS K2,
            MIN(BAND_SORT) AS BAND_SORT,
            COUNT(*) AS ACCOUNTS,
-           SUM(COALESCE(COLLECTED, 0)) AS COLLECTED,
-           SUM(COALESCE(PAID_COLLECTIONS, 0)) AS PAID_COLLECTIONS,
            SUM(IFF(PENDING = 0, 1, 0)) AS BASE,
            SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)) AS FTC,
            SUM(PENDING) AS PENDING,
            SUM(IFF(VAS_FLAG = 1, 1, 0)) AS VAS_ACCOUNTS,
-           AVG(PRICE) AS AVG_PRICE
+           AVG(PRICE) AS AVG_PRICE,
+           SUM(COALESCE(COLLECTED, 0)) AS COLLECTED,
+           SUM(COALESCE(PAID_COLLECTIONS, 0)) AS PAID_COLLECTIONS
          FROM joined
-         GROUP BY BAND`,
-        SF
-      ),
-      executeSnowflakeQuery<{
-        COHORT: string
-        BAND: string
-        BAND_SORT: number | string
-        ACCOUNTS: number | string
-        COLLECTED: number | string | null
-        PAID_COLLECTIONS: number | string | null
-        BASE: number | string
-        FTC: number | string
-        PENDING: number | string
-      }>(
-        `${accountCte}
+         GROUP BY BAND
+
+         UNION ALL
+
          SELECT
-           TO_CHAR(SALE_DATE, 'YYYY-MM') AS COHORT,
+           'cohort',
+           TO_CHAR(SALE_DATE, 'YYYY-MM'),
            BAND,
-           MIN(BAND_SORT) AS BAND_SORT,
-           COUNT(*) AS ACCOUNTS,
-           SUM(IFF(PENDING = 0, 1, 0)) AS BASE,
-           SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)) AS FTC,
-           SUM(PENDING) AS PENDING
+           MIN(BAND_SORT),
+           COUNT(*),
+           SUM(IFF(PENDING = 0, 1, 0)),
+           SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)),
+           SUM(PENDING),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS FLOAT),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER)
          FROM joined
          WHERE SALE_DATE IS NOT NULL
-         GROUP BY 1, 2
-         ORDER BY 1, 2`,
-        SF
-      ),
-      executeSnowflakeQuery<{ REASON: string | null; ACCOUNTS: number | string }>(
-        `${accountCte}
-         SELECT COALESCE(NULLIF(TRIM(REASON), ''), '(not given)') AS REASON, COUNT(*) AS ACCOUNTS
+         GROUP BY 2, 3
+
+         UNION ALL
+
+         SELECT
+           'reason',
+           COALESCE(NULLIF(TRIM(REASON), ''), '(not given)'),
+           CAST(NULL AS VARCHAR),
+           CAST(NULL AS NUMBER),
+           COUNT(*),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS FLOAT),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER)
          FROM joined
-         WHERE PENDING = 0 AND PAID = 0
-         GROUP BY 1
-         ORDER BY ACCOUNTS DESC`,
+         WHERE PAID = 0
+         GROUP BY 2
+
+         UNION ALL
+
+         SELECT
+           'reasonMonth',
+           TO_CHAR(SALE_DATE, 'YYYY-MM'),
+           COALESCE(NULLIF(TRIM(REASON), ''), '(not given)'),
+           CAST(NULL AS NUMBER),
+           COUNT(*),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS FLOAT),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER)
+         FROM joined
+         WHERE PAID = 0 AND SALE_DATE IS NOT NULL
+         GROUP BY 2, 3`,
         SF
       ),
       // Distinct brand/product PAIRS in the period, filtered only by date so the
@@ -380,25 +411,17 @@ export async function GET(request: NextRequest) {
          ORDER BY 2, 1`,
         SF
       ),
-      // Failure reasons split by sale month, so a shift in the mix is visible
-      // rather than only the period total.
-      executeSnowflakeQuery<{
-        MONTH: string
-        REASON: string | null
-        ACCOUNTS: number | string
-      }>(
-        `${accountCte}
-         SELECT
-           TO_CHAR(SALE_DATE, 'YYYY-MM') AS MONTH,
-           COALESCE(NULLIF(TRIM(REASON), ''), '(not given)') AS REASON,
-           COUNT(*) AS ACCOUNTS
-         FROM joined
-         WHERE PAID = 0 AND SALE_DATE IS NOT NULL
-         GROUP BY 1, 2
-         ORDER BY 1, 2`,
-        SF
-      ),
     ])
+
+    // Split the single result set back out by KIND.
+    const byBand = agg.filter((r) => r.KIND === "band")
+    const byCohort = agg
+      .filter((r) => r.KIND === "cohort")
+      .sort((a, b) => String(a.K1).localeCompare(String(b.K1)))
+    const reasons = agg
+      .filter((r) => r.KIND === "reason")
+      .sort((a, b) => num(b.ACCOUNTS) - num(a.ACCOUNTS))
+    const reasonMonthRows = agg.filter((r) => r.KIND === "reasonMonth")
 
     const bandRows = byBand
       .map((r) => {
@@ -406,7 +429,7 @@ export async function GET(request: NextRequest) {
         const base = num(r.BASE)
         const ftc = num(r.FTC)
         return {
-          band: String(r.BAND ?? "unknown"),
+          band: String(r.K1 ?? "unknown"),
           bandSort: num(r.BAND_SORT),
           accounts,
           base,
@@ -441,8 +464,8 @@ export async function GET(request: NextRequest) {
       const base = num(r.BASE)
       const ftc = num(r.FTC)
       return {
-        cohort: String(r.COHORT),
-        band: String(r.BAND ?? "unknown"),
+        cohort: String(r.K1),
+        band: String(r.K2 ?? "unknown"),
         bandSort: num(r.BAND_SORT),
         accounts: num(r.ACCOUNTS),
         base,
@@ -466,12 +489,12 @@ export async function GET(request: NextRequest) {
       bands,
       cohorts,
       reasons: reasons.map((r) => ({
-        reason: String(r.REASON ?? "(not given)"),
+        reason: String(r.K1 ?? "(not given)"),
         accounts: num(r.ACCOUNTS),
       })),
-      reasonsByMonth: reasonsByMonth.map((r) => ({
-        month: String(r.MONTH),
-        reason: String(r.REASON ?? "(not given)"),
+      reasonsByMonth: reasonMonthRows.map((r) => ({
+        month: String(r.K1),
+        reason: String(r.K2 ?? "(not given)"),
         accounts: num(r.ACCOUNTS),
       })),
       // Flat lists for the "all" case, plus the pairs the UI cascades on.

@@ -114,6 +114,51 @@ const isoDaysAgo = (days: number): string => {
   return d.toISOString().slice(0, 10)
 }
 
+/**
+ * Fetch JSON, but survive a response that is not JSON.
+ *
+ * A function that dies at the platform level — timeout, memory, cold-start
+ * failure — returns an HTML or plain-text error page, and JSON.parse on that
+ * produces "Unexpected token 'A'..." which says nothing about what happened.
+ * This surfaces the status and a snippet of the real body instead, and returns
+ * the parsed payload alongside it so callers can still read `notConfigured`.
+ */
+async function fetchJson<T>(url: string): Promise<{ ok: boolean; status: number; data: T | null; error: string | null }> {
+  let res: Response
+  try {
+    res = await fetch(url, { cache: "no-store" })
+  } catch (e) {
+    return { ok: false, status: 0, data: null, error: `Network error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  const text = await res.text()
+  let data: T | null = null
+  try {
+    data = text ? (JSON.parse(text) as T) : null
+  } catch {
+    const snippet = text.replace(/\s+/g, " ").trim().slice(0, 160)
+    const hint =
+      res.status === 504 || /timeout|timed out/i.test(text)
+        ? " The query took too long — narrow the date range or filter to fewer products."
+        : ""
+    return {
+      ok: false,
+      status: res.status,
+      data: null,
+      error: `Server returned ${res.status} (not JSON).${hint}${snippet ? ` Response began: ${snippet}` : ""}`,
+    }
+  }
+  const errFromBody =
+    data && typeof data === "object" && "error" in (data as Record<string, unknown>)
+      ? String((data as Record<string, unknown>).error)
+      : null
+  return {
+    ok: res.ok,
+    status: res.status,
+    data,
+    error: res.ok ? null : errFromBody ?? `HTTP ${res.status}`,
+  }
+}
+
 const fmtInt = (n: number) => n.toLocaleString()
 const fmtPct = (v: number | null) =>
   v === null ? "—" : `${(v * 100).toFixed(v * 100 >= 10 ? 1 : 2)}%`
@@ -309,12 +354,11 @@ function CampaignPerformanceReport() {
     try {
       const params = new URLSearchParams({ startDate, endDate })
       if (selected.length > 0) params.set("campaignIds", selected.join(","))
-      const res = await fetch(`/api/reporting/campaign-performance?${params.toString()}`, {
-        cache: "no-store",
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
-      setData(json as Payload)
+      const r = await fetchJson<Payload>(
+        `/api/reporting/campaign-performance?${params.toString()}`
+      )
+      if (!r.ok || !r.data) throw new Error(r.error ?? "Request failed")
+      setData(r.data)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setData(null)
@@ -1014,16 +1058,15 @@ function QualityMixReport() {
       if (bandFilter.length > 0) params.set("bands", bandFilter.join(","))
       if (brand) params.set("brand", brand)
       params.set("bandMode", "scoregroup")
-      const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
-        cache: "no-store",
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setNotConfigured(!!json.notConfigured)
-        throw new Error(json.error || `HTTP ${res.status}`)
+      const r = await fetchJson<QualityPayload & { notConfigured?: boolean }>(
+        `/api/reporting/quality-mix?${params.toString()}`
+      )
+      if (!r.ok || !r.data) {
+        setNotConfigured(!!r.data?.notConfigured)
+        throw new Error(r.error ?? "Request failed")
       }
       setNotConfigured(false)
-      setData(json as QualityPayload)
+      setData(r.data)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setData(null)
@@ -1631,9 +1674,12 @@ function NotConfiguredPanel() {
     setSearching(true)
     setSearchError(null)
     try {
-      const res = await fetch("/api/reporting/quality-mix/discover", { cache: "no-store" })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      const r = await fetchJson<{
+        candidates?: { table: string; matched: number; required: number; missing: string[] }[]
+        searchedVia?: string
+      }>("/api/reporting/quality-mix/discover")
+      if (!r.ok || !r.data) throw new Error(r.error ?? "Request failed")
+      const json = r.data
       setCandidates(json.candidates ?? [])
       setSearchedVia(json.searchedVia ?? null)
       if ((json.candidates ?? []).length === 0) {
@@ -1849,16 +1895,15 @@ function MarginReport() {
     try {
       const params = new URLSearchParams({ startDate, endDate, bandMode: "scoregroup" })
       if (brand) params.set("brand", brand)
-      const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
-        cache: "no-store",
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setNotConfigured(!!json.notConfigured)
-        throw new Error(json.error || `HTTP ${res.status}`)
+      const r = await fetchJson<QualityPayload & { notConfigured?: boolean }>(
+        `/api/reporting/quality-mix?${params.toString()}`
+      )
+      if (!r.ok || !r.data) {
+        setNotConfigured(!!r.data?.notConfigured)
+        throw new Error(r.error ?? "Request failed")
       }
       setNotConfigured(false)
-      setData(json as QualityPayload)
+      setData(r.data)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setData(null)
