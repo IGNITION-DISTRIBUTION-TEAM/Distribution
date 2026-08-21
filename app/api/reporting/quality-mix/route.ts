@@ -23,9 +23,14 @@ export const maxDuration = 60
  * and suspensions therefore count as defaults; the reason breakdown still
  * reports them separately so the composition stays visible.
  *
- *   base = accounts whose first collection has been attempted
- *   FTC  = those where PAID_FLAG = 1
- *   FID  = those where PAID_FLAG = 0, split by UNPAID_GROUP_DESCRIPTION
+ *   base = accounts that HAVE a first collection (one row each)
+ *   FTC  = those where PAID_FLAG = 1 on that row
+ *   FID  = those where PAID_FLAG = 0 on that row, split by UNPAID_GROUP_DESCRIPTION
+ *
+ * Every measure — score band, VAS, price, outcome — is read from the
+ * first-collection row, not aggregated across the account's later billing rows.
+ * Accounts with no first collection are outside the base entirely and reported
+ * as `totals.pending` so the exclusion stays visible.
  *
  * On "in full": this extract cannot express a partial settlement. TOTAL,
  * BILLED_AMOUNT_INCL_VAT and DC_INSTRUCTEDAMOUNT are always equal, so there is
@@ -45,9 +50,9 @@ export const maxDuration = 60
  * bands ("662 to 672", "887 to 907") that cross the round boundaries the
  * business talks in, so "650-699" cannot be assembled from them.
  *
- * Cohorts are by sale month (SALESDATE). Accounts in a cohort with no first
- * collection row yet are reported as `pending`, never folded into the default
- * rate — a young cohort must not read as 0% default.
+ * Cohorts are by sale month (SALESDATE), taken from the first-collection row.
+ * An account with no first collection never enters a rate, so a young cohort
+ * cannot read as 0% default.
  *
  * Source object: defaults to the view scripts/quality-mix.sql creates, so the
  * report works as soon as that view exists with no further configuration. Set
@@ -161,28 +166,30 @@ export async function GET(request: NextRequest) {
   ].filter(Boolean)
   const where = `WHERE ${filters.join(" AND ")}`
 
-  // One row per account: its first collection (if attempted) plus the sale
-  // attributes. MIN/MAX over the account's rows keeps sale-level attributes
-  // stable — they repeat identically across a given account's billing rows.
+  // FTC/FID are measured on FIRST-TIME collections only, so the whole report is
+  // built from the first-collection row itself — one row per account — rather
+  // than aggregating attributes across the account's later billing rows.
+  //
+  // That matters beyond the outcome: taking VAS as MAX() over every row counted
+  // a VAS added later as an upsell as though it were attached at the sale, which
+  // overstated attachment. Read off the first collection, the flags describe the
+  // account as it was when it first billed.
+  //
+  // Accounts with no first-collection row are simply not in the base; they are
+  // counted separately as `notFirstBilled` for transparency.
   const accountCte = `
     WITH scoped AS (
       SELECT * FROM ${table} ${where}
     ),
-    accounts AS (
-      SELECT
-        ACCOUNTNO,
-        MIN(TRY_TO_DATE(TO_VARCHAR(SALESDATE))) AS SALE_DATE,
-        MAX(${SCORE_NUM}) AS SCORE_NUM,
-        MAX(SCOREGROUP) AS SCOREGROUP_VAL,
-        MAX(UPPER(REPLACE(BRAND, ' ', ''))) AS BRAND_VAL,
-        MAX(${VAS}) AS VAS_FLAG,
-        MAX(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(PRODUCTPRICE)), 0)) AS PRICE
-      FROM scoped
-      GROUP BY ACCOUNTNO
-    ),
     first_ranked AS (
       SELECT
         ACCOUNTNO,
+        TRY_TO_DATE(TO_VARCHAR(SALESDATE)) AS SALE_DATE,
+        ${SCORE_NUM} AS SCORE_NUM,
+        SCOREGROUP AS SCOREGROUP_VAL,
+        UPPER(REPLACE(BRAND, ' ', '')) AS BRAND_VAL,
+        ${VAS} AS VAS_FLAG,
+        NULLIF(TRY_TO_NUMBER(TO_VARCHAR(PRODUCTPRICE)), 0) AS PRICE,
         ${PAID} AS PAID,
         UNPAID_GROUP_DESCRIPTION AS REASON,
         ROW_NUMBER() OVER (
@@ -193,33 +200,31 @@ export async function GET(request: NextRequest) {
       FROM scoped
       WHERE ${IS_FIRST}
     ),
-    firsts AS (
-      SELECT ACCOUNTNO, PAID, REASON FROM first_ranked WHERE RN = 1
-    ),
     joined AS (
       SELECT
-        a.ACCOUNTNO, a.SALE_DATE, a.VAS_FLAG, a.PRICE,
+        ACCOUNTNO, SALE_DATE, VAS_FLAG, PRICE, PAID, REASON,
+        BRAND_VAL AS BRAND,
         ${
           bandMode === "scoregroup"
-            ? `COALESCE(NULLIF(TRIM(a.SCOREGROUP_VAL), ''), 'unknown')`
-            : bandSql("a.SCORE_NUM")
+            ? `COALESCE(NULLIF(TRIM(SCOREGROUP_VAL), ''), 'unknown')`
+            : bandSql("SCORE_NUM")
         } AS BAND,
         ${
           // Sort key so bands order by score, not alphabetically ('908+' would
           // otherwise precede '662 to 672'). Unknown sorts last.
           bandMode === "scoregroup"
-            ? `COALESCE(TRY_TO_NUMBER(REGEXP_SUBSTR(TRIM(a.SCOREGROUP_VAL), '^[0-9]+')), 99999)`
-            : `COALESCE(FLOOR(a.SCORE_NUM / 50) * 50, 99999)`
+            ? `COALESCE(TRY_TO_NUMBER(REGEXP_SUBSTR(TRIM(SCOREGROUP_VAL), '^[0-9]+')), 99999)`
+            : `COALESCE(FLOOR(SCORE_NUM / 50) * 50, 99999)`
         } AS BAND_SORT,
-        a.BRAND_VAL AS BRAND,
-        f.PAID, f.REASON,
-        IFF(f.ACCOUNTNO IS NULL, 1, 0) AS PENDING
-      FROM accounts a
-      LEFT JOIN firsts f ON f.ACCOUNTNO = a.ACCOUNTNO
+        -- every row here IS a first collection, so nothing is pending
+        0 AS PENDING
+      FROM first_ranked
+      WHERE RN = 1
     )`
 
   try {
-    const [byBand, byCohort, reasons, productGroups, brands] = await Promise.all([
+    // NB: order must match the query order below.
+    const [byBand, byCohort, reasons, productGroups, notBilled, brands] = await Promise.all([
       executeSnowflakeQuery<{
         BAND: string
         BAND_SORT: number | string
@@ -287,6 +292,18 @@ export async function GET(request: NextRequest) {
          ORDER BY 1`,
         SF
       ),
+      executeSnowflakeQuery<{ N: number | string }>(
+        `WITH scoped AS (
+           SELECT * FROM ${table} ${where}
+         ),
+         all_accts AS (SELECT DISTINCT ACCOUNTNO FROM scoped),
+         first_accts AS (SELECT DISTINCT ACCOUNTNO FROM scoped WHERE ${IS_FIRST})
+         SELECT COUNT(*) AS N
+         FROM all_accts a
+         LEFT JOIN first_accts f ON f.ACCOUNTNO = a.ACCOUNTNO
+         WHERE f.ACCOUNTNO IS NULL`,
+        SF
+      ),
       executeSnowflakeQuery<{ BRAND: string | null }>(
         `SELECT DISTINCT UPPER(REPLACE(BRAND, ' ', '')) AS BRAND
          FROM ${table}
@@ -327,7 +344,7 @@ export async function GET(request: NextRequest) {
 
     const totalBase = bandRows.reduce((s, r) => s + r.base, 0)
     const totalFtc = bandRows.reduce((s, r) => s + r.ftc, 0)
-    const totalPending = bandRows.reduce((s, r) => s + r.pending, 0)
+    const totalPending = num(notBilled[0]?.N)
     const totalVas = byBand.reduce((s, r) => s + num(r.VAS_ACCOUNTS), 0)
 
     const cohorts = byCohort.map((r) => {

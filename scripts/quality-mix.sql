@@ -23,10 +23,13 @@
 -- as defaults.
 --
 -- Deliberate choices, each from checking the sample extract:
---   * Score bands are derived from the raw SCORE in 50-point buckets, NOT from
---     SCOREGROUP. SCOREGROUP holds percentile labels ("662 to 672",
---     "887 to 907") that cross the round boundaries the business talks in —
---     887 to 907 straddles 900 — so "650-699" cannot be built from it.
+--   * Both bandings are reported. SCOREGROUP holds percentile labels ("662 to
+--     672", "887 to 907") that cross the round boundaries the business talks in
+--     — 887 to 907 straddles 900 — so "650-699" cannot be built from it; the
+--     round 50-point band is derived from raw SCORE for that.
+--   * FTC/FID are measured on FIRST-TIME collections only, and every attribute
+--     (band, brand, VAS) is read off that same row rather than aggregated over
+--     the account's later billing rows.
 --   * The first collection is the EARLIEST ISFIRSTCOLLECTION row per account,
 --     not the flag alone: the sample had an account with two rows flagged.
 --   * Outcome comes from PAID_FLAG / UNPAID_GROUP_DESCRIPTION, not BANKRESPONSE,
@@ -56,7 +59,7 @@ SELECT
     -- sale attributes (constant across an account's billing rows)
     SALESDATE,
     SCORE,
-    SCOREGROUP,                 -- kept for reference; the report does not band on it
+    SCOREGROUP,                 -- the report can band on this or on raw SCORE
     PRODUCT_GROUPS,
     PRODUCTNAME,
     PRODUCTPRICE,
@@ -124,28 +127,19 @@ WITH scoped AS (
     WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE))
           BETWEEN DATEADD(MONTH, -6, CURRENT_DATE()) AND CURRENT_DATE()
 ),
-accounts AS (
-    -- STRICTLY one row per account. BRAND and SCOREGROUP are taken with MAX()
-    -- rather than added to the GROUP BY: they were constant per account in the
-    -- sample, but if a single account ever carries two brands (cross-sell, or a
-    -- brand rename mid-life) then grouping by them splits the account into two
-    -- rows, both of which match the same first-collection row on ACCOUNTNO —
-    -- double-counting that account's FTC/FID. MAX() cannot inflate.
-    -- 0 scores and 0 prices are nulled so MAX() ignores placeholders.
-    SELECT
-        ACCOUNTNO,
-        MIN(TRY_TO_DATE(TO_VARCHAR(SALESDATE)))                       AS SALE_DATE,
-        MAX(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0))              AS SCORE_NUM,
-        MAX(SCOREGROUP)                                               AS SCOREGROUP,
-        MAX(REPLACE(BRAND, ' ', ''))                                  AS BRAND,
-        MAX(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(VAS_BUTTON_FLAG)), 0))  AS VAS_FLAG
-    FROM scoped
-    GROUP BY ACCOUNTNO
-),
 first_ranked AS (
-    -- the FIRST collection: earliest scheduled attempt among the flagged rows.
+    -- The FIRST collection: earliest scheduled attempt among the flagged rows.
+    -- EVERY measure is read off this row — band, brand, VAS, outcome — rather
+    -- than aggregated across the account's later billing rows. Taking VAS as
+    -- MAX() over all rows counted a VAS added later as an upsell as though it
+    -- were attached at the sale, which overstates attachment.
     SELECT
         ACCOUNTNO,
+        TRY_TO_DATE(TO_VARCHAR(SALESDATE))                AS SALE_DATE,
+        NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0)       AS SCORE_NUM,
+        SCOREGROUP,
+        REPLACE(BRAND, ' ', '')                           AS BRAND,
+        COALESCE(TRY_TO_NUMBER(TO_VARCHAR(VAS_BUTTON_FLAG)), 0) AS VAS_FLAG,
         COALESCE(TRY_TO_NUMBER(TO_VARCHAR(PAID_FLAG)), 0) AS PAID,
         UNPAID_GROUP_DESCRIPTION                          AS REASON,
         ROW_NUMBER() OVER (
@@ -156,32 +150,31 @@ first_ranked AS (
     FROM scoped
     WHERE COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1
 ),
-firsts AS (
-    SELECT ACCOUNTNO, PAID, REASON FROM first_ranked WHERE RN = 1
-),
 joined AS (
+    -- One row per account, and every row here IS a first collection, so nothing
+    -- is pending: an account with no first collection is simply not in the base.
     SELECT
-        a.ACCOUNTNO,
-        a.SALE_DATE,
-        a.VAS_FLAG,
-        a.BRAND,
-        a.SCOREGROUP AS BAND,           -- the business's own banding
+        ACCOUNTNO,
+        SALE_DATE,
+        VAS_FLAG,
+        BRAND,
+        SCOREGROUP AS BAND,           -- the business's own banding
         -- Kept alongside it: the round 50-point band. SCOREGROUP is percentile
         -- based ('662 to 672', '887 to 907') and its labels cross the round
         -- boundaries, so a question phrased as "650 to 699" cannot be answered
-        -- from BAND alone — 887 to 907 even straddles 900.
+        -- from BAND alone -- 887 to 907 even straddles 900.
         CASE
-            WHEN a.SCORE_NUM IS NULL   THEN 'unknown'
-            WHEN a.SCORE_NUM < 600     THEN '<600'
-            WHEN a.SCORE_NUM >= 900    THEN '900+'
-            ELSE TO_VARCHAR(FLOOR(a.SCORE_NUM / 50) * 50) || '-'
-              || TO_VARCHAR(FLOOR(a.SCORE_NUM / 50) * 50 + 49)
+            WHEN SCORE_NUM IS NULL   THEN 'unknown'
+            WHEN SCORE_NUM < 600     THEN '<600'
+            WHEN SCORE_NUM >= 900    THEN '900+'
+            ELSE TO_VARCHAR(FLOOR(SCORE_NUM / 50) * 50) || '-'
+              || TO_VARCHAR(FLOOR(SCORE_NUM / 50) * 50 + 49)
         END AS BAND_50,
-        f.PAID,
-        f.REASON,
-        IFF(f.ACCOUNTNO IS NULL, 1, 0) AS PENDING   -- no first collection yet
-    FROM accounts a
-    LEFT JOIN firsts f ON f.ACCOUNTNO = a.ACCOUNTNO
+        PAID,
+        REASON,
+        0 AS PENDING
+    FROM first_ranked
+    WHERE RN = 1
 )
 SELECT
     BRAND,
