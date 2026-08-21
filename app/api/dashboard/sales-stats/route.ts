@@ -73,6 +73,17 @@ export async function GET(request: Request) {
   const inClause = (col: string, vals: string[]) =>
     vals.length > 0 ? `AND ${col} IN (${vals.map((v) => `'${escSql(v)}'`).join(",")})` : ""
 
+  // For the single-day view, the hour-of-day shape has to come from OTHER days —
+  // today is the thing being projected. Reuse every filter except the date and
+  // look back four weeks, ending the day before the selected one.
+  const dayShift = (iso: string, days: number): string => {
+    const d = new Date(`${iso}T00:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + days)
+    return d.toISOString().slice(0, 10)
+  }
+  const profileStart = dayShift(startDate, -28)
+  const profileEnd = dayShift(startDate, -1)
+
   const where = `
     WHERE ${campaignFilter}
       ORDERDATE BETWEEN '${startDate}' AND '${endDate}'
@@ -80,8 +91,15 @@ export async function GET(request: Request) {
       ${inClause("ISINSURABLE", isInsurable)}
   `
 
+  const profileWhere = `
+    WHERE ${campaignFilter}
+      ORDERDATE BETWEEN '${profileStart}' AND '${profileEnd}'
+      ${inClause("PROVIDERTYPE", providerTypes)}
+      ${inClause("ISINSURABLE", isInsurable)}
+  `
+
   try {
-    const [totals, bySalesDate, byCampaign, byScoreDate] = await Promise.all([
+    const [totals, bySalesDate, hourProfile, byCampaign, byScoreDate] = await Promise.all([
       executeSnowflakeQuery<{
         TOTAL_SALES: number | string | null
         TOTAL_ROWS: number | string
@@ -116,6 +134,26 @@ export async function GET(request: Request) {
              ORDER BY 1`,
         SF_OPTS
       ),
+      // Hour-of-day shape over the trailing four weeks. Same hour expression as
+      // the single-day bucket above, so the profile and today's actuals line up.
+      // Skipped entirely on a multi-day range, where it is not needed.
+      startDate === endDate
+        ? executeSnowflakeQuery<{
+            BUCKET: string
+            SALES: number | string | null
+            DAYS: number | string
+          }>(
+            `SELECT
+               LPAD(EXTRACT(HOUR FROM ORDERORDERDATE)::VARCHAR, 2, '0') || ':00' AS BUCKET,
+               SUM(SALES) AS SALES,
+               COUNT(DISTINCT ORDERDATE) AS DAYS
+             FROM ${VIEW}
+             ${profileWhere}
+             GROUP BY 1
+             ORDER BY 1`,
+            SF_OPTS
+          )
+        : Promise.resolve([]),
       executeSnowflakeQuery<{ CAMPAIGNNAME: string | null; SALES: number | string | null }>(
         `SELECT CAMPAIGNNAME, SUM(SALES) AS SALES
          FROM ${VIEW}
@@ -160,6 +198,23 @@ export async function GET(request: Request) {
         campaigns: num(t.DISTINCT_CAMPAIGNS),
       },
       bySalesDate: bySalesDate.map((r) => ({ date: r.BUCKET, sales: numFloat(r.SALES) })),
+      // Share of a day's sales landing in each hour, from the trailing window.
+      // Empty on a multi-day range.
+      hourProfile: (() => {
+        const rows = hourProfile as { BUCKET: string; SALES: number | string | null; DAYS: number | string }[]
+        const total = rows.reduce((a, r) => a + (numFloat(r.SALES) ?? 0), 0)
+        if (!(total > 0)) return { hours: [], days: 0, from: profileStart, to: profileEnd }
+        const days = Math.max(...rows.map((r) => Number(r.DAYS) || 0), 0)
+        return {
+          hours: rows.map((r) => ({
+            hour: r.BUCKET,
+            share: (numFloat(r.SALES) ?? 0) / total,
+          })),
+          days,
+          from: profileStart,
+          to: profileEnd,
+        }
+      })(),
       byCampaign: byCampaign.map((r) => ({
         campaignName: r.CAMPAIGNNAME ?? "(unnamed)",
         sales: numFloat(r.SALES),

@@ -3772,6 +3772,63 @@ function todayLocalIso(): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
+type IntradayPace = {
+  series: { hour: string; sales: number | null; predicted: number | null }[]
+  dayTotal: number
+  soFar: number
+  elapsedShare: number
+  basisHours: number
+  profileDays: number
+}
+
+/**
+ * Intraday pacing for the single-day view: project today's total from how much
+ * of a typical day has already happened, then spread it over the remaining hours
+ * by the historical hour-of-day shape.
+ *
+ *   dayTotal = sales in complete hours / share of a day those hours normally carry
+ *
+ * The most recent hour is still in progress and therefore under-reports, so it is
+ * excluded from the basis whenever there is more than one hour to work with —
+ * including it would drag every projection low all day.
+ *
+ * The estimator recovers the true total exactly when a day follows the profile;
+ * what it cannot know is a day that breaks the pattern. Early on, the basis is a
+ * few percent of a day and the projection swings hard on small numbers, so the
+ * elapsed share is reported alongside it rather than left implicit.
+ */
+function paceIntradaySales(
+  observed: { date: string; sales: number }[],
+  profile: { hour: string; share: number }[],
+  profileDays: number
+): IntradayPace | null {
+  if (profile.length === 0) return null
+  const share = new Map(profile.map((q) => [q.hour, q.share]))
+  const obs = observed.filter((o) => o.sales != null && share.has(o.date))
+  if (obs.length === 0) return null
+
+  const complete = obs.length >= 2 ? obs.slice(0, -1) : obs
+  const basisSales = complete.reduce((a, o) => a + o.sales, 0)
+  const basisShare = complete.reduce((a, o) => a + (share.get(o.date) ?? 0), 0)
+  if (!(basisShare > 0) || !(basisSales > 0)) return null
+  const dayTotal = basisSales / basisShare
+
+  const obsByHour = new Map(obs.map((o) => [o.date, o.sales]))
+  const hours = [...new Set([...profile.map((q) => q.hour), ...obs.map((o) => o.date)])].sort()
+  return {
+    series: hours.map((h) => ({
+      hour: h,
+      sales: obsByHour.has(h) ? (obsByHour.get(h) as number) : null,
+      predicted: dayTotal * (share.get(h) ?? 0),
+    })),
+    dayTotal,
+    soFar: obs.reduce((a, o) => a + o.sales, 0),
+    elapsedShare: basisShare,
+    basisHours: complete.length,
+    profileDays,
+  }
+}
+
 /** Colour for a predicted series. Emerald is the actual line; violet separates
  *  from it at dE 29.6 under deuteranopia (orange manages only 10.8), and matches
  *  "predicted" in the quality mix outlook. */
@@ -4244,6 +4301,12 @@ type SalesData = {
   granularity: "day" | "hour"
   totals: { totalSales: number; rows: number; days: number; campaigns: number }
   bySalesDate: { date: string; sales: number }[]
+  hourProfile?: {
+    hours: { hour: string; share: number }[]
+    days: number
+    from: string
+    to: string
+  }
   byCampaign: { campaignName: string; sales: number }[]
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
 }
@@ -5103,6 +5166,15 @@ function SalesSummary({ data }: { data: SalesData }) {
     [data]
   )
 
+  // Single day → pace the rest of today against the recent hour-of-day shape.
+  const intraday = useMemo(
+    () =>
+      data.granularity === "hour" && data.hourProfile
+        ? paceIntradaySales(data.bySalesDate, data.hourProfile.hours, data.hourProfile.days)
+        : null,
+    [data]
+  )
+
   return (
     <>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
@@ -5149,12 +5221,18 @@ function SalesSummary({ data }: { data: SalesData }) {
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={salesForecast ? salesForecast.merged : data.bySalesDate}
+                data={
+                  salesForecast
+                    ? salesForecast.merged
+                    : intraday
+                    ? intraday.series
+                    : data.bySalesDate
+                }
                 margin={{ top: 10, right: 16, bottom: 0, left: -10 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis
-                  dataKey="date"
+                  dataKey={intraday ? "hour" : "date"}
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                   tickFormatter={(v: string) =>
                     data.granularity === "hour" ? v : v.slice(5)
@@ -5172,7 +5250,9 @@ function SalesSummary({ data }: { data: SalesData }) {
                     fontSize: "0.875rem",
                   }}
                 />
-                {salesForecast && <Legend wrapperStyle={{ fontSize: "0.75rem" }} />}
+                {(salesForecast || intraday) && (
+                  <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+                )}
                 {salesForecast?.firstProjectedDate && (
                   <ReferenceLine
                     x={salesForecast.firstProjectedDate}
@@ -5196,11 +5276,11 @@ function SalesSummary({ data }: { data: SalesData }) {
                   activeDot={{ r: 5 }}
                   connectNulls={false}
                 />
-                {salesForecast && (
+                {(salesForecast || intraday) && (
                   <Line
                     type="monotone"
                     dataKey="predicted"
-                    name="Predicted"
+                    name={intraday ? "Expected pace" : "Predicted"}
                     stroke={PREDICTED_LINE}
                     strokeWidth={2}
                     strokeDasharray="5 4"
@@ -5211,6 +5291,33 @@ function SalesSummary({ data }: { data: SalesData }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
+          {intraday && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <p>
+                On pace for{" "}
+                <span className="font-mono text-foreground">
+                  {Math.round(intraday.dayTotal).toLocaleString()}
+                </span>{" "}
+                today —{" "}
+                <span className="font-mono">{intraday.soFar.toLocaleString()}</span> so far, from{" "}
+                {intraday.basisHours} completed hour{intraday.basisHours === 1 ? "" : "s"} carrying{" "}
+                <span className="font-mono">{(intraday.elapsedShare * 100).toFixed(0)}%</span> of a
+                typical day.
+                {intraday.elapsedShare < 0.25 && (
+                  <span className="text-amber-200">
+                    {" "}
+                    Early in the day this swings on small numbers — treat it as indicative.
+                  </span>
+                )}
+              </p>
+              <p>
+                Expected pace is the hour-of-day shape from the last {intraday.profileDays} trading
+                day{intraday.profileDays === 1 ? "" : "s"}, scaled to today. The in-progress hour is
+                left out of the basis, since it always under-reports and would drag the projection
+                low all day.
+              </p>
+            </div>
+          )}
           {salesForecast && (
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
               <p>
