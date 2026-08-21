@@ -58,6 +58,16 @@ import {
   LogOut,
   ShieldCheck,
 } from "lucide-react"
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RTooltip,
+  Legend,
+} from "recharts"
 import { cn } from "@/lib/utils"
 
 type Campaign = { id: string; title: string }
@@ -817,6 +827,163 @@ const bandColour = (band: string, order: string[]): string => {
 // SCOREGROUP has no single label covering 650-699.
 const FOCUS_BAND = "650-699"
 
+const FTC_COLOUR = "#0284c7"
+const FID_COLOUR = "#ea580c"
+
+// A cohort whose first collections have largely not fallen due yet has a rate
+// computed on a handful of accounts; it swings wildly and means little. Mark it
+// rather than hide it.
+const MATURITY_FLOOR = 0.5
+
+type TrendPoint = {
+  cohort: string
+  ftcPct: number | null
+  fidPct: number | null
+  accounts: number
+  base: number
+  pending: number
+  maturity: number
+  thin: boolean
+}
+
+function FtcFidTrendChart({ points }: { points: TrendPoint[] }) {
+  const last = points[points.length - 1]
+  const thinCount = points.filter((p) => p.thin).length
+
+  // Direct-label only the final point of each line, so identity does not rest
+  // on colour alone without putting a number on every point.
+  // Recharts' renderer types want an element, never null — hence the empty <g/>.
+  const endLabel = (colour: string) =>
+    function EndLabel(props: { x?: number; y?: number; index?: number; value?: number }) {
+      const { x, y, index, value } = props
+      if (index !== points.length - 1 || value == null || x == null || y == null) return <g />
+      return (
+        <text x={x + 8} y={y + 4} fill={colour} fontSize={11} fontWeight={600}>
+          {Number(value).toFixed(1)}%
+        </text>
+      )
+    }
+
+  // Hollow dot for a cohort that is not matured enough to trust.
+  const dot = (colour: string) =>
+    function Dot(props: { cx?: number; cy?: number; index?: number }) {
+      const { cx, cy, index } = props
+      if (cx == null || cy == null) return <g />
+      const thin = index != null && points[index]?.thin
+      return (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={4}
+          fill={thin ? "hsl(var(--card))" : colour}
+          stroke={colour}
+          strokeWidth={2}
+        />
+      )
+    }
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-card p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <h3 className="font-medium text-foreground">FTC and FID rate by sale cohort</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Share of each month&apos;s matured accounts whose first collection paid (FTC) or did not
+            (FID). The two are complementary by definition, so the lines mirror each other about 50%.
+          </p>
+        </div>
+        {last && (
+          <p className="text-xs text-muted-foreground">
+            latest <span className="font-mono text-foreground">{last.cohort}</span> ·{" "}
+            <span className="font-mono" style={{ color: FTC_COLOUR }}>
+              FTC {last.ftcPct == null ? "—" : `${last.ftcPct.toFixed(1)}%`}
+            </span>{" "}
+            ·{" "}
+            <span className="font-mono" style={{ color: FID_COLOUR }}>
+              FID {last.fidPct == null ? "—" : `${last.fidPct.toFixed(1)}%`}
+            </span>
+          </p>
+        )}
+      </div>
+
+      <div className="mt-4 h-72 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 8, right: 48, bottom: 0, left: -12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis
+              dataKey="cohort"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              minTickGap={16}
+            />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 25, 50, 75, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            />
+            <RTooltip
+              cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "3 3" }}
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "0.5rem",
+                fontSize: "0.8125rem",
+              }}
+              labelStyle={{ color: "hsl(var(--foreground))" }}
+              formatter={(value: number | string, name: string) => [
+                value == null ? "—" : `${Number(value).toFixed(1)}%`,
+                name,
+              ]}
+              // Volume is a different scale, so it belongs in the tooltip rather
+              // than as a second axis on the plot.
+              labelFormatter={(label: string) => {
+                const p = points.find((x) => x.cohort === label)
+                if (!p) return label
+                return `${label} — ${p.base.toLocaleString()} of ${p.accounts.toLocaleString()} matured${
+                  p.pending > 0 ? `, ${p.pending.toLocaleString()} pending` : ""
+                }`
+              }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" }}
+            />
+            <Line
+              type="monotone"
+              dataKey="ftcPct"
+              name="FTC %"
+              stroke={FTC_COLOUR}
+              strokeWidth={2}
+              dot={dot(FTC_COLOUR)}
+              activeDot={{ r: 6 }}
+              connectNulls
+              label={endLabel(FTC_COLOUR)}
+            />
+            <Line
+              type="monotone"
+              dataKey="fidPct"
+              name="FID %"
+              stroke={FID_COLOUR}
+              strokeWidth={2}
+              dot={dot(FID_COLOUR)}
+              activeDot={{ r: 6 }}
+              connectNulls
+              label={endLabel(FID_COLOUR)}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {thinCount > 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Hollow points mark {thinCount} cohort{thinCount === 1 ? "" : "s"} under{" "}
+          {Math.round(MATURITY_FLOOR * 100)}% matured — the rate there rests on few accounts and will
+          move as the rest fall due.
+        </p>
+      )}
+    </div>
+  )
+}
+
 /**
  * Customer quality mix — FTC / FID by credit score band from the billing
  * extract. Bands are derived from the raw score in 50-point buckets to match
@@ -885,6 +1052,23 @@ function QualityMixReport() {
     }
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
+
+  // Trend series for the chart. Rates are over the MATURED base, so a cohort
+  // that has not billed yet contributes no misleading 0%.
+  const trend = useMemo<TrendPoint[]>(
+    () =>
+      cohortSummary.map((c) => ({
+        cohort: c.cohort,
+        ftcPct: c.base > 0 ? (c.ftc / c.base) * 100 : null,
+        fidPct: c.base > 0 ? ((c.base - c.ftc) / c.base) * 100 : null,
+        accounts: c.accounts,
+        base: c.base,
+        pending: c.pending,
+        maturity: c.accounts > 0 ? c.base / c.accounts : 0,
+        thin: c.accounts > 0 && c.base / c.accounts < MATURITY_FLOOR,
+      })),
+    [cohortSummary]
+  )
 
   const focus =
     bandMode === "derived" ? data?.bands.find((b) => b.band === FOCUS_BAND) : undefined
@@ -1187,6 +1371,8 @@ function QualityMixReport() {
               </Table>
             </div>
           </div>
+
+          {trend.length > 1 && <FtcFidTrendChart points={trend} />}
 
           {/* ---- cohort trend + reasons ---- */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
