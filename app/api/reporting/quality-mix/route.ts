@@ -279,31 +279,9 @@ export async function GET(request: NextRequest) {
       }
     )`
 
-  try {
-    // The per-account CTE is expensive: it scans every collection attempt in the
-    // window. Running it once per metric meant five full scans per request and
-    // tipped the function over its time limit on the live volume, which surfaced
-    // as a non-JSON platform error. All four aggregations now come back from ONE
-    // statement, discriminated by KIND, so the CTE is evaluated a single time.
-    //
-    // Every branch must expose the same column list and types, hence the casts
-    // on the columns a branch does not use.
-    const [agg, options, notBilled, freshness, bandOptions] = await Promise.all([
-      executeSnowflakeQuery<{
-        KIND: string
-        K1: string | null
-        K2: string | null
-        BAND_SORT: number | string | null
-        ACCOUNTS: number | string
-        BASE: number | string | null
-        FTC: number | string | null
-        PENDING: number | string | null
-        VAS_ACCOUNTS: number | string | null
-        AVG_PRICE: number | string | null
-        COLLECTED: number | string | null
-        PAID_COLLECTIONS: number | string | null
-      }>(
-        `${accountCte}
+  // The aggregation, kept as a named value so ?sql=1 can return exactly what
+  // runs — a validator should never be handed a paraphrase of the query.
+  const aggSql = `${accountCte}
          SELECT
            'band' AS KIND,
            BAND AS K1,
@@ -375,7 +353,81 @@ export async function GET(request: NextRequest) {
            CAST(NULL AS NUMBER)
          FROM joined
          WHERE PAID = 0 AND SALE_DATE IS NOT NULL
-         GROUP BY 2, 3`,
+         GROUP BY 2, 3`
+
+  // ?sql=1 returns the generated SQL without running it, so the figures can be
+  // validated against the exact statements the report issues rather than a
+  // reconstruction that may have drifted.
+  if (searchParams.get("sql") === "1") {
+    return NextResponse.json({
+      sourceTable: table,
+      filters: { startDate, endDate, brand: brand || null, products, bands, bandMode },
+      note:
+        "Run these against Snowflake as-is. `aggregation` returns one row per KIND: " +
+        "'band' (the FTC/FID table), 'cohort', 'reason', 'reasonMonth'. Every row it " +
+        "aggregates is a FIRST collection: the first_ranked CTE filters " +
+        "ISFIRSTCOLLECTION = 1 and keeps the earliest attempt per account, so " +
+        "recurring collections never enter FTC/FID. They do contribute to " +
+        "COLLECTED, which is realised revenue across all attempts.",
+      aggregation: aggSql,
+      accountsWithoutFirstCollection: `WITH scoped AS (
+  SELECT * FROM ${table} ${where}
+),
+all_accts AS (SELECT DISTINCT ACCOUNTNO FROM scoped),
+first_accts AS (SELECT DISTINCT ACCOUNTNO FROM scoped WHERE ${IS_FIRST})
+SELECT COUNT(*) AS N
+FROM all_accts a
+LEFT JOIN first_accts f ON f.ACCOUNTNO = a.ACCOUNTNO
+WHERE f.ACCOUNTNO IS NULL`,
+      firstVsRecurringCheck: `-- Grain proof: rows split by first/recurring, and accounts by whether they
+-- have a first collection at all. FTC + FID must equal the FIRST-collection
+-- account count, never the row count.
+WITH scoped AS (
+  SELECT * FROM ${table} ${where}
+)
+SELECT
+  COUNT(*)                                                        AS ROWS_ALL,
+  SUM(IFF(${IS_FIRST}, 1, 0))                                     AS ROWS_FIRST,
+  SUM(IFF(${IS_FIRST}, 0, 1))                                     AS ROWS_RECURRING,
+  COUNT(DISTINCT ACCOUNTNO)                                       AS ACCOUNTS_ALL,
+  COUNT(DISTINCT IFF(${IS_FIRST}, ACCOUNTNO, NULL))               AS ACCOUNTS_WITH_FIRST,
+  COUNT(DISTINCT ACCOUNTNO)
+    - COUNT(DISTINCT IFF(${IS_FIRST}, ACCOUNTNO, NULL))           AS ACCOUNTS_RECURRING_ONLY,
+  -- more than one row flagged as first on the same account: the report keeps the
+  -- earliest, so a large number here means the source flag is unreliable
+  (SELECT COUNT(*) FROM (
+     SELECT ACCOUNTNO FROM scoped WHERE ${IS_FIRST}
+     GROUP BY ACCOUNTNO HAVING COUNT(*) > 1
+   )) AS ACCOUNTS_WITH_DUPLICATE_FIRST_FLAG
+FROM scoped`,
+    })
+  }
+
+  try {
+    // The per-account CTE is expensive: it scans every collection attempt in the
+    // window. Running it once per metric meant five full scans per request and
+    // tipped the function over its time limit on the live volume, which surfaced
+    // as a non-JSON platform error. All four aggregations now come back from ONE
+    // statement, discriminated by KIND, so the CTE is evaluated a single time.
+    //
+    // Every branch must expose the same column list and types, hence the casts
+    // on the columns a branch does not use.
+    const [agg, options, notBilled, freshness, bandOptions] = await Promise.all([
+      executeSnowflakeQuery<{
+        KIND: string
+        K1: string | null
+        K2: string | null
+        BAND_SORT: number | string | null
+        ACCOUNTS: number | string
+        BASE: number | string | null
+        FTC: number | string | null
+        PENDING: number | string | null
+        VAS_ACCOUNTS: number | string | null
+        AVG_PRICE: number | string | null
+        COLLECTED: number | string | null
+        PAID_COLLECTIONS: number | string | null
+      }>(
+        aggSql,
         SF
       ),
       // Distinct brand/product PAIRS in the period, filtered only by date so the

@@ -255,3 +255,91 @@ FROM <SOURCE_DB>.<SOURCE_SCHEMA>.<SOURCE_OBJECT>
 WHERE TRY_TO_NUMBER(TO_VARCHAR(BILLED_AMOUNT_INCL_VAT))
       <> TRY_TO_NUMBER(TO_VARCHAR(DC_INSTRUCTEDAMOUNT))
   AND DC_INSTRUCTEDAMOUNT IS NOT NULL;
+
+
+-- ============================================================================
+-- 5. Grain proof — are FTC/FID really on first-time collections only?
+-- ============================================================================
+-- The source is ONE ROW PER COLLECTION ATTEMPT. Each row is either the account's
+-- first collection (ISFIRSTCOLLECTION = 1, FIRST_RECURRING = 'FIRST') or a later
+-- recurring one. FTC/FID are computed on the FIRST row only; recurring rows never
+-- enter them.
+--
+-- Read it like this:
+--   ROWS_ALL              = ROWS_FIRST + ROWS_RECURRING   (attempts, not accounts)
+--   ACCOUNTS_ALL          = ACCOUNTS_WITH_FIRST + ACCOUNTS_RECURRING_ONLY
+--   FTC + FID             = ACCOUNTS_WITH_FIRST           (this is the report's base)
+--
+-- So "accounts written" on the report is ACCOUNTS_WITH_FIRST — it is NOT the row
+-- count, and it is NOT first + recurring rows added together. An account with one
+-- first collection and eleven recurring ones counts ONCE.
+
+WITH scoped AS (
+    SELECT *
+    FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_QUALITY_MIX_BASE
+    WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE))
+          BETWEEN DATEADD(MONTH, -6, CURRENT_DATE()) AND CURRENT_DATE()
+)
+SELECT
+    COUNT(*)                                              AS ROWS_ALL,
+    SUM(IFF(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1, 1, 0))
+                                                          AS ROWS_FIRST,
+    SUM(IFF(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1, 0, 1))
+                                                          AS ROWS_RECURRING,
+    COUNT(DISTINCT ACCOUNTNO)                             AS ACCOUNTS_ALL,
+    COUNT(DISTINCT IFF(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1,
+                       ACCOUNTNO, NULL))                  AS ACCOUNTS_WITH_FIRST,
+    COUNT(DISTINCT ACCOUNTNO)
+      - COUNT(DISTINCT IFF(COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1,
+                           ACCOUNTNO, NULL))              AS ACCOUNTS_RECURRING_ONLY
+FROM scoped;
+
+-- Cross-check against the other first-collection markers in the feed. These do
+-- not agree perfectly in the sample (ISFIRSTCOLLECTION = 1 was a subset of
+-- FIRSTBILLED = 1), so if the report's base looks off, look here first.
+SELECT
+    ISFIRSTCOLLECTION,
+    FIRSTBILLED,
+    COUNT(*)                  AS N_ROWS,
+    COUNT(DISTINCT ACCOUNTNO) AS N_ACCOUNTS
+FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_QUALITY_MIX_BASE
+WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE))
+      BETWEEN DATEADD(MONTH, -6, CURRENT_DATE()) AND CURRENT_DATE()
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+-- Accounts carrying MORE THAN ONE first-collection row. The report keeps the
+-- earliest by SCHEDULEDATE; a large count means the flag is unreliable upstream
+-- and the choice of "earliest" is doing real work.
+SELECT COUNT(*) AS ACCOUNTS_WITH_DUPLICATE_FIRST_FLAG
+FROM (
+    SELECT ACCOUNTNO
+    FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_QUALITY_MIX_BASE
+    WHERE COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1
+      AND TRY_TO_DATE(TO_VARCHAR(SALESDATE))
+          BETWEEN DATEADD(MONTH, -6, CURRENT_DATE()) AND CURRENT_DATE()
+    GROUP BY ACCOUNTNO
+    HAVING COUNT(*) > 1
+);
+
+
+-- ============================================================================
+-- 6. The exact SQL the app runs
+-- ============================================================================
+-- Rather than trusting this file to stay in step with the code, ask the app for
+-- its own statements — it returns them without executing anything:
+--
+--   GET /api/reporting/quality-mix?sql=1&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+--
+-- Optional filters (&brand=, &products=, &bands=) are reflected in the SQL it
+-- hands back. The response contains:
+--   aggregation                    the single statement behind the band table,
+--                                  cohort table, reason panel and both charts
+--                                  (discriminated by a KIND column)
+--   accountsWithoutFirstCollection the excluded-accounts count
+--   firstVsRecurringCheck          the grain proof in section 5
+--
+-- Every row the aggregation touches is a first collection: first_ranked filters
+-- ISFIRSTCOLLECTION = 1 and ROW_NUMBER() keeps the earliest attempt per account.
+-- Recurring rows reach only COLLECTED, which is realised revenue across all
+-- attempts and is deliberately not part of FTC/FID.
