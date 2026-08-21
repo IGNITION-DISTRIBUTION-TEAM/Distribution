@@ -247,7 +247,7 @@ export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
         </header>
 
         <div className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-7xl px-6 py-8">
+          <div className="w-full px-6 py-8">
             {active.view === "quality" && <QualityMixReport />}
             {active.view === "campaign" && <CampaignPerformanceReport />}
           </div>
@@ -725,6 +725,7 @@ function CampaignPerformanceReport() {
  */
 type BandRow = {
   band: string
+  bandSort: number
   accounts: number
   base: number
   ftc: number
@@ -739,6 +740,7 @@ type BandRow = {
 type CohortRow = {
   cohort: string
   band: string
+  bandSort: number
   accounts: number
   base: number
   ftc: number
@@ -757,6 +759,8 @@ type QualityPayload = {
   cohorts: CohortRow[]
   reasons: { reason: string; accounts: number }[]
   productGroups: string[]
+  brands: string[]
+  bandMode: "derived" | "scoregroup"
   totals: {
     accounts: number
     base: number
@@ -782,8 +786,35 @@ const BAND_COLOUR: Record<string, string> = {
   unknown: "bg-zinc-600",
 }
 
+// Ramp used when the labels are not the round bands (e.g. SCOREGROUP's
+// "662 to 672"), applied in the order the API returns them — which is score
+// order, so low scores still read warm and high scores cool.
+const BAND_RAMP = [
+  "bg-rose-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-yellow-500",
+  "bg-lime-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-indigo-500",
+]
+
+const bandColour = (band: string, order: string[]): string => {
+  if (BAND_COLOUR[band]) return BAND_COLOUR[band]
+  if (band === "unknown" || band === "0") return "bg-zinc-600"
+  const i = order.indexOf(band)
+  if (i < 0) return "bg-zinc-600"
+  // spread the ramp across however many bands there are
+  const span = Math.max(1, order.filter((b) => b !== "unknown" && b !== "0").length - 1)
+  return BAND_RAMP[Math.round((i / span) * (BAND_RAMP.length - 1))] ?? "bg-zinc-600"
+}
+
 // The band the business is currently asking about — highlighted so it is
-// findable without hunting down the table.
+// findable without hunting down the table. Only meaningful for the round bands;
+// SCOREGROUP has no single label covering 650-699.
 const FOCUS_BAND = "650-699"
 
 /**
@@ -795,6 +826,8 @@ function QualityMixReport() {
   const [startDate, setStartDate] = useState(isoDaysAgo(180))
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
   const [productGroup, setProductGroup] = useState("")
+  const [brand, setBrand] = useState("")
+  const [bandMode, setBandMode] = useState<"derived" | "scoregroup">("derived")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -806,6 +839,8 @@ function QualityMixReport() {
     try {
       const params = new URLSearchParams({ startDate, endDate })
       if (productGroup) params.set("productGroup", productGroup)
+      if (brand) params.set("brand", brand)
+      params.set("bandMode", bandMode)
       const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
         cache: "no-store",
       })
@@ -822,7 +857,7 @@ function QualityMixReport() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate, productGroup])
+  }, [startDate, endDate, productGroup, brand, bandMode])
 
   useEffect(() => {
     run()
@@ -851,7 +886,8 @@ function QualityMixReport() {
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
 
-  const focus = data?.bands.find((b) => b.band === FOCUS_BAND)
+  const focus =
+    bandMode === "derived" ? data?.bands.find((b) => b.band === FOCUS_BAND) : undefined
 
   return (
     <>
@@ -860,8 +896,10 @@ function QualityMixReport() {
         <div>
           <h2 className="text-xl font-semibold text-foreground">Customer quality mix</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            FTC and FID by credit score band, on sale cohorts. Bands are derived from the raw score in
-            50-point buckets.
+            FTC and FID by credit score band, on sale cohorts.{" "}
+            {bandMode === "derived"
+              ? "Bands are derived from the raw score in 50-point buckets."
+              : "Banded on SCOREGROUP, the business\u2019s own labels."}
           </p>
         </div>
       </div>
@@ -905,6 +943,45 @@ function QualityMixReport() {
               </SelectContent>
             </Select>
           </div>
+          <div className="min-w-[200px]">
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Brand</Label>
+            <Select value={brand || "__all"} onValueChange={(v) => setBrand(v === "__all" ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="All brands" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">All brands</SelectItem>
+                {(data?.brands ?? []).map((b) => (
+                  <SelectItem key={b} value={b}>
+                    {b}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Score banding</Label>
+            <div className="flex overflow-hidden rounded-md border border-border">
+              {([
+                { id: "derived", label: "50-point" },
+                { id: "scoregroup", label: "SCOREGROUP" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setBandMode(opt.id)}
+                  className={cn(
+                    "px-3 py-2 text-xs transition-colors",
+                    bandMode === opt.id
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <Button onClick={run} disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Run report
@@ -924,6 +1001,11 @@ function QualityMixReport() {
               Last {d === 365 ? "12 months" : `${Math.round(d / 30)} months`}
             </button>
           ))}
+          <span className="text-xs text-muted-foreground">
+            {bandMode === "derived"
+              ? "Round 50-point bands — use these to answer questions phrased as \u201c650 to 699\u201d."
+              : "The business\u2019s own SCOREGROUP labels. Note they cross round boundaries, so 650\u2013699 spans several rows."}
+          </span>
         </div>
       </div>
 
@@ -958,7 +1040,7 @@ function QualityMixReport() {
       {data && data.totals.accounts > 0 && (
         <>
           {/* ---- headline ---- */}
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-4">
             <StatTile label="Accounts written" value={fmtInt(data.totals.accounts)} />
             <StatTile
               label="FTC rate"
@@ -1009,7 +1091,7 @@ function QualityMixReport() {
                 b.mixShare && b.mixShare > 0 ? (
                   <div
                     key={b.band}
-                    className={cn(BAND_COLOUR[b.band] ?? "bg-zinc-600", "h-full")}
+                    className={cn(bandColour(b.band, data.bandOrder), "h-full")}
                     style={{ width: `${b.mixShare * 100}%` }}
                     title={`${b.band}: ${fmtInt(b.accounts)} accounts (${fmtPct(b.mixShare)})`}
                   />
@@ -1019,7 +1101,7 @@ function QualityMixReport() {
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
               {data.bands.map((b) => (
                 <span key={b.band} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className={cn("h-2 w-2 rounded-full", BAND_COLOUR[b.band] ?? "bg-zinc-600")} />
+                  <span className={cn("h-2 w-2 rounded-full", bandColour(b.band, data.bandOrder))} />
                   {b.band} · {fmtPct(b.mixShare)}
                 </span>
               ))}
@@ -1062,14 +1144,14 @@ function QualityMixReport() {
                   {data.bands.map((b) => (
                     <TableRow
                       key={b.band}
-                      className={b.band === FOCUS_BAND ? "bg-amber-500/5" : undefined}
+                      className={bandMode === "derived" && b.band === FOCUS_BAND ? "bg-amber-500/5" : undefined}
                     >
                       <TableCell>
                         <span className="flex items-center gap-2">
                           <span
-                            className={cn("h-2 w-2 rounded-full", BAND_COLOUR[b.band] ?? "bg-zinc-600")}
+                            className={cn("h-2 w-2 rounded-full", bandColour(b.band, data.bandOrder))}
                           />
-                          <span className={b.band === FOCUS_BAND ? "font-medium text-foreground" : ""}>
+                          <span className={bandMode === "derived" && b.band === FOCUS_BAND ? "font-medium text-foreground" : ""}>
                             {b.band}
                           </span>
                         </span>
@@ -1107,7 +1189,7 @@ function QualityMixReport() {
           </div>
 
           {/* ---- cohort trend + reasons ---- */}
-          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
             <div className="rounded-xl border border-border bg-card">
               <div className="border-b border-border px-5 py-4">
                 <h3 className="font-medium text-foreground">By sale cohort</h3>
@@ -1121,7 +1203,9 @@ function QualityMixReport() {
                     <TableRow>
                       <TableHead>Cohort</TableHead>
                       <TableHead className="min-w-[120px]">Mix</TableHead>
-                      <TableHead className="text-right">{FOCUS_BAND}</TableHead>
+                      {bandMode === "derived" && (
+                        <TableHead className="text-right">{FOCUS_BAND}</TableHead>
+                      )}
                       <TableHead className="text-right">Accounts</TableHead>
                       <TableHead className="text-right">FTC %</TableHead>
                       <TableHead className="text-right">Pending</TableHead>
@@ -1130,7 +1214,10 @@ function QualityMixReport() {
                   <TableBody>
                     {cohortSummary.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
+                        <TableCell
+                          colSpan={bandMode === "derived" ? 6 : 5}
+                          className="text-center text-sm text-muted-foreground"
+                        >
                           No cohorts in this period.
                         </TableCell>
                       </TableRow>
@@ -1148,7 +1235,7 @@ function QualityMixReport() {
                                 return (
                                   <div
                                     key={band}
-                                    className={cn(BAND_COLOUR[band] ?? "bg-zinc-600", "h-full")}
+                                    className={cn(bandColour(band, data.bandOrder), "h-full")}
                                     style={{ width: `${(n / c.accounts) * 100}%` }}
                                     title={`${band}: ${n}`}
                                   />
@@ -1156,14 +1243,18 @@ function QualityMixReport() {
                               })}
                             </div>
                           </TableCell>
-                          <TableCell
-                            className={cn(
-                              "text-right font-mono text-sm",
-                              focusN / c.accounts >= 0.4 ? "text-amber-200" : "text-muted-foreground"
-                            )}
-                          >
-                            {fmtPct(c.accounts > 0 ? focusN / c.accounts : null)}
-                          </TableCell>
+                          {bandMode === "derived" && (
+                            <TableCell
+                              className={cn(
+                                "text-right font-mono text-sm",
+                                focusN / c.accounts >= 0.4
+                                  ? "text-amber-200"
+                                  : "text-muted-foreground"
+                              )}
+                            >
+                              {fmtPct(c.accounts > 0 ? focusN / c.accounts : null)}
+                            </TableCell>
+                          )}
                           <TableCell className="text-right font-mono text-sm">
                             {fmtInt(c.accounts)}
                           </TableCell>

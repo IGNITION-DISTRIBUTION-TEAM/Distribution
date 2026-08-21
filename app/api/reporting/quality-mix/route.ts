@@ -133,6 +133,12 @@ export async function GET(request: NextRequest) {
   const endDate = searchParams.get("endDate") ?? startDate
   const productGroup = (searchParams.get("productGroup") ?? "").trim()
   const campaignName = (searchParams.get("campaignName") ?? "").trim()
+  const brand = (searchParams.get("brand") ?? "").trim()
+  // Which banding to report on. "scoregroup" uses the business's own SCOREGROUP
+  // labels (as in scripts/quality-mix.sql); "derived" uses round 50-point
+  // buckets, which is the only way to answer a question phrased as "650-699"
+  // since SCOREGROUP labels cross those boundaries.
+  const bandMode = searchParams.get("bandMode") === "scoregroup" ? "scoregroup" : "derived"
 
   if (!DATE.test(startDate) || !DATE.test(endDate)) {
     return NextResponse.json(
@@ -145,10 +151,13 @@ export async function GET(request: NextRequest) {
   }
 
   // Filter on the SALE date, so a cohort is defined by when it was written.
+  // Brand is matched space-insensitively ("MOBILE TALK" vs "MOBILETALK") since
+  // the source is inconsistent about spacing.
   const filters = [
     `TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'`,
     productGroup ? `PRODUCT_GROUPS = '${escSql(productGroup)}'` : "",
     campaignName ? `CAMPAIGNNAME = '${escSql(campaignName)}'` : "",
+    brand ? `UPPER(REPLACE(BRAND, ' ', '')) = '${escSql(brand.replace(/ /g, "").toUpperCase())}'` : "",
   ].filter(Boolean)
   const where = `WHERE ${filters.join(" AND ")}`
 
@@ -164,6 +173,8 @@ export async function GET(request: NextRequest) {
         ACCOUNTNO,
         MIN(TRY_TO_DATE(TO_VARCHAR(SALESDATE))) AS SALE_DATE,
         MAX(${SCORE_NUM}) AS SCORE_NUM,
+        MAX(SCOREGROUP) AS SCOREGROUP_VAL,
+        MAX(UPPER(REPLACE(BRAND, ' ', ''))) AS BRAND_VAL,
         MAX(${VAS}) AS VAS_FLAG,
         MAX(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(PRODUCTPRICE)), 0)) AS PRICE
       FROM scoped
@@ -188,7 +199,19 @@ export async function GET(request: NextRequest) {
     joined AS (
       SELECT
         a.ACCOUNTNO, a.SALE_DATE, a.VAS_FLAG, a.PRICE,
-        ${bandSql("a.SCORE_NUM")} AS BAND,
+        ${
+          bandMode === "scoregroup"
+            ? `COALESCE(NULLIF(TRIM(a.SCOREGROUP_VAL), ''), 'unknown')`
+            : bandSql("a.SCORE_NUM")
+        } AS BAND,
+        ${
+          // Sort key so bands order by score, not alphabetically ('908+' would
+          // otherwise precede '662 to 672'). Unknown sorts last.
+          bandMode === "scoregroup"
+            ? `COALESCE(TRY_TO_NUMBER(REGEXP_SUBSTR(TRIM(a.SCOREGROUP_VAL), '^[0-9]+')), 99999)`
+            : `COALESCE(FLOOR(a.SCORE_NUM / 50) * 50, 99999)`
+        } AS BAND_SORT,
+        a.BRAND_VAL AS BRAND,
         f.PAID, f.REASON,
         IFF(f.ACCOUNTNO IS NULL, 1, 0) AS PENDING
       FROM accounts a
@@ -196,9 +219,10 @@ export async function GET(request: NextRequest) {
     )`
 
   try {
-    const [byBand, byCohort, reasons, productGroups] = await Promise.all([
+    const [byBand, byCohort, reasons, productGroups, brands] = await Promise.all([
       executeSnowflakeQuery<{
         BAND: string
+        BAND_SORT: number | string
         ACCOUNTS: number | string
         BASE: number | string
         FTC: number | string
@@ -209,6 +233,7 @@ export async function GET(request: NextRequest) {
         `${accountCte}
          SELECT
            BAND,
+           MIN(BAND_SORT) AS BAND_SORT,
            COUNT(*) AS ACCOUNTS,
            SUM(IFF(PENDING = 0, 1, 0)) AS BASE,
            SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)) AS FTC,
@@ -222,6 +247,7 @@ export async function GET(request: NextRequest) {
       executeSnowflakeQuery<{
         COHORT: string
         BAND: string
+        BAND_SORT: number | string
         ACCOUNTS: number | string
         BASE: number | string
         FTC: number | string
@@ -231,6 +257,7 @@ export async function GET(request: NextRequest) {
          SELECT
            TO_CHAR(SALE_DATE, 'YYYY-MM') AS COHORT,
            BAND,
+           MIN(BAND_SORT) AS BAND_SORT,
            COUNT(*) AS ACCOUNTS,
            SUM(IFF(PENDING = 0, 1, 0)) AS BASE,
            SUM(IFF(PENDING = 0 AND PAID = 1, 1, 0)) AS FTC,
@@ -250,13 +277,21 @@ export async function GET(request: NextRequest) {
          ORDER BY ACCOUNTS DESC`,
         SF
       ),
-      // Distinct products in the period, ignoring the product filter itself so
-      // the dropdown doesn't collapse to the current selection.
+      // Distinct products and brands in the period, ignoring those filters
+      // themselves so the dropdowns don't collapse to the current selection.
       executeSnowflakeQuery<{ PRODUCT_GROUPS: string | null }>(
         `SELECT DISTINCT PRODUCT_GROUPS
          FROM ${table}
          WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'
            AND PRODUCT_GROUPS IS NOT NULL AND TRIM(PRODUCT_GROUPS) <> ''
+         ORDER BY 1`,
+        SF
+      ),
+      executeSnowflakeQuery<{ BRAND: string | null }>(
+        `SELECT DISTINCT UPPER(REPLACE(BRAND, ' ', '')) AS BRAND
+         FROM ${table}
+         WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'
+           AND BRAND IS NOT NULL AND TRIM(BRAND) <> ''
          ORDER BY 1`,
         SF
       ),
@@ -269,6 +304,7 @@ export async function GET(request: NextRequest) {
         const ftc = num(r.FTC)
         return {
           band: String(r.BAND ?? "unknown"),
+          bandSort: num(r.BAND_SORT),
           accounts,
           base,
           ftc,
@@ -280,7 +316,7 @@ export async function GET(request: NextRequest) {
           avgPrice: numOrNull(r.AVG_PRICE),
         }
       })
-      .sort((a, b) => BAND_ORDER.indexOf(a.band) - BAND_ORDER.indexOf(b.band))
+      .sort((a, b) => a.bandSort - b.bandSort || a.band.localeCompare(b.band))
 
     const totalAccounts = bandRows.reduce((s, r) => s + r.accounts, 0)
     const bands = bandRows.map((r) => ({
@@ -300,6 +336,7 @@ export async function GET(request: NextRequest) {
       return {
         cohort: String(r.COHORT),
         band: String(r.BAND ?? "unknown"),
+        bandSort: num(r.BAND_SORT),
         accounts: num(r.ACCOUNTS),
         base,
         ftc,
@@ -315,7 +352,10 @@ export async function GET(request: NextRequest) {
       endDate,
       sourceTable: table,
       usingDefaultSource: table === DEFAULT_SOURCE_TABLE,
-      bandOrder: BAND_ORDER,
+      bandMode,
+      // Actual bands present, already in score order — the UI stacks its charts
+      // in this order rather than knowing the banding scheme itself.
+      bandOrder: bands.map((b) => b.band),
       bands,
       cohorts,
       reasons: reasons.map((r) => ({
@@ -325,7 +365,12 @@ export async function GET(request: NextRequest) {
       productGroups: productGroups
         .map((r) => String(r.PRODUCT_GROUPS ?? "").trim())
         .filter(Boolean),
-      filters: { productGroup: productGroup || null, campaignName: campaignName || null },
+      brands: brands.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean),
+      filters: {
+        productGroup: productGroup || null,
+        campaignName: campaignName || null,
+        brand: brand || null,
+      },
       totals: {
         accounts: totalAccounts,
         base: totalBase,
