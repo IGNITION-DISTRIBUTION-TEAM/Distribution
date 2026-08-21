@@ -768,6 +768,7 @@ type QualityPayload = {
   bands: BandRow[]
   cohorts: CohortRow[]
   reasons: { reason: string; accounts: number }[]
+  reasonsByMonth: { month: string; reason: string; accounts: number }[]
   productGroups: string[]
   brands: string[]
   bandMode: "derived" | "scoregroup"
@@ -826,6 +827,9 @@ const bandColour = (band: string, order: string[]): string => {
 // findable without hunting down the table. Only meaningful for the round bands;
 // SCOREGROUP has no single label covering 650-699.
 const FOCUS_BAND = "650-699"
+
+const REASON_COLOURS = ["#0284c7", "#ea580c", "#7c3aed", "#059669"]
+const TOP_REASONS = 4
 
 const FTC_COLOUR = "#0284c7"
 const FID_COLOUR = "#ea580c"
@@ -1069,6 +1073,14 @@ function QualityMixReport() {
 
   const focus =
     bandMode === "derived" ? data?.bands.find((b) => b.band === FOCUS_BAND) : undefined
+
+  // Rank the lines by period total so the same reasons stay on the chart as the
+  // month-by-month ordering wobbles — colour follows the reason, not its rank
+  // within a month.
+  const topReasons = useMemo(
+    () => (data?.reasons ?? []).slice(0, TOP_REASONS).map((r) => r.reason),
+    [data]
+  )
 
   return (
     <>
@@ -1485,6 +1497,10 @@ function QualityMixReport() {
             </div>
           </div>
 
+          {data.reasonsByMonth.length > 0 && topReasons.length > 0 && (
+            <ReasonTrendChart rows={data.reasonsByMonth} topReasons={topReasons} />
+          )}
+
           <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
             <p>
               <span className="text-foreground">FTC</span> is a first collection paid in full;{" "}
@@ -1613,6 +1629,106 @@ function NotConfiguredPanel() {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Failure-reason mix by sale month. Only the largest few reasons are plotted as
+ * lines — the tail is long and thin, and an eleven-series chart would need hues
+ * that cannot pass a colour-blindness check. Each line is a reason's share of
+ * that month's first-time defaults, so a shift in composition is visible even
+ * when the total moves.
+ */
+function ReasonTrendChart({
+  rows,
+  topReasons,
+}: {
+  rows: { month: string; reason: string; accounts: number }[]
+  topReasons: string[]
+}) {
+  const { points, months } = useMemo(() => {
+    const byMonth = new Map<string, { total: number; byReason: Map<string, number> }>()
+    for (const r of rows) {
+      const e = byMonth.get(r.month) ?? { total: 0, byReason: new Map<string, number>() }
+      e.total += r.accounts
+      e.byReason.set(r.reason, (e.byReason.get(r.reason) ?? 0) + r.accounts)
+      byMonth.set(r.month, e)
+    }
+    const months = [...byMonth.keys()].sort()
+    const points = months.map((m) => {
+      const e = byMonth.get(m)!
+      const row: Record<string, string | number | null> = { month: m, total: e.total }
+      for (const reason of topReasons) {
+        const n = e.byReason.get(reason) ?? 0
+        row[reason] = e.total > 0 ? (n / e.total) * 100 : null
+        row[`${reason}__n`] = n
+      }
+      return row
+    })
+    return { points, months }
+  }, [rows, topReasons])
+
+  if (months.length < 2) return null
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-card p-5">
+      <h3 className="font-medium text-foreground">Failure reasons by month</h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Each reason as a share of that month&apos;s first-time defaults, by sale month. Top{" "}
+        {topReasons.length} reasons shown; hover for counts.
+      </p>
+      <div className="mt-4 h-72 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: -12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis
+              dataKey="month"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              minTickGap={16}
+            />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 25, 50, 75, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            />
+            <RTooltip
+              cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "3 3" }}
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "0.5rem",
+                fontSize: "0.8125rem",
+              }}
+              labelStyle={{ color: "hsl(var(--foreground))" }}
+              formatter={(value: number | string, name: string, item: { payload?: Record<string, unknown> }) => {
+                const n = item?.payload?.[`${name}__n`]
+                const pct = value == null ? "—" : `${Number(value).toFixed(1)}%`
+                return [n == null ? pct : `${pct} (${Number(n).toLocaleString()})`, name]
+              }}
+              labelFormatter={(label: string) => {
+                const p = points.find((x) => x.month === label)
+                return p ? `${label} — ${Number(p.total).toLocaleString()} defaults` : label
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" }} />
+            {topReasons.map((reason, i) => (
+              <Line
+                key={reason}
+                type="monotone"
+                dataKey={reason}
+                name={reason}
+                stroke={REASON_COLOURS[i % REASON_COLOURS.length]}
+                strokeWidth={2}
+                dot={{ r: 4 }}
+                activeDot={{ r: 6 }}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   )

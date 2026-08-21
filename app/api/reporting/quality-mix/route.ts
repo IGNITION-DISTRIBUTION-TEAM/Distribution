@@ -224,7 +224,8 @@ export async function GET(request: NextRequest) {
 
   try {
     // NB: order must match the query order below.
-    const [byBand, byCohort, reasons, productGroups, notBilled, brands] = await Promise.all([
+    const [byBand, byCohort, reasons, productGroups, notBilled, brands, reasonsByMonth] =
+      await Promise.all([
       executeSnowflakeQuery<{
         BAND: string
         BAND_SORT: number | string
@@ -312,6 +313,24 @@ export async function GET(request: NextRequest) {
          ORDER BY 1`,
         SF
       ),
+      // Failure reasons split by sale month, so a shift in the mix is visible
+      // rather than only the period total.
+      executeSnowflakeQuery<{
+        MONTH: string
+        REASON: string | null
+        ACCOUNTS: number | string
+      }>(
+        `${accountCte}
+         SELECT
+           TO_CHAR(SALE_DATE, 'YYYY-MM') AS MONTH,
+           COALESCE(NULLIF(TRIM(REASON), ''), '(not given)') AS REASON,
+           COUNT(*) AS ACCOUNTS
+         FROM joined
+         WHERE PAID = 0 AND SALE_DATE IS NOT NULL
+         GROUP BY 1, 2
+         ORDER BY 1, 2`,
+        SF
+      ),
     ])
 
     const bandRows = byBand
@@ -376,6 +395,11 @@ export async function GET(request: NextRequest) {
       bands,
       cohorts,
       reasons: reasons.map((r) => ({
+        reason: String(r.REASON ?? "(not given)"),
+        accounts: num(r.ACCOUNTS),
+      })),
+      reasonsByMonth: reasonsByMonth.map((r) => ({
+        month: String(r.MONTH),
         reason: String(r.REASON ?? "(not given)"),
         accounts: num(r.ACCOUNTS),
       })),
