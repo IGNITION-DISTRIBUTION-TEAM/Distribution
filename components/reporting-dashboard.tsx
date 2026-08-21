@@ -9,6 +9,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -1205,6 +1206,58 @@ function QualityMixReport() {
     return [...byCohort.values()].sort((a, b) => a.cohort.localeCompare(b.cohort))
   }, [data])
 
+  // Export exactly the rows the average was taken over, so a spreadsheet check
+  // reconciles against the same population rather than a hand-copied subset.
+  const exportBandsCsv = () => {
+    if (!data) return
+    const head = [
+      "Score band",
+      "Mix %",
+      "Accounts",
+      "Matured base",
+      "FTC",
+      "FTC %",
+      "FID",
+      "FID %",
+      "VAS %",
+      "Avg price",
+    ]
+    const pct = (v: number | null) => (v === null ? "" : (v * 100).toFixed(2))
+    const lines = [
+      head.join(","),
+      ...data.bands.map((b) =>
+        [
+          `"${b.band.replace(/"/g, '""')}"`,
+          pct(b.mixShare),
+          b.accounts,
+          b.base,
+          b.ftc,
+          pct(b.ftcRate),
+          b.fid,
+          pct(b.fidRate),
+          pct(b.vasRate),
+          b.avgPrice === null ? "" : b.avgPrice.toFixed(2),
+        ].join(",")
+      ),
+      "",
+      `"Average across bands (${data.totals.bandsCounted})",,,,,${pct(
+        data.totals.ftcRate
+      )},,${pct(data.totals.fidRate)},,`,
+      `"All accounts (pooled)",,${data.totals.accounts},${data.totals.base},${
+        data.totals.ftc
+      },${pct(data.totals.ftcRateOverall)},${data.totals.fid},${pct(
+        data.totals.fidRateOverall
+      )},,`,
+    ]
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `quality-mix-bands-${data.startDate}_to_${data.endDate}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // Blended FTC per sale month, for the over-time chart.
   const ftcTrend = useMemo(
     () =>
@@ -1560,11 +1613,17 @@ function QualityMixReport() {
 
           {/* ---- by band ---- */}
           <div className="mt-5 rounded-xl border border-border bg-card">
-            <div className="border-b border-border px-5 py-4">
-              <h3 className="font-medium text-foreground">FTC / FID by score band</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Base excludes accounts with no first collection yet.
-              </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <div>
+                <h3 className="font-medium text-foreground">FTC / FID by score band</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Base excludes accounts with no first collection yet.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={exportBandsCsv}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
             </div>
             <div className="overflow-x-auto">
               <Table>
@@ -1632,6 +1691,57 @@ function QualityMixReport() {
                     </TableRow>
                   ))}
                 </TableBody>
+                <TableFooter>
+                  {/* Both headline figures live here too, so the table and the
+                      tiles are visibly the same run — copying the column out to
+                      a spreadsheet and getting a different mean means a row was
+                      missed, not that the report disagrees with itself. */}
+                  <TableRow className="border-t-2 border-border">
+                    <TableCell className="font-medium text-foreground">
+                      Average across bands
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                        ({fmtInt(data.totals.bandsCounted)} bands, each counted once)
+                      </span>
+                    </TableCell>
+                    <TableCell colSpan={4} />
+                    <TableCell className="text-right font-mono text-sm font-medium text-emerald-300">
+                      {fmtPct(data.totals.ftcRate)}
+                    </TableCell>
+                    <TableCell />
+                    <TableCell className="text-right font-mono text-sm font-medium text-rose-300">
+                      {fmtPct(data.totals.fidRate)}
+                    </TableCell>
+                    <TableCell colSpan={2} />
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted-foreground">
+                      All accounts
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        (pooled, volume-weighted)
+                      </span>
+                    </TableCell>
+                    <TableCell />
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtInt(data.totals.accounts)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtInt(data.totals.base)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtInt(data.totals.ftc)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtPct(data.totals.ftcRateOverall)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtInt(data.totals.fid)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {fmtPct(data.totals.fidRateOverall)}
+                    </TableCell>
+                    <TableCell colSpan={2} />
+                  </TableRow>
+                </TableFooter>
               </Table>
             </div>
           </div>
