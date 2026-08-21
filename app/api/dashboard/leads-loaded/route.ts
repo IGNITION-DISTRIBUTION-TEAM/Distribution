@@ -12,23 +12,16 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate") ?? searchParams.get("date")
   const endDate = searchParams.get("endDate") ?? startDate
 
-  if (!campaignIdsRaw) {
-    return NextResponse.json(
-      { error: "campaignIds query param required (comma-separated positive integers)" },
-      { status: 400 }
-    )
-  }
+  // No campaignIds at all means EVERY campaign — the report defaults to the
+  // whole book rather than refusing to load until something is picked.
   const ids = Array.from(
     new Set(
-      campaignIdsRaw
+      (campaignIdsRaw ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
     )
   )
-  if (ids.length === 0) {
-    return NextResponse.json({ error: "campaignIds must contain at least one id" }, { status: 400 })
-  }
   if (ids.some((s) => !/^[0-9]+$/.test(s))) {
     return NextResponse.json(
       { error: "All campaignIds must be positive integers" },
@@ -57,10 +50,13 @@ export async function GET(request: Request) {
     )
   }
 
-  const inList = ids.map((id) => Number(id)).join(",")
+  // Empty id list = no campaign predicate at all, which is cheaper than an IN
+  // over every id and sidesteps the 200-campaign cap.
+  const campaignFilter =
+    ids.length > 0 ? `campaignid IN (${ids.map((id) => Number(id)).join(",")}) AND` : ""
   const where = `
-    WHERE campaignid IN (${inList})
-      AND CAST(CREATEDONDATE AS DATE) BETWEEN '${startDate}' AND '${endDate}'
+    WHERE ${campaignFilter}
+      CAST(CREATEDONDATE AS DATE) BETWEEN '${startDate}' AND '${endDate}'
   `
 
   try {

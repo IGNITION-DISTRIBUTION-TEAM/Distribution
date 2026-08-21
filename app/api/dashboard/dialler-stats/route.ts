@@ -16,23 +16,16 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate")
   const endDate = searchParams.get("endDate") ?? startDate
 
-  if (!namesRaw) {
-    return NextResponse.json(
-      { error: "campaignNames query param required (comma-separated)" },
-      { status: 400 }
-    )
-  }
+  // No campaignNames at all means EVERY campaign — the report defaults to the
+  // whole book rather than refusing to load until something is picked.
   const names = Array.from(
     new Set(
-      namesRaw
+      (namesRaw ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
     )
   )
-  if (names.length === 0) {
-    return NextResponse.json({ error: "campaignNames cannot be empty" }, { status: 400 })
-  }
   if (names.length > 200) {
     return NextResponse.json({ error: "Max 200 campaigns per request" }, { status: 400 })
   }
@@ -69,13 +62,18 @@ export async function GET(request: Request) {
   }
   const callStatuses = collectMulti("callStatuses")
 
-  const inList = names.map((n) => `'${escSql(n)}'`).join(",")
+  // Empty list = no campaign predicate, rather than an IN over every name.
+  const campaignFilter =
+    names.length > 0
+      ? `CAMPAIGN_NAME IN (${names.map((n) => `'${escSql(n)}'`).join(",")}) AND`
+      : ""
+
   const inClause = (col: string, vals: string[]) =>
     vals.length > 0 ? `AND ${col} IN (${vals.map((v) => `'${escSql(v)}'`).join(",")})` : ""
 
   const where = `
-    WHERE CAMPAIGN_NAME IN (${inList})
-      AND CALL_START_TIME BETWEEN '${startDate}' AND '${endDate}'
+    WHERE ${campaignFilter}
+      CALL_START_TIME BETWEEN '${startDate}' AND '${endDate}'
       ${inClause("CALL_STATUS", callStatuses)}
   `
 

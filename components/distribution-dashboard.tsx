@@ -3991,7 +3991,7 @@ export function DistributedDashboardPanel() {
   const triggerLabel = campaignsLoading
     ? "Loading campaigns..."
     : selectedCampaigns.length === 0
-    ? "Select campaigns..."
+    ? "All campaigns"
     : selectedCampaigns.length === 1
     ? `${selectedCampaigns[0].title}  ·  ${selectedCampaigns[0].id}`
     : `${selectedCampaigns.length} campaigns selected`
@@ -4113,15 +4113,6 @@ export function DistributedDashboardPanel() {
           </div>
         </div>
       </div>
-
-      {selectedCampaignIds.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <LayoutDashboard className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Pick one or more campaigns to load the dashboard.
-          </p>
-        </div>
-      )}
 
       {error && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
@@ -4251,7 +4242,7 @@ export function DiallerDashboardPanel() {
 
   // Load dialler data when campaigns + dates set
   useEffect(() => {
-    if (selectedCampaigns.length === 0 || !startDate || !endDate) {
+    if (!startDate || !endDate) {
       setData(null)
       return
     }
@@ -4302,7 +4293,7 @@ export function DiallerDashboardPanel() {
   const triggerLabel = campaignsLoading
     ? "Loading campaigns..."
     : selectedCampaigns.length === 0
-    ? "Select campaigns..."
+    ? "All campaigns"
     : selectedCampaigns.length === 1
     ? `${selectedCampaigns[0].title}  ·  ${selectedCampaigns[0].id}`
     : `${selectedCampaigns.length} campaigns selected`
@@ -4432,15 +4423,6 @@ export function DiallerDashboardPanel() {
           />
         </div>
       </div>
-
-      {selectedCampaigns.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <LayoutDashboard className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Pick one or more campaigns to load dialler stats.
-          </p>
-        </div>
-      )}
 
       {error && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
@@ -4708,14 +4690,14 @@ export function SalesDashboardPanel() {
   const triggerLabel = campaignsLoading
     ? "Loading campaigns..."
     : selectedCampaigns.length === 0
-    ? "Select campaigns..."
+    ? "All campaigns"
     : selectedCampaigns.length === 1
     ? `${selectedCampaigns[0].title}  ·  ${selectedCampaigns[0].id}`
     : `${selectedCampaigns.length} campaigns selected`
 
   // Load sales data when campaigns + dates + extra filters are set.
   useEffect(() => {
-    if (selectedCampaigns.length === 0 || !startDate || !endDate) {
+    if (!startDate || !endDate) {
       setData(null)
       return
     }
@@ -4893,15 +4875,6 @@ export function SalesDashboardPanel() {
           />
         </div>
       </div>
-
-      {selectedCampaigns.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <LayoutDashboard className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Pick one or more campaigns to load sales stats.
-          </p>
-        </div>
-      )}
 
       {error && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
