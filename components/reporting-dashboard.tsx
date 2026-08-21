@@ -772,6 +772,7 @@ type QualityPayload = {
   productGroups: string[]
   brands: string[]
   brandProducts: { brand: string; product: string }[]
+  bandOptions: string[]
   bandMode: "derived" | "scoregroup"
   totals: {
     accounts: number
@@ -989,6 +990,8 @@ function QualityMixReport() {
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
   const [products, setProducts] = useState<string[]>([])
   const [productOpen, setProductOpen] = useState(false)
+  const [bandFilter, setBandFilter] = useState<string[]>([])
+  const [bandOpen, setBandOpen] = useState(false)
   const [brand, setBrand] = useState("")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1001,6 +1004,7 @@ function QualityMixReport() {
     try {
       const params = new URLSearchParams({ startDate, endDate })
       if (products.length > 0) params.set("products", products.join(","))
+      if (bandFilter.length > 0) params.set("bands", bandFilter.join(","))
       if (brand) params.set("brand", brand)
       params.set("bandMode", "scoregroup")
       const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
@@ -1019,7 +1023,7 @@ function QualityMixReport() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate, products, brand])
+  }, [startDate, endDate, products, brand, bandFilter])
 
   useEffect(() => {
     run()
@@ -1037,7 +1041,7 @@ function QualityMixReport() {
     }
     run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand, products])
+  }, [brand, products, bandFilter])
 
   // Cohort rows arrive as cohort x band; roll up to a per-month view plus the
   // focus band's share, which is what "is the spread balancing out?" needs.
@@ -1097,7 +1101,10 @@ function QualityMixReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productOptions])
 
-    // Rank the lines by period total so the same reasons stay on the chart as the
+    // Full band list for the picker, kept even while a band filter is active.
+  const bandChoices = useMemo(() => data?.bandOptions ?? [], [data])
+
+  // Rank the lines by period total so the same reasons stay on the chart as the
   // month-by-month ordering wobbles — colour follows the reason, not its rank
   // within a month.
   const topReasons = useMemo(
@@ -1211,6 +1218,61 @@ function QualityMixReport() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="min-w-[220px]">
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Score band</Label>
+            <Popover open={bandOpen} onOpenChange={setBandOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-between font-normal">
+                  <span className="truncate">
+                    {bandFilter.length === 0
+                      ? "All bands"
+                      : bandFilter.length === 1
+                      ? bandFilter[0]
+                      : bandFilter.length + " bands"}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 flex-shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[280px] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search bands..." />
+                  <CommandList>
+                    <CommandEmpty>No band found.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem onSelect={() => setBandFilter([])}>
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            bandFilter.length === 0 ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        All bands
+                      </CommandItem>
+                      {bandChoices.map((b) => (
+                        <CommandItem
+                          key={b}
+                          value={b}
+                          onSelect={() =>
+                            setBandFilter((prev) =>
+                              prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]
+                            )
+                          }
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              bandFilter.includes(b) ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <span className="truncate">{b}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
           <Button onClick={run} disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -1342,7 +1404,9 @@ function QualityMixReport() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Score band</TableHead>
-                    <TableHead className="text-right">Mix</TableHead>
+                    <TableHead className="text-right">
+                      {bandFilter.length > 0 ? "Mix of selected" : "Mix"}
+                    </TableHead>
                     <TableHead className="text-right">Accounts</TableHead>
                     <TableHead className="text-right">Matured base</TableHead>
                     <TableHead className="text-right">FTC</TableHead>

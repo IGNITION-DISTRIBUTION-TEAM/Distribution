@@ -150,6 +150,16 @@ export async function GET(request: NextRequest) {
   )
   const campaignName = (searchParams.get("campaignName") ?? "").trim()
   const brand = (searchParams.get("brand") ?? "").trim()
+  // Score bands to include. Empty = all. Applied AFTER the band is computed, so
+  // it filters accounts by their band rather than by a raw column.
+  const bands = Array.from(
+    new Set(
+      (searchParams.get("bands") ?? "")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean)
+    )
+  )
   // Which banding to report on. "scoregroup" uses the business's own SCOREGROUP
   // labels (as in scripts/quality-mix.sql); "derived" uses round 50-point
   // buckets, which is the only way to answer a question phrased as "650-699"
@@ -213,7 +223,7 @@ export async function GET(request: NextRequest) {
       FROM scoped
       WHERE ${IS_FIRST}
     ),
-    joined AS (
+    banded AS (
       SELECT
         ACCOUNTNO, SALE_DATE, VAS_FLAG, PRICE, PAID, REASON,
         BRAND_VAL AS BRAND,
@@ -233,12 +243,19 @@ export async function GET(request: NextRequest) {
         0 AS PENDING
       FROM first_ranked
       WHERE RN = 1
+    ),
+    joined AS (
+      SELECT * FROM banded${
+        bands.length > 0
+          ? ` WHERE BAND IN (${bands.map((b) => `'${escSql(b)}'`).join(",")})`
+          : ""
+      }
     )`
 
   try {
     // NB: order must match the query order below.
     // NB: order must match the query order below.
-    const [byBand, byCohort, reasons, options, notBilled, reasonsByMonth] =
+    const [byBand, byCohort, reasons, options, notBilled, bandOptions, reasonsByMonth] =
       await Promise.all([
       executeSnowflakeQuery<{
         BAND: string
@@ -322,6 +339,17 @@ export async function GET(request: NextRequest) {
          FROM all_accts a
          LEFT JOIN first_accts f ON f.ACCOUNTNO = a.ACCOUNTNO
          WHERE f.ACCOUNTNO IS NULL`,
+        SF
+      ),
+      // Score bands available under the current brand/product, ignoring the band
+      // filter itself so the picker never collapses to the current selection.
+      executeSnowflakeQuery<{ BAND: string | null; BAND_SORT: number | string }>(
+        `SELECT
+           COALESCE(NULLIF(TRIM(SCOREGROUP), ''), 'unknown') AS BAND,
+           MIN(COALESCE(TRY_TO_NUMBER(REGEXP_SUBSTR(TRIM(SCOREGROUP), '^[0-9]+')), 99999)) AS BAND_SORT
+         FROM ${table} ${where}
+         GROUP BY 1
+         ORDER BY 2, 1`,
         SF
       ),
       // Failure reasons split by sale month, so a shift in the mix is visible
@@ -421,6 +449,7 @@ export async function GET(request: NextRequest) {
       brands: [
         ...new Set(options.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean)),
       ].sort(),
+      bandOptions: bandOptions.map((r) => String(r.BAND ?? "unknown")).filter(Boolean),
       brandProducts: options
         .map((r) => ({
           brand: String(r.BRAND ?? "").trim(),
@@ -428,6 +457,7 @@ export async function GET(request: NextRequest) {
         }))
         .filter((r) => r.brand && r.product),
       filters: {
+        bands,
         products,
         campaignName: campaignName || null,
         brand: brand || null,
