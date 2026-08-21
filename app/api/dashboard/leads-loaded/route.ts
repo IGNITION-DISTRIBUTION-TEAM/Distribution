@@ -122,7 +122,17 @@ export async function GET(request: Request) {
         CNT: number | string
       }>(
         `SELECT
-           COALESCE(NULLIF(TRIM(SCOREGROUP), ''), '(none)') AS SCOREGROUP,
+           COALESCE(
+             NULLIF(TRIM(SCOREGROUP), ''),
+             CASE
+               WHEN TRY_TO_NUMBER(SCORE) IS NULL OR TRY_TO_NUMBER(SCORE) <= 0 THEN NULL
+               WHEN TRY_TO_NUMBER(SCORE) < 600 THEN '0-599'
+               WHEN TRY_TO_NUMBER(SCORE) >= 900 THEN '900+'
+               ELSE TO_VARCHAR(FLOOR(TRY_TO_NUMBER(SCORE) / 50) * 50) || '-'
+                 || TO_VARCHAR(FLOOR(TRY_TO_NUMBER(SCORE) / 50) * 50 + 49)
+             END,
+             '(none)'
+           ) AS SCOREGROUP,
            TO_CHAR(CAST(CREATEDONDATE AS DATE), 'YYYY-MM-DD') AS DAY,
            COUNT(*) AS CNT
          FROM ${HISTORY_TABLE}
