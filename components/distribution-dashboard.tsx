@@ -115,7 +115,6 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "manual", label: "Manual", icon: <Hand className="h-4 w-4" /> },
   { id: "automation", label: "Automation", icon: <Zap className="h-4 w-4" /> },
   { id: "extend-expired", label: "Extend Expired Leads", icon: <Clock className="h-4 w-4" /> },
@@ -3814,40 +3813,10 @@ function RecycleContent() {
   )
 }
 
-function DashboardContent() {
-  return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-foreground">Dashboard</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Overview of distribution activity.
-        </p>
-      </div>
-
-      <Tabs defaultValue="distributed" className="w-full min-w-0">
-        <TabsList>
-          <TabsTrigger value="distributed">Distributed</TabsTrigger>
-          <TabsTrigger value="sales">Sales</TabsTrigger>
-          <TabsTrigger value="dialler">Dialler</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="distributed" className="mt-4">
-          <DistributedDashboardPanel />
-        </TabsContent>
-
-        <TabsContent value="sales" className="mt-4">
-          <SalesDashboardPanel />
-        </TabsContent>
-
-        <TabsContent value="dialler" className="mt-4">
-          <DiallerDashboardPanel />
-        </TabsContent>
-      </Tabs>
-    </div>
-  )
-}
-
-function DistributedDashboardPanel() {
+// The Distributed / Sales / Dialler panels below are rendered by the Reporting
+// department (components/reporting-dashboard.tsx), not from here. The tab
+// wrapper that used to host them was removed with the Dashboard nav entry.
+export function DistributedDashboardPanel() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -4138,7 +4107,7 @@ type DiallerData = {
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
 }
 
-function DiallerDashboardPanel() {
+export function DiallerDashboardPanel() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -4587,7 +4556,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
   )
 }
 
-function SalesDashboardPanel() {
+export function SalesDashboardPanel() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -7161,12 +7130,10 @@ function SilverSurferContent() {
 
 export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) {
   const { user, logout } = useAuth()
-  const [activeNav, setActiveNav] = useState("dashboard")
+  const [activeNav, setActiveNav] = useState("manual")
 
   const renderContent = useCallback(() => {
     switch (activeNav) {
-      case "dashboard":
-        return <DashboardContent />
       case "manual":
         return <ManualContent />
       case "automation":
@@ -7184,7 +7151,7 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
       case "settings":
         return <SettingsContent />
       default:
-        return <DashboardContent />
+        return <ManualContent />
     }
   }, [activeNav])
 

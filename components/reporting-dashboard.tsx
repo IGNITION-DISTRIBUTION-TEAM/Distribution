@@ -69,7 +69,13 @@ import {
   Tooltip as RTooltip,
   Legend,
 } from "recharts"
+import {
+  DistributedDashboardPanel,
+  SalesDashboardPanel,
+  DiallerDashboardPanel,
+} from "@/components/distribution-dashboard"
 import { cn } from "@/lib/utils"
+
 
 type Campaign = { id: string; title: string }
 
@@ -227,7 +233,7 @@ const fmtPct = (v: number | null) =>
 // "soon" and not selectable), which is how the quality reports appear until the
 // sales and billing feed lands.
 type ReportItem = { label: string; view: ReportView | null }
-type ReportView = "quality" | "margin" | "campaign"
+type ReportView = "quality" | "margin" | "campaign" | "distributed" | "sales" | "dialler"
 
 const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
@@ -244,6 +250,16 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
     title: "Campaigns",
     items: [{ label: "Campaign performance", view: "campaign" }],
+  },
+  {
+    // Moved out of the Distribution department's Dashboard tab, which no longer
+    // exists — reporting belongs in one place.
+    title: "Distribution",
+    items: [
+      { label: "Distributed", view: "distributed" },
+      { label: "Sales", view: "sales" },
+      { label: "Dialler", view: "dialler" },
+    ],
   },
 ]
 
@@ -366,6 +382,9 @@ export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
             {active.view === "quality" && <QualityMixReport />}
             {active.view === "margin" && <MarginReport />}
             {active.view === "campaign" && <CampaignPerformanceReport />}
+            {active.view === "distributed" && <DistributedDashboardPanel />}
+            {active.view === "sales" && <SalesDashboardPanel />}
+            {active.view === "dialler" && <DiallerDashboardPanel />}
           </div>
         </div>
       </SidebarInset>
