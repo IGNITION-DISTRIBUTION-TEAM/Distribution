@@ -750,6 +750,8 @@ type CohortRow = {
 type QualityPayload = {
   startDate: string
   endDate: string
+  sourceTable?: string
+  usingDefaultSource?: boolean
   bandOrder: string[]
   bands: BandRow[]
   cohorts: CohortRow[]
@@ -934,7 +936,26 @@ function QualityMixReport() {
         </div>
       )}
 
-      {data && (
+      {/* Connected, but the chosen window holds no sales. Say so plainly and
+          point at the range, rather than rendering empty tiles and charts. */}
+      {data && data.totals.accounts === 0 && (
+        <div className="mt-4 rounded-xl border border-border bg-card p-5">
+          <p className="text-sm text-foreground">
+            No sales between {data.startDate} and {data.endDate}.
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The source is connected and readable — this window simply has no sales in it. Widen the
+            dates (try Last 12 months) or clear the product filter.
+          </p>
+          {data.sourceTable && (
+            <p className="mt-2 font-mono text-xs text-muted-foreground">
+              reading {data.sourceTable}
+            </p>
+          )}
+        </div>
+      )}
+
+      {data && data.totals.accounts > 0 && (
         <>
           {/* ---- headline ---- */}
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1214,6 +1235,12 @@ function QualityMixReport() {
               Acquisition cost is not in the billing feed, so margin over CAC is not shown yet. Send
               commission and lead cost per sale and it can be added to this table.
             </p>
+            {data.sourceTable && (
+              <p className="font-mono">
+                reading {data.sourceTable}
+                {data.usingDefaultSource ? " (default)" : " (QUALITY_MIX_SOURCE_TABLE)"}
+              </p>
+            )}
           </div>
         </>
       )}

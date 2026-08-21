@@ -49,10 +49,14 @@ export const maxDuration = 60
  * collection row yet are reported as `pending`, never folded into the default
  * rate — a young cohort must not read as 0% default.
  *
- * The source object is configurable because the extract's home in Snowflake is
- * set per environment:
- *   QUALITY_MIX_SOURCE_TABLE  e.g. DATAWAREHOUSE.SCHEMA.VW_BILLING_EXTRACT
+ * Source object: defaults to the view scripts/quality-mix.sql creates, so the
+ * report works as soon as that view exists with no further configuration. Set
+ * QUALITY_MIX_SOURCE_TABLE to point somewhere else (a differently-named view, or
+ * the raw billing table).
  */
+
+// What scripts/quality-mix.sql builds. Keep the two in step.
+const DEFAULT_SOURCE_TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_QUALITY_MIX_BASE"
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 const QUALIFIED = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
@@ -114,17 +118,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "reporting")
   if (guard instanceof NextResponse) return guard
 
-  const table = (process.env.QUALITY_MIX_SOURCE_TABLE ?? "").trim()
-  if (!table) {
-    return NextResponse.json(
-      {
-        error:
-          "QUALITY_MIX_SOURCE_TABLE is not set on the server. Point it at the billing extract in Snowflake (DATABASE.SCHEMA.OBJECT) and redeploy.",
-        notConfigured: true,
-      },
-      { status: 400 }
-    )
-  }
+  const table = (process.env.QUALITY_MIX_SOURCE_TABLE ?? "").trim() || DEFAULT_SOURCE_TABLE
   if (!QUALIFIED.test(table)) {
     return NextResponse.json(
       { error: `QUALITY_MIX_SOURCE_TABLE must be DATABASE.SCHEMA.OBJECT (got "${table}")` },
@@ -319,6 +313,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       startDate,
       endDate,
+      sourceTable: table,
+      usingDefaultSource: table === DEFAULT_SOURCE_TABLE,
       bandOrder: BAND_ORDER,
       bands,
       cohorts,
@@ -344,6 +340,20 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/reporting/quality-mix] error:", message)
-    return NextResponse.json({ error: message }, { status: 500 })
+
+    // A missing or ungranted object is a setup problem, not a failure — return
+    // it as such so the UI can offer the table search instead of a raw error.
+    if (/does not exist|not authorized|invalid identifier/i.test(message)) {
+      return NextResponse.json(
+        {
+          error: `Could not read ${table}: ${message}`,
+          notConfigured: true,
+          sourceTable: table,
+          usingDefaultSource: table === DEFAULT_SOURCE_TABLE,
+        },
+        { status: 400 }
+      )
+    }
+    return NextResponse.json({ error: message, sourceTable: table }, { status: 500 })
   }
 }
