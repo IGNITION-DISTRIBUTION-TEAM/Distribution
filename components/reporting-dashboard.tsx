@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -771,6 +771,7 @@ type QualityPayload = {
   reasonsByMonth: { month: string; reason: string; accounts: number }[]
   productGroups: string[]
   brands: string[]
+  brandProducts: { brand: string; product: string }[]
   bandMode: "derived" | "scoregroup"
   totals: {
     accounts: number
@@ -822,11 +823,6 @@ const bandColour = (band: string, order: string[]): string => {
   const span = Math.max(1, order.filter((b) => b !== "unknown" && b !== "0").length - 1)
   return BAND_RAMP[Math.round((i / span) * (BAND_RAMP.length - 1))] ?? "bg-zinc-600"
 }
-
-// The band the business is currently asking about — highlighted so it is
-// findable without hunting down the table. Only meaningful for the round bands;
-// SCOREGROUP has no single label covering 650-699.
-const FOCUS_BAND = "650-699"
 
 const REASON_COLOURS = ["#0284c7", "#ea580c", "#7c3aed", "#059669"]
 const TOP_REASONS = 4
@@ -993,7 +989,6 @@ function QualityMixReport() {
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
   const [productGroup, setProductGroup] = useState("")
   const [brand, setBrand] = useState("")
-  const [bandMode, setBandMode] = useState<"derived" | "scoregroup">("derived")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1006,7 +1001,7 @@ function QualityMixReport() {
       const params = new URLSearchParams({ startDate, endDate })
       if (productGroup) params.set("productGroup", productGroup)
       if (brand) params.set("brand", brand)
-      params.set("bandMode", bandMode)
+      params.set("bandMode", "scoregroup")
       const res = await fetch(`/api/reporting/quality-mix?${params.toString()}`, {
         cache: "no-store",
       })
@@ -1023,12 +1018,25 @@ function QualityMixReport() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate, productGroup, brand, bandMode])
+  }, [startDate, endDate, productGroup, brand])
 
   useEffect(() => {
     run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Re-run when a dropdown changes, so a heading can never describe stale data.
+  // Dates keep the explicit button: a part-typed date would fire a query per
+  // keystroke.
+  const firstRender = useRef(true)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    run()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brand, productGroup])
 
   // Cohort rows arrive as cohort x band; roll up to a per-month view plus the
   // focus band's share, which is what "is the spread balancing out?" needs.
@@ -1071,10 +1079,23 @@ function QualityMixReport() {
     [data]
   )
 
-  const focus =
-    bandMode === "derived" ? data?.bands.find((b) => b.band === FOCUS_BAND) : undefined
+  // Products available for the selected brand. Falls back to every product when
+  // no brand is chosen, or when the pairs are missing for some reason.
+  const productOptions = useMemo(() => {
+    const pairs = data?.brandProducts ?? []
+    if (!brand || pairs.length === 0) return data?.productGroups ?? []
+    return [...new Set(pairs.filter((p) => p.brand === brand).map((p) => p.product))].sort()
+  }, [data, brand])
 
-  // Rank the lines by period total so the same reasons stay on the chart as the
+  // Changing brand can strip the chosen product out of the list; clear it so the
+  // filters can never describe a combination that returns nothing.
+  useEffect(() => {
+    if (productGroup && productOptions.length > 0 && !productOptions.includes(productGroup)) {
+      setProductGroup("")
+    }
+  }, [productOptions, productGroup])
+
+    // Rank the lines by period total so the same reasons stay on the chart as the
   // month-by-month ordering wobbles — colour follows the reason, not its rank
   // within a month.
   const topReasons = useMemo(
@@ -1089,10 +1110,8 @@ function QualityMixReport() {
         <div>
           <h2 className="text-xl font-semibold text-foreground">Customer quality mix</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            FTC and FID by credit score band, on sale cohorts.{" "}
-            {bandMode === "derived"
-              ? "Bands are derived from the raw score in 50-point buckets."
-              : "Banded on SCOREGROUP, the business\u2019s own labels."}
+            FTC and FID by credit score band, on sale cohorts. Banded on SCOREGROUP, the
+            business&rsquo;s own labels.
           </p>
         </div>
       </div>
@@ -1128,7 +1147,7 @@ function QualityMixReport() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all">All products</SelectItem>
-                {(data?.productGroups ?? []).map((p) => (
+                {productOptions.map((p) => (
                   <SelectItem key={p} value={p}>
                     {p}
                   </SelectItem>
@@ -1152,29 +1171,6 @@ function QualityMixReport() {
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Score banding</Label>
-            <div className="flex overflow-hidden rounded-md border border-border">
-              {([
-                { id: "derived", label: "50-point" },
-                { id: "scoregroup", label: "SCOREGROUP" },
-              ] as const).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setBandMode(opt.id)}
-                  className={cn(
-                    "px-3 py-2 text-xs transition-colors",
-                    bandMode === opt.id
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
           <Button onClick={run} disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Run report
@@ -1195,9 +1191,8 @@ function QualityMixReport() {
             </button>
           ))}
           <span className="text-xs text-muted-foreground">
-            {bandMode === "derived"
-              ? "Round 50-point bands — use these to answer questions phrased as \u201c650 to 699\u201d."
-              : "The business\u2019s own SCOREGROUP labels. Note they cross round boundaries, so 650\u2013699 spans several rows."}
+            Banded on SCOREGROUP. Its labels cross round boundaries, so a range like 650&ndash;699 spans
+            several rows.
           </span>
         </div>
       </div>
@@ -1270,14 +1265,6 @@ function QualityMixReport() {
             <h3 className="font-medium text-foreground">Score mix of accounts written</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {data.startDate} to {data.endDate}
-              {focus?.mixShare != null && (
-                <>
-                  {" · "}
-                  <span className="text-amber-200">
-                    {FOCUS_BAND} is {fmtPct(focus.mixShare)} of the mix
-                  </span>
-                </>
-              )}
             </p>
             <div className="mt-4 flex h-6 w-full overflow-hidden rounded-md">
               {data.bands.map((b) =>
@@ -1336,14 +1323,14 @@ function QualityMixReport() {
                   {data.bands.map((b) => (
                     <TableRow
                       key={b.band}
-                      className={bandMode === "derived" && b.band === FOCUS_BAND ? "bg-amber-500/5" : undefined}
+                      className={undefined}
                     >
                       <TableCell>
                         <span className="flex items-center gap-2">
                           <span
                             className={cn("h-2 w-2 rounded-full", bandColour(b.band, data.bandOrder))}
                           />
-                          <span className={bandMode === "derived" && b.band === FOCUS_BAND ? "font-medium text-foreground" : ""}>
+                          <span>
                             {b.band}
                           </span>
                         </span>
@@ -1394,9 +1381,6 @@ function QualityMixReport() {
                     <TableRow>
                       <TableHead>Cohort</TableHead>
                       <TableHead className="min-w-[120px]">Mix</TableHead>
-                      {bandMode === "derived" && (
-                        <TableHead className="text-right">{FOCUS_BAND}</TableHead>
-                      )}
                       <TableHead className="text-right">Accounts</TableHead>
                       <TableHead className="text-right">FTC %</TableHead>
                     </TableRow>
@@ -1405,7 +1389,7 @@ function QualityMixReport() {
                     {cohortSummary.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={bandMode === "derived" ? 5 : 4}
+                          colSpan={4}
                           className="text-center text-sm text-muted-foreground"
                         >
                           No cohorts in this period.
@@ -1413,7 +1397,6 @@ function QualityMixReport() {
                       </TableRow>
                     )}
                     {cohortSummary.map((c) => {
-                      const focusN = c.bands.get(FOCUS_BAND) ?? 0
                       return (
                         <TableRow key={c.cohort}>
                           <TableCell className="font-mono text-xs">{c.cohort}</TableCell>
@@ -1433,18 +1416,6 @@ function QualityMixReport() {
                               })}
                             </div>
                           </TableCell>
-                          {bandMode === "derived" && (
-                            <TableCell
-                              className={cn(
-                                "text-right font-mono text-sm",
-                                focusN / c.accounts >= 0.4
-                                  ? "text-amber-200"
-                                  : "text-muted-foreground"
-                              )}
-                            >
-                              {fmtPct(c.accounts > 0 ? focusN / c.accounts : null)}
-                            </TableCell>
-                          )}
                           <TableCell className="text-right font-mono text-sm">
                             {fmtInt(c.accounts)}
                           </TableCell>

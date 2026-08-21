@@ -224,7 +224,8 @@ export async function GET(request: NextRequest) {
 
   try {
     // NB: order must match the query order below.
-    const [byBand, byCohort, reasons, productGroups, notBilled, brands, reasonsByMonth] =
+    // NB: order must match the query order below.
+    const [byBand, byCohort, reasons, options, notBilled, reasonsByMonth] =
       await Promise.all([
       executeSnowflakeQuery<{
         BAND: string
@@ -283,14 +284,19 @@ export async function GET(request: NextRequest) {
          ORDER BY ACCOUNTS DESC`,
         SF
       ),
-      // Distinct products and brands in the period, ignoring those filters
-      // themselves so the dropdowns don't collapse to the current selection.
-      executeSnowflakeQuery<{ PRODUCT_GROUPS: string | null }>(
-        `SELECT DISTINCT PRODUCT_GROUPS
+      // Distinct brand/product PAIRS in the period, filtered only by date so the
+      // dropdowns never collapse to the current selection. Pairs (rather than
+      // two independent lists) let the product list cascade off the chosen brand
+      // client-side, with no extra round trip.
+      executeSnowflakeQuery<{ BRAND: string | null; PRODUCT: string | null }>(
+        `SELECT DISTINCT
+           UPPER(REPLACE(BRAND, ' ', '')) AS BRAND,
+           PRODUCT_GROUPS AS PRODUCT
          FROM ${table}
          WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'
+           AND BRAND IS NOT NULL AND TRIM(BRAND) <> ''
            AND PRODUCT_GROUPS IS NOT NULL AND TRIM(PRODUCT_GROUPS) <> ''
-         ORDER BY 1`,
+         ORDER BY 1, 2`,
         SF
       ),
       executeSnowflakeQuery<{ N: number | string }>(
@@ -303,14 +309,6 @@ export async function GET(request: NextRequest) {
          FROM all_accts a
          LEFT JOIN first_accts f ON f.ACCOUNTNO = a.ACCOUNTNO
          WHERE f.ACCOUNTNO IS NULL`,
-        SF
-      ),
-      executeSnowflakeQuery<{ BRAND: string | null }>(
-        `SELECT DISTINCT UPPER(REPLACE(BRAND, ' ', '')) AS BRAND
-         FROM ${table}
-         WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${startDate}' AND '${endDate}'
-           AND BRAND IS NOT NULL AND TRIM(BRAND) <> ''
-         ORDER BY 1`,
         SF
       ),
       // Failure reasons split by sale month, so a shift in the mix is visible
@@ -403,10 +401,19 @@ export async function GET(request: NextRequest) {
         reason: String(r.REASON ?? "(not given)"),
         accounts: num(r.ACCOUNTS),
       })),
-      productGroups: productGroups
-        .map((r) => String(r.PRODUCT_GROUPS ?? "").trim())
-        .filter(Boolean),
-      brands: brands.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean),
+      // Flat lists for the "all" case, plus the pairs the UI cascades on.
+      productGroups: [
+        ...new Set(options.map((r) => String(r.PRODUCT ?? "").trim()).filter(Boolean)),
+      ].sort(),
+      brands: [
+        ...new Set(options.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean)),
+      ].sort(),
+      brandProducts: options
+        .map((r) => ({
+          brand: String(r.BRAND ?? "").trim(),
+          product: String(r.PRODUCT ?? "").trim(),
+        }))
+        .filter((r) => r.brand && r.product),
       filters: {
         productGroup: productGroup || null,
         campaignName: campaignName || null,
