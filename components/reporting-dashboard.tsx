@@ -1308,7 +1308,6 @@ function QualityMixReport() {
                     <TableHead className="text-right">Mix</TableHead>
                     <TableHead className="text-right">Accounts</TableHead>
                     <TableHead className="text-right">Matured base</TableHead>
-                    <TableHead className="text-right">Pending</TableHead>
                     <TableHead className="text-right">FTC</TableHead>
                     <TableHead className="text-right">FTC %</TableHead>
                     <TableHead className="text-right">FID</TableHead>
@@ -1320,7 +1319,7 @@ function QualityMixReport() {
                 <TableBody>
                   {data.bands.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={10} className="text-center text-sm text-muted-foreground">
                         No accounts in this period.
                       </TableCell>
                     </TableRow>
@@ -1343,9 +1342,6 @@ function QualityMixReport() {
                       <TableCell className="text-right font-mono text-sm">{fmtPct(b.mixShare)}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{fmtInt(b.accounts)}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{fmtInt(b.base)}</TableCell>
-                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                        {b.pending > 0 ? fmtInt(b.pending) : "—"}
-                      </TableCell>
                       <TableCell className="text-right font-mono text-sm">{fmtInt(b.ftc)}</TableCell>
                       <TableCell className="text-right font-mono text-sm text-emerald-300">
                         {fmtPct(b.ftcRate)}
@@ -1394,14 +1390,13 @@ function QualityMixReport() {
                       )}
                       <TableHead className="text-right">Accounts</TableHead>
                       <TableHead className="text-right">FTC %</TableHead>
-                      <TableHead className="text-right">Pending</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {cohortSummary.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={bandMode === "derived" ? 6 : 5}
+                          colSpan={bandMode === "derived" ? 5 : 4}
                           className="text-center text-sm text-muted-foreground"
                         >
                           No cohorts in this period.
@@ -1447,9 +1442,7 @@ function QualityMixReport() {
                           <TableCell className="text-right font-mono text-sm text-emerald-300">
                             {fmtPct(c.base > 0 ? c.ftc / c.base : null)}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                            {c.pending > 0 ? fmtInt(c.pending) : "—"}
-                          </TableCell>
+
                         </TableRow>
                       )
                     })}
