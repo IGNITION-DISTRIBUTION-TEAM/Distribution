@@ -3770,6 +3770,85 @@ function todayLocalIso(): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
+/**
+ * Quick date ranges shared by the Distributed / Sales / Dialler reports, so they
+ * match the quality mix report's shortcuts instead of offering only "Today".
+ *
+ * Month arithmetic is done on a local Date and read back with the same
+ * todayLocalIso() formatting, so a range never lands a day out through a UTC
+ * conversion. "This month" starts on the 1st; the "last N months" ranges are
+ * calendar-relative, not 30-day multiples.
+ */
+type DateRangePreset = { label: string; range: () => { start: string; end: string } }
+
+const localIso = (d: Date): string => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+const monthsBack = (n: number): { start: string; end: string } => {
+  const end = new Date()
+  // setMonth() overflows on month-end dates — from 31 Aug it lands on 3 Mar
+  // rather than 28 Feb — so build the target month and clamp the day to its
+  // length.
+  const start = new Date(end.getFullYear(), end.getMonth() - n, 1)
+  const lastDayOfTarget = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
+  start.setDate(Math.min(end.getDate(), lastDayOfTarget))
+  return { start: localIso(start), end: localIso(end) }
+}
+
+const DATE_PRESETS: DateRangePreset[] = [
+  {
+    label: "Today",
+    range: () => ({ start: todayLocalIso(), end: todayLocalIso() }),
+  },
+  {
+    label: "Last 7 days",
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 6)
+      return { start: localIso(start), end: localIso(end) }
+    },
+  },
+  {
+    label: "This month",
+    range: () => {
+      const now = new Date()
+      return { start: localIso(new Date(now.getFullYear(), now.getMonth(), 1)), end: localIso(now) }
+    },
+  },
+  { label: "Last 3 months", range: () => monthsBack(3) },
+  { label: "Last 6 months", range: () => monthsBack(6) },
+  { label: "Last 12 months", range: () => monthsBack(12) },
+]
+
+function DatePresets({
+  onPick,
+}: {
+  onPick: (start: string, end: string) => void
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-3">
+      {DATE_PRESETS.map((p) => (
+        <button
+          key={p.label}
+          type="button"
+          onClick={() => {
+            const { start, end } = p.range()
+            onPick(start, end)
+          }}
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          {p.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function ForecastingContent() {
   return (
     <div className="flex flex-col gap-6">
@@ -4024,18 +4103,13 @@ export function DistributedDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  const t = todayLocalIso()
-                  setStartDate(t)
-                  setEndDate(t)
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Today
-              </button>
             </div>
+            <DatePresets
+              onPick={(start, end) => {
+                setStartDate(start)
+                setEndDate(end)
+              }}
+            />
           </div>
         </div>
       </div>
@@ -4338,18 +4412,13 @@ export function DiallerDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  const t = todayLocalIso()
-                  setStartDate(t)
-                  setEndDate(t)
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Today
-              </button>
             </div>
+            <DatePresets
+              onPick={(start, end) => {
+                setStartDate(start)
+                setEndDate(end)
+              }}
+            />
           </div>
         </div>
 
@@ -4797,18 +4866,13 @@ export function SalesDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  const t = todayLocalIso()
-                  setStartDate(t)
-                  setEndDate(t)
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Today
-              </button>
             </div>
+            <DatePresets
+              onPick={(start, end) => {
+                setStartDate(start)
+                setEndDate(end)
+              }}
+            />
           </div>
         </div>
 
