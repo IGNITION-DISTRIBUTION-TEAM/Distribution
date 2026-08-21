@@ -83,6 +83,11 @@ export async function GET(request: Request) {
   }
   const profileStart = dayShift(startDate, -28)
   const profileEnd = dayShift(startDate, -1)
+  // Fitting window for the daily forecast. The model must not depend on how wide
+  // a range the user happened to pick — "this month" is only ~3 weeks and cannot
+  // support day-of-week factors on its own — so it always fits on 12 trailing
+  // weeks ending at the selected end date.
+  const historyStart = dayShift(endDate, -84)
 
   const where = `
     WHERE ${campaignFilter}
@@ -98,8 +103,16 @@ export async function GET(request: Request) {
       ${inClause("ISINSURABLE", isInsurable)}
   `
 
+  const historyWhere = `
+    WHERE ${campaignFilter}
+      ORDERDATE BETWEEN '${historyStart}' AND '${endDate}'
+      ${inClause("PROVIDERTYPE", providerTypes)}
+      ${inClause("ISINSURABLE", isInsurable)}
+  `
+
   try {
-    const [totals, bySalesDate, hourProfile, byCampaign, byScoreDate] = await Promise.all([
+    const [totals, bySalesDate, hourProfile, dailyHistory, byCampaign, byScoreDate] =
+      await Promise.all([
       executeSnowflakeQuery<{
         TOTAL_SALES: number | string | null
         TOTAL_ROWS: number | string
@@ -154,6 +167,20 @@ export async function GET(request: Request) {
             SF_OPTS
           )
         : Promise.resolve([]),
+      // Daily history for fitting the forecast — wider than the selected range
+      // on purpose. Skipped on a single-day view, which uses the hour profile.
+      startDate === endDate
+        ? Promise.resolve([])
+        : executeSnowflakeQuery<{ BUCKET: string; SALES: number | string | null }>(
+            `SELECT
+               TO_CHAR(ORDERDATE, 'YYYY-MM-DD') AS BUCKET,
+               SUM(SALES) AS SALES
+             FROM ${VIEW}
+             ${historyWhere}
+             GROUP BY 1
+             ORDER BY 1`,
+            SF_OPTS
+          ),
       executeSnowflakeQuery<{ CAMPAIGNNAME: string | null; SALES: number | string | null }>(
         `SELECT CAMPAIGNNAME, SUM(SALES) AS SALES
          FROM ${VIEW}
@@ -198,6 +225,12 @@ export async function GET(request: Request) {
         campaigns: num(t.DISTINCT_CAMPAIGNS),
       },
       bySalesDate: bySalesDate.map((r) => ({ date: r.BUCKET, sales: numFloat(r.SALES) })),
+      // Trailing daily series used to fit the forecast, independent of the
+      // selected range. Empty on a single-day view.
+      dailyHistory: (dailyHistory as { BUCKET: string; SALES: number | string | null }[]).map(
+        (r) => ({ date: r.BUCKET, sales: numFloat(r.SALES) })
+      ),
+      historyFrom: historyStart,
       // Share of a day's sales landing in each hour, from the trailing window.
       // Empty on a multi-day range.
       hourProfile: (() => {

@@ -3860,15 +3860,20 @@ type SalesForecast = {
  * hence the fitted line over history, so its record is visible not asserted.
  */
 function forecastDailySales(
-  series: { date: string; sales: number | null }[],
+  fitSeries: { date: string; sales: number | null }[],
+  displaySeries: { date: string; sales: number | null }[],
   horizon = 14
 ): SalesForecast | null {
-  const pts = series.filter(
-    (q): q is { date: string; sales: number } =>
-      q.sales != null && Number.isFinite(q.sales) && /^\d{4}-\d{2}-\d{2}$/.test(q.date)
-  )
-  // Three weeks is the minimum for day-of-week factors worth having.
-  if (pts.length < 21) return null
+  const clean = (a: { date: string; sales: number | null }[]) =>
+    a.filter(
+      (q): q is { date: string; sales: number } =>
+        q.sales != null && Number.isFinite(q.sales) && /^\d{4}-\d{2}-\d{2}$/.test(q.date)
+    )
+  // Fit on the wider history; fall back to the displayed range if none came back.
+  const pts = clean(fitSeries.length > 0 ? fitSeries : displaySeries)
+  // Two weeks gives roughly two observations per weekday — the floor for
+  // day-of-week factors to mean anything.
+  if (pts.length < 14) return null
 
   const dow = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay()
   const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
@@ -3897,14 +3902,18 @@ function forecastDailySales(
   const at = (t: number, date: string) =>
     Math.max(0, (intercept + slope * t) * (factors.get(dow(date)) ?? 1))
 
-  const merged: SalesForecast["merged"] = pts.map((q, i) => ({
+  // Index every fitted date so a displayed point is scored at its true position
+  // in the fitted series, not at its position within the visible window.
+  const tByDate = new Map(pts.map((q, i) => [q.date, i]))
+  const shown = clean(displaySeries)
+  const merged: SalesForecast["merged"] = shown.map((q) => ({
     date: q.date,
     sales: q.sales,
-    predicted: at(i, q.date),
+    predicted: at(tByDate.get(q.date) ?? pts.length - 1, q.date),
     projected: false,
   }))
 
-  const last = new Date(`${pts[pts.length - 1].date}T00:00:00Z`)
+  const last = new Date(`${shown.length > 0 ? shown[shown.length - 1].date : pts[pts.length - 1].date}T00:00:00Z`)
   let firstProjectedDate: string | null = null
   for (let h = 1; h <= horizon; h++) {
     const d = new Date(last)
@@ -4301,6 +4310,8 @@ type SalesData = {
   granularity: "day" | "hour"
   totals: { totalSales: number; rows: number; days: number; campaigns: number }
   bySalesDate: { date: string; sales: number }[]
+  dailyHistory?: { date: string; sales: number }[]
+  historyFrom?: string
   hourProfile?: {
     hours: { hour: string; share: number }[]
     days: number
@@ -5162,7 +5173,10 @@ function SalesSummary({ data }: { data: SalesData }) {
   // Forecast only makes sense on the daily series; a single day is bucketed by
   // hour and has no day-of-week structure to model.
   const salesForecast = useMemo(
-    () => (data.granularity !== "hour" ? forecastDailySales(data.bySalesDate, 14) : null),
+    () =>
+      data.granularity !== "hour"
+        ? forecastDailySales(data.dailyHistory ?? [], data.bySalesDate, 14)
+        : null,
     [data]
   )
 
@@ -5322,7 +5336,8 @@ function SalesSummary({ data }: { data: SalesData }) {
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
               <p>
                 Predicted line: the day-of-week pattern times the trend of the deseasonalised series,
-                projected {salesForecast.horizon} days.
+                projected {salesForecast.horizon} days
+                {data.historyFrom && <> · fitted on sales since {data.historyFrom}</>}.
                 {salesForecast.mape !== null && (
                   <>
                     {" "}
