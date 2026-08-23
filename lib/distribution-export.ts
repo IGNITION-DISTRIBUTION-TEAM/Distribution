@@ -20,6 +20,10 @@ export type ExportResult = {
   totalRows: number
   /** Name for a bundle when there are several batches. */
   fallbackName: string
+  /** Which SILVERSURFER lookup actually ran. */
+  lookupTier: LookupTier
+  /** Why a tier was skipped, for surfacing to the operator. */
+  lookupNotes: string[]
 }
 
 // Resolve the lead-expiry days configured for the campaign so the export's
@@ -43,17 +47,50 @@ export async function resolveLeadExpiryDays(cid: number): Promise<number> {
   return DEFAULT_LEAD_EXPIRY_DAYS
 }
 
+/**
+ * How much of the SILVERSURFER lookup to attempt.
+ *
+ * That lookup exists solely to populate SS_LEADCUSTOMERID — one column out of
+ * sixty-odd — and the join to LEAD_LEADCUSTOMERDETAILS contributes no columns at
+ * all, acting only as an existence filter. When the app's Snowflake role cannot
+ * reach those objects the whole export used to fail, so it now steps down:
+ *
+ *   full      both tables, original behaviour
+ *   noDetails LEAD_LEADCUSTOMER only — keeps SS_LEADCUSTOMERID, drops the
+ *             existence filter. Row count is unaffected: the outer join is a LEFT
+ *             join and the QUALIFY still keeps one row per IDNUMBER, so this can
+ *             only populate MORE values, never add or remove export rows.
+ *   noLookup  no lookup at all, SS_LEADCUSTOMERID comes out NULL
+ *
+ * Fifty-nine correct columns beat a failed download.
+ */
+export type LookupTier = "full" | "noDetails" | "noLookup"
+
 // The distribution export in the agreed CXM format. `cid` is a validated
 // integer substituted into both campaign-id filters; `expiryDays` is a
 // validated integer used for the LeadExpiry column.
-export function buildQuery(cid: number, expiryDays: number): string {
-  return `with cte1 as (
+export function buildQuery(cid: number, expiryDays: number, tier: LookupTier = "full"): string {
+  const cte =
+    tier === "noLookup"
+      ? ""
+      : tier === "noDetails"
+      ? `with cte1 as (
+  select a.IDNUMBER, a.LEADCUSTOMERID
+  from "DATAWAREHOUSE"."SILVERSURFER"."LEAD_LEADCUSTOMER" a
+  where CAMPAIGNID in (${cid})
+)
+`
+      : `with cte1 as (
   select a.IDNUMBER, a.LEADCUSTOMERID
   from "DATAWAREHOUSE"."SILVERSURFER"."LEAD_LEADCUSTOMER" a
   join "DATAWAREHOUSE"."SILVERSURFER"."LEAD_LEADCUSTOMERDETAILS" b on a.LeadCustomerId = b.LeadCustomerId
   where CAMPAIGNID in (${cid})
 )
-SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
+`
+  const ssExpr = tier === "noLookup" ? "NULL" : "LEADCUSTOMERID"
+  const ssJoin = tier === "noLookup" ? "" : "left join cte1 b on a.IDNUMBER = b.IDNUMBER\n"
+
+  return `${cte}SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
      , RTRIM(LTRIM(LASTNAME)) AS "Last Name"
      , DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CELLNUMBER) as "Contact No"
      , EMAIL as "Email ID"
@@ -106,7 +143,7 @@ SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
      , REGEXP_REPLACE(UDM30, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS DATA_DAY_RANK
      , NULL AS DEVICE_DETAILS
      , NULL AS PROVIDER_ACCOUNT_NUMBER
-     , LEADCUSTOMERID AS SS_LEADCUSTOMERID
+     , ${ssExpr} AS SS_LEADCUSTOMERID
      , CASE WHEN DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1) = DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CELLNUMBER)
         THEN NULL ELSE DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1) END AS CONTACTNUMBER2
      , CASE WHEN DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER2) = DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1)
@@ -116,8 +153,7 @@ SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
      , REGEXP_REPLACE(EXTRADATA, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS EXTRADATA
      , NULL AS "Next Dial Time"
 FROM ${HLL} a
-left join cte1 b on a.IDNUMBER = b.IDNUMBER
-WHERE CAMPAIGNID in (${cid})
+${ssJoin}WHERE CAMPAIGNID in (${cid})
   AND cast(CREATEDONDATE as date) = cast(CURRENT_DATE() AS date)
   AND ESTATUS IS NULL
 QUALIFY ROW_NUMBER() OVER (PARTITION BY a.IDNUMBER ORDER BY score desc) = 1
@@ -132,12 +168,40 @@ order by cast(UDM30 as int) asc`
  * that sanitise to the same file name get a numeric suffix rather than silently
  * overwriting one another.
  */
+/** A missing or ungranted object, as opposed to a real query fault. */
+function isMissingObject(message: string): boolean {
+  return /does not exist or not authorized|Object '[^']+' does not exist/i.test(message)
+}
+
 export async function buildExportFiles(cid: number): Promise<ExportResult> {
   const expiryDays = await resolveLeadExpiryDays(cid)
-  const { columns, rows } = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays), {
-    database: "DATAWAREHOUSE",
-    schema: "DISTRIBUTION_DATA_APPLICATION",
-  })
+
+  // Step down only on a missing/ungranted object. Anything else is a real fault
+  // and is rethrown immediately rather than retried into a worse query.
+  const tiers: LookupTier[] = ["full", "noDetails", "noLookup"]
+  let columns: Awaited<ReturnType<typeof executeSnowflakeQueryWithMeta>>["columns"] | null = null
+  let rows: unknown[][] | null = null
+  let usedTier: LookupTier = "full"
+  const notes: string[] = []
+
+  for (const tier of tiers) {
+    try {
+      const res = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays, tier), {
+        database: "DATAWAREHOUSE",
+        schema: "DISTRIBUTION_DATA_APPLICATION",
+      })
+      columns = res.columns
+      rows = res.rows
+      usedTier = tier
+      break
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!isMissingObject(message) || tier === "noLookup") throw error
+      notes.push(`${tier}: ${message.replace(/\s+/g, " ").slice(0, 200)}`)
+      console.warn(`[distribution-export] ${tier} lookup unavailable, stepping down:`, message)
+    }
+  }
+  if (!columns || !rows) throw new Error("Export produced no result set")
 
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "")
   const fallbackName = `distribution_${cid}_${stamp}`
@@ -168,6 +232,8 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
       ],
       totalRows: rows.length,
       fallbackName,
+      lookupTier: usedTier,
+      lookupNotes: notes,
     }
   }
 
@@ -184,5 +250,5 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
       batchName: g.batchName,
     })
   }
-  return { files, totalRows: rows.length, fallbackName }
+  return { files, totalRows: rows.length, fallbackName, lookupTier: usedTier, lookupNotes: notes }
 }

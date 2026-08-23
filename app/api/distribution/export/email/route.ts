@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   const cid = Number(raw)
 
   try {
-    const { files, totalRows } = await buildExportFiles(cid)
+    const { files, totalRows, lookupTier, lookupNotes } = await buildExportFiles(cid)
 
     if (totalRows === 0) {
       return NextResponse.json(
@@ -72,6 +72,19 @@ export async function POST(request: NextRequest) {
       "",
       ...files.map((f) => `  ${f.filename} — ${f.rows.toLocaleString()} rows`),
       "",
+      ...(lookupTier === "noLookup"
+        ? [
+            "NOTE: SS_LEADCUSTOMERID is empty in this file — the SilverSurfer lookup",
+            "is not reachable by the reporting role. Every other column is unaffected.",
+            "",
+          ]
+        : lookupTier === "noDetails"
+        ? [
+            "NOTE: SS_LEADCUSTOMERID was resolved without the LEAD_LEADCUSTOMERDETAILS",
+            "filter, which was not reachable. Row count is unaffected.",
+            "",
+          ]
+        : []),
       `Sent from the Distribution portal by ${guard.email}.`,
     ]
 
@@ -95,6 +108,9 @@ export async function POST(request: NextRequest) {
       // "upload" means it went via a draft and chunked upload sessions, which is
       // slower but unbounded; "inline" is the single-request path.
       transport: sent.path,
+      // Degraded lookups are reported rather than passed off as a clean run.
+      lookupTier,
+      lookupNotes,
       files: files.map((f) => ({ filename: f.filename, rows: f.rows })),
     })
   } catch (error) {

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   const cid = Number(raw)
 
   try {
-    const { files, totalRows, fallbackName } = await buildExportFiles(cid)
+    const { files, totalRows, fallbackName, lookupTier } = await buildExportFiles(cid)
 
     if (files.length <= 1) {
       const only = files[0]
@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="${only ? only.filename : fallbackName + ".csv"}"`,
           "X-Row-Count": String(totalRows),
+          "X-Lookup-Tier": lookupTier,
           "Cache-Control": "no-store",
         },
       })
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${fallbackName}.zip"`,
         "X-Row-Count": String(totalRows),
         "X-Batch-Count": String(files.length),
+        "X-Lookup-Tier": lookupTier,
         "Cache-Control": "no-store",
       },
     })
