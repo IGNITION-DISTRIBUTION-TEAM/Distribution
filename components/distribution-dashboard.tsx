@@ -549,7 +549,13 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         { method: "POST" }
       )
       const text = await res.text()
-      let data: { ok?: boolean; error?: string; to?: string[]; files?: { filename: string; rows: number }[] }
+      let data: {
+        ok?: boolean
+        error?: string
+        to?: string[]
+        messages?: number
+        files?: { filename: string; rows: number }[]
+      }
       try {
         data = JSON.parse(text)
       } catch {
@@ -557,7 +563,12 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
       }
       if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
       const names = (data.files ?? []).map((f) => f.filename).join(", ")
-      setResult(`Sent to ${(data.to ?? []).join(", ")} — ${names}`)
+      const n = data.messages ?? 1
+      setResult(
+        `Sent to ${(data.to ?? []).join(", ")}${
+          n > 1 ? ` in ${n} messages (one per batch)` : ""
+        } — ${names}`
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -577,8 +588,8 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         Send the same file to{" "}
         <span className="font-medium text-foreground">DATA Operations and Dialler</span>. The
         attachment is named after the batch; several batches are attached as separate files. Built
-        from the same query as the download, so it is the identical file. Any size — large exports
-        upload in chunks, which takes longer.
+        from the same query as the download, so it is the identical file. A large export is
+        compressed, and split into one message per batch if it still will not fit.
       </p>
       <Button variant="outline" onClick={send} disabled={sending}>
         {sending ? (
