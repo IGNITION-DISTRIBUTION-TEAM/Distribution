@@ -474,3 +474,186 @@ export async function sendGraphMailWith(
     throw new Error(`Graph sendMail failed (${res.status}): ${detail}`)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Large attachments
+// ---------------------------------------------------------------------------
+
+/**
+ * Attachment carried as raw bytes. Kept as a Buffer rather than base64 so the
+ * upload-session path can PUT it directly without a pointless re-encode.
+ */
+export type MailFile = { name: string; content: Buffer; contentType?: string }
+
+/**
+ * sendMail carries attachments inside the request body, which Graph caps at 4MB.
+ * Base64 inflates by 4/3, so the inline path is only safe for roughly 3MB of raw
+ * bytes. Anything larger goes through a draft message and an upload session,
+ * which has no practical size limit.
+ */
+const INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024
+
+/**
+ * Upload chunks must be a multiple of 320 KiB, and Graph rejects requests over
+ * 4MB, so 12 x 320 KiB (3.75MB) is the largest legal chunk.
+ */
+const UPLOAD_CHUNK_BYTES = 320 * 1024 * 12
+
+const graphHeaders = (token: string) => ({
+  Authorization: `Bearer ${token}`,
+  "Content-Type": "application/json",
+})
+
+async function graphJson(
+  res: Response,
+  what: string
+): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  } catch {
+    if (!res.ok) throw new Error(`${what} failed (${res.status}): ${text.slice(0, 300)}`)
+    return {}
+  }
+  if (!res.ok) {
+    const err = parsed.error as { message?: string; code?: string } | undefined
+    throw new Error(`${what} failed (${res.status}): ${err?.message || err?.code || text.slice(0, 300)}`)
+  }
+  return parsed
+}
+
+/**
+ * Attach one file to a draft by upload session, in chunks.
+ *
+ * The upload URL is pre-authorised, so the chunk PUTs deliberately carry no
+ * Authorization header — Graph rejects some requests that include one.
+ */
+async function uploadAttachment(
+  mailbox: string,
+  messageId: string,
+  file: MailFile,
+  token: string
+): Promise<void> {
+  const size = file.content.length
+  const sessionRes = await fetch(
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/messages/${messageId}/attachments/createUploadSession`,
+    {
+      method: "POST",
+      headers: graphHeaders(token),
+      body: JSON.stringify({
+        AttachmentItem: {
+          attachmentType: "file",
+          name: file.name,
+          size,
+          contentType: file.contentType ?? "application/octet-stream",
+        },
+      }),
+    }
+  )
+  const session = await graphJson(sessionRes, `Create upload session for ${file.name}`)
+  const uploadUrl = String(session.uploadUrl ?? "")
+  if (!uploadUrl) throw new Error(`Graph returned no uploadUrl for ${file.name}`)
+
+  for (let start = 0; start < size; start += UPLOAD_CHUNK_BYTES) {
+    const end = Math.min(start + UPLOAD_CHUNK_BYTES, size) - 1
+    const chunk = file.content.subarray(start, end + 1)
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Length": String(chunk.length),
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+      },
+      body: new Uint8Array(chunk),
+    })
+    // 200/201 close the session on the final chunk; 202 accepts an interim one.
+    if (![200, 201, 202].includes(res.status)) {
+      const text = await res.text()
+      throw new Error(
+        `Uploading ${file.name} failed at bytes ${start}-${end} (${res.status}): ${text.slice(0, 300)}`
+      )
+    }
+  }
+}
+
+/**
+ * Send mail with attachments of any size.
+ *
+ * Small payloads take the single-request sendMail path. Larger ones create a
+ * draft, stream each attachment into it via an upload session, then send the
+ * draft — which is how Graph supports large files, and removes any size ceiling
+ * from the caller's point of view.
+ */
+export async function sendGraphMailFiles(input: {
+  to: string[]
+  subject: string
+  body: string
+  files: MailFile[]
+  contentType?: "Text" | "HTML"
+  cc?: string[]
+  bcc?: string[]
+}): Promise<{ path: "inline" | "upload"; bytes: number }> {
+  const config = await readGraphMailConfig()
+  if (!config.enabled) throw new Error("Graph mail is disabled in App settings → Email.")
+  if (!config.mailbox) throw new Error("Graph mail has no sending mailbox configured.")
+
+  const bytes = input.files.reduce((a, f) => a + f.content.length, 0)
+
+  // Small enough to ride along in the send request.
+  if (bytes <= INLINE_ATTACHMENT_LIMIT) {
+    await sendGraphMailWith(config, {
+      to: input.to,
+      cc: input.cc,
+      bcc: input.bcc,
+      subject: input.subject,
+      body: input.body,
+      contentType: input.contentType,
+      attachments: input.files.map((f) => ({
+        name: f.name,
+        contentBytes: f.content.toString("base64"),
+        contentType: f.contentType,
+      })),
+    })
+    return { path: "inline", bytes }
+  }
+
+  const token = await getGraphAppToken(config)
+  const base = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(config.mailbox)}`
+
+  // 1. draft
+  const draftRes = await fetch(`${base}/messages`, {
+    method: "POST",
+    headers: graphHeaders(token),
+    body: JSON.stringify({
+      subject: input.subject,
+      body: { contentType: input.contentType ?? "Text", content: input.body },
+      toRecipients: input.to.map((address) => ({ emailAddress: { address } })),
+      ...(input.cc?.length
+        ? { ccRecipients: input.cc.map((address) => ({ emailAddress: { address } })) }
+        : {}),
+      ...(input.bcc?.length
+        ? { bccRecipients: input.bcc.map((address) => ({ emailAddress: { address } })) }
+        : {}),
+    }),
+  })
+  const draft = await graphJson(draftRes, "Create draft message")
+  const messageId = String(draft.id ?? "")
+  if (!messageId) throw new Error("Graph returned no message id for the draft")
+
+  // 2. attachments, one upload session each
+  for (const file of input.files) {
+    await uploadAttachment(config.mailbox, messageId, file, token)
+  }
+
+  // 3. send it
+  const sendRes = await fetch(`${base}/messages/${messageId}/send`, {
+    method: "POST",
+    headers: graphHeaders(token),
+  })
+  if (!sendRes.ok) {
+    const text = await sendRes.text()
+    throw new Error(`Sending the draft failed (${sendRes.status}): ${text.slice(0, 300)}`)
+  }
+
+  return { path: "upload", bytes }
+}

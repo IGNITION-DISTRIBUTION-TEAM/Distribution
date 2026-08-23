@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { buildExportFiles } from "@/lib/distribution-export"
-import { sendGraphMail } from "@/lib/graph-mail"
+import { sendGraphMailFiles } from "@/lib/graph-mail"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -22,13 +22,9 @@ export const maxDuration = 300
 
 const DEFAULT_TO = "b2a181bc.bizsparkmobiusco.onmicrosoft.com@emea.teams.ms"
 
-// Graph's sendMail carries attachments inside the request body and caps the
-// request at 4MB. Base64 inflates by 4/3, so 3MB of CSV already encodes to a
-// full 4MB with nothing left for the message itself — the ceiling is set at
-// 2.5MB (~3.3MB encoded) to leave headroom. Beyond that Graph needs an upload
-// session against a draft message, which this does not implement, so the limit
-// is checked up front and reported rather than failing deep inside the send.
-const MAX_RAW_ATTACHMENT_BYTES = Math.floor(2.5 * 1024 * 1024)
+// No size ceiling: sendGraphMailFiles() takes the single-request path for small
+// payloads and switches to a draft plus chunked upload sessions for large ones,
+// so an export of any size sends.
 
 function recipients(): string[] {
   const configured = (process.env.DISTRIBUTION_EXPORT_EMAIL_TO ?? "").trim()
@@ -62,22 +58,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const bytes = files.reduce((a, f) => a + Buffer.byteLength(f.csv, "utf-8"), 0)
-    if (bytes > MAX_RAW_ATTACHMENT_BYTES) {
-      const mb = (bytes / 1024 / 1024).toFixed(1)
-      return NextResponse.json(
-        {
-          error:
-            `The export is ${mb}MB, over the ${(MAX_RAW_ATTACHMENT_BYTES / 1024 / 1024).toFixed(0)}MB ` +
-            "that fits in a Graph message. Use Download data (CSV) and attach it manually, or ask for " +
-            "large-attachment support (an upload session against a draft) to be added.",
-          bytes,
-          rows: totalRows,
-        },
-        { status: 413 }
-      )
-    }
-
     const to = recipients()
     const batchNames = files.map((f) => f.batchName).filter((b): b is string => !!b)
     const subject =
@@ -95,13 +75,13 @@ export async function POST(request: NextRequest) {
       `Sent from the Distribution portal by ${guard.email}.`,
     ]
 
-    await sendGraphMail({
+    const sent = await sendGraphMailFiles({
       to,
       subject,
       body: lines.join("\n"),
-      attachments: files.map((f) => ({
+      files: files.map((f) => ({
         name: f.filename,
-        contentBytes: Buffer.from(f.csv, "utf-8").toString("base64"),
+        content: Buffer.from(f.csv, "utf-8"),
         contentType: "text/csv",
       })),
     })
@@ -111,6 +91,10 @@ export async function POST(request: NextRequest) {
       to,
       subject,
       rows: totalRows,
+      bytes: sent.bytes,
+      // "upload" means it went via a draft and chunked upload sessions, which is
+      // slower but unbounded; "inline" is the single-request path.
+      transport: sent.path,
       files: files.map((f) => ({ filename: f.filename, rows: f.rows })),
     })
   } catch (error) {

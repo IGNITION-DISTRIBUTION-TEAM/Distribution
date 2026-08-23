@@ -577,7 +577,8 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         Send the same file to{" "}
         <span className="font-medium text-foreground">DATA Operations and Dialler</span>. The
         attachment is named after the batch; several batches are attached as separate files. Built
-        from the same query as the download, so it is the identical file.
+        from the same query as the download, so it is the identical file. Any size — large exports
+        upload in chunks, which takes longer.
       </p>
       <Button variant="outline" onClick={send} disabled={sending}>
         {sending ? (
