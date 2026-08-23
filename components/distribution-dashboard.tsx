@@ -100,6 +100,7 @@ import {
   Database,
   Settings as SettingsIcon,
   LayoutDashboard,
+  Mail,
   TrendingUp,
   Recycle,
   Waves,
@@ -523,6 +524,71 @@ function ManualContent() {
           </Button>
         </div>
       )}
+
+      {selectedCampaign && (
+        <div className="rounded-xl border border-border bg-card p-6">
+          <EmailExportStep campaignId={String(selectedCampaign.id)} step={5} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EmailExportStep({ campaignId, step }: { campaignId: string; step: number }) {
+  const [sending, setSending] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async () => {
+    setSending(true)
+    setResult(null)
+    setError(null)
+    try {
+      const res = await fetch(
+        `/api/distribution/export/email?campaignId=${encodeURIComponent(campaignId)}`,
+        { method: "POST" }
+      )
+      const text = await res.text()
+      let data: { ok?: boolean; error?: string; to?: string[]; files?: { filename: string; rows: number }[] }
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(`Server returned ${res.status} (not JSON): ${text.slice(0, 160)}`)
+      }
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      const names = (data.files ?? []).map((f) => f.filename).join(", ")
+      setResult(`Sent to ${(data.to ?? []).join(", ")} — ${names}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+          {step}
+        </span>
+        <h3 className="font-medium text-foreground">Email data</h3>
+      </div>
+      <p className="mb-4 text-sm text-muted-foreground">
+        Send the same file to{" "}
+        <span className="font-medium text-foreground">DATA Operations and Dialler</span>. The
+        attachment is named after the batch; several batches are attached as separate files. Built
+        from the same query as the download, so it is the identical file.
+      </p>
+      <Button variant="outline" onClick={send} disabled={sending}>
+        {sending ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Mail className="mr-2 h-4 w-4" />
+        )}
+        {sending ? "Sending..." : "Email data"}
+      </Button>
+      {result && <p className="mt-3 text-sm text-emerald-300">{result}</p>}
+      {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
     </div>
   )
 }
@@ -7140,6 +7206,12 @@ function CampaignSettingsPanel() {
                       <Download className="mr-2 h-4 w-4" /> Download data (CSV)
                     </a>
                   </Button>
+                </div>
+              )}
+
+              {campaignId && (
+                <div className="mt-3 rounded-md border border-border bg-background/40 p-3">
+                  <EmailExportStep campaignId={campaignId} step={5} />
                 </div>
               )}
 
