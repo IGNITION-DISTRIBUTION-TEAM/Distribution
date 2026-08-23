@@ -480,6 +480,29 @@ export async function sendGraphMailWith(
 // ---------------------------------------------------------------------------
 
 /**
+ * Thrown when a payload will not fit a single sendMail request and the caller has
+ * ruled out the draft + upload-session path (which needs Mail.ReadWrite). Carries
+ * the sizes so the caller can explain the decision rather than guess at it.
+ */
+export class TooLargeForInline extends Error {
+  constructor(
+    readonly rawBytes: number,
+    readonly zippedBytes: number | null,
+    readonly zipError: string | null
+  ) {
+    const zipNote =
+      zippedBytes !== null
+        ? `${(zippedBytes / 1024 / 1024).toFixed(2)}MB zipped`
+        : `could not be zipped${zipError ? ` (${zipError})` : ""}`
+    super(
+      `Payload is ${(rawBytes / 1024 / 1024).toFixed(2)}MB raw, ${zipNote}, over the ` +
+        `${(INLINE_ATTACHMENT_LIMIT / 1024 / 1024).toFixed(0)}MB a single Graph message allows.`
+    )
+    this.name = "TooLargeForInline"
+  }
+}
+
+/**
  * Attachment carried as raw bytes. Kept as a Buffer rather than base64 so the
  * upload-session path can PUT it directly without a pointless re-encode.
  */
@@ -606,6 +629,12 @@ export async function sendGraphMailFiles(input: {
   bcc?: string[]
   /** Name for the archive if the files have to be zipped to fit. */
   archiveName?: string
+  /**
+   * Allow the draft + upload-session path, which needs Mail.ReadWrite. Set false
+   * to keep strictly within Mail.Send: the call then throws TooLargeForInline
+   * instead, and the caller can split the payload and send several messages.
+   */
+  allowUpload?: boolean
 }): Promise<{ path: "inline" | "zipped" | "upload"; bytes: number; sentBytes: number }> {
   const config = await readGraphMailConfig()
   if (!config.enabled) throw new Error("Graph mail is disabled in App settings → Email.")
@@ -634,6 +663,9 @@ export async function sendGraphMailFiles(input: {
     return { path: "inline", bytes, sentBytes: bytes }
   }
 
+  let zippedBytes: number | null = null
+  let zipError: string | null = null
+
   // Too big to send as-is. Try compressing before reaching for the draft path:
   // CSV deflates to roughly a tenth of its size, so a 25MB export still fits in
   // a single request — and that path needs only Mail.Send, where the draft plus
@@ -654,10 +686,18 @@ export async function sendGraphMailFiles(input: {
       ])
       return { path: "zipped", bytes, sentBytes: zipped.length }
     }
+    zippedBytes = zipped.length
   } catch (error) {
-    // Compression is an optimisation, not a requirement — fall through to the
-    // upload path rather than failing the send because zipping went wrong.
-    console.warn("[graph-mail] zip fallback failed, using upload session:", error)
+    // Compression is an optimisation, not a requirement — fall through rather
+    // than failing the send because zipping went wrong.
+    console.warn("[graph-mail] zip fallback failed:", error)
+    zipError = error instanceof Error ? error.message : String(error)
+  }
+
+  // Caller wants to stay inside Mail.Send: report the sizes so the decision to
+  // split is made on facts rather than a guess about compression.
+  if (input.allowUpload === false) {
+    throw new TooLargeForInline(bytes, zippedBytes, zipError)
   }
 
   const token = await getGraphAppToken(config)

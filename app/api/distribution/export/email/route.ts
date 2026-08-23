@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { buildExportFiles } from "@/lib/distribution-export"
-import { sendGraphMailFiles } from "@/lib/graph-mail"
+import { sendGraphMailFiles, TooLargeForInline } from "@/lib/graph-mail"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -88,29 +88,75 @@ export async function POST(request: NextRequest) {
       `Sent from the Distribution portal by ${guard.email}.`,
     ]
 
-    const sent = await sendGraphMailFiles({
-      to,
-      subject,
-      body: lines.join("\n"),
-      // Used only if the files have to be zipped to fit a single request.
-      archiveName: batchNames.length === 1 ? batchNames[0] : `distribution_${cid}`,
-      files: files.map((f) => ({
-        name: f.filename,
-        content: Buffer.from(f.csv, "utf-8"),
-        contentType: "text/csv",
-      })),
+    const asAttachment = (f: (typeof files)[number]) => ({
+      name: f.filename,
+      content: Buffer.from(f.csv, "utf-8"),
+      contentType: "text/csv",
     })
+
+    // Stay inside Mail.Send. The draft + upload path needs Mail.ReadWrite, which
+    // this app deliberately does not hold, so a payload that will not fit is
+    // split across messages instead of escalating the permission.
+    const sends: { subject: string; transport: string; sentBytes: number; files: string[] }[] = []
+
+    try {
+      const sent = await sendGraphMailFiles({
+        to,
+        subject,
+        body: lines.join("\n"),
+        archiveName: batchNames.length === 1 ? batchNames[0] : `distribution_${cid}`,
+        files: files.map(asAttachment),
+        allowUpload: false,
+      })
+      sends.push({
+        subject,
+        transport: sent.path,
+        sentBytes: sent.sentBytes,
+        files: files.map((f) => f.filename),
+      })
+    } catch (error) {
+      if (!(error instanceof TooLargeForInline) || files.length < 2) throw error
+
+      // One message per batch. The export is already split by BATCHNAME and the
+      // file name IS the batch name, so this keeps the agreed deliverable — one
+      // file per batch — rather than chopping a file into arbitrary parts.
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        const partSubject = `${
+          f.batchName ? `Distribution export — ${f.batchName}` : subject
+        } (${i + 1} of ${files.length})`
+        const partBody = [
+          `Distributed leads for campaign ${cid} — batch ${i + 1} of ${files.length}.`,
+          `${f.filename} — ${f.rows.toLocaleString()} rows, CXM format (CSV, UTF-8, no BOM).`,
+          "",
+          "Sent as separate messages because the full export exceeds what one message can carry.",
+          "",
+          `Sent from the Distribution portal by ${guard.email}.`,
+        ].join("\n")
+
+        const sent = await sendGraphMailFiles({
+          to,
+          subject: partSubject,
+          body: partBody,
+          archiveName: f.batchName ?? f.filename.replace(/\.csv$/i, ""),
+          files: [asAttachment(f)],
+          allowUpload: false,
+        })
+        sends.push({
+          subject: partSubject,
+          transport: sent.path,
+          sentBytes: sent.sentBytes,
+          files: [f.filename],
+        })
+      }
+    }
 
     return NextResponse.json({
       ok: true,
       to,
-      subject,
       rows: totalRows,
-      bytes: sent.bytes,
-      sentBytes: sent.sentBytes,
-      // "upload" means it went via a draft and chunked upload sessions, which is
-      // slower but unbounded; "inline" is the single-request path.
-      transport: sent.path,
+      messages: sends.length,
+      sends,
       // Degraded lookups are reported rather than passed off as a clean run.
       lookupTier,
       lookupNotes,
