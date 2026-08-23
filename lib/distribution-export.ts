@@ -1,5 +1,6 @@
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { rowsToCsv, safeFilename } from "@/lib/dialler-csv"
+import type { SnowflakeColumn } from "@/lib/snowflake"
 import { CONFIGS_TABLE, CONFIG_SF } from "@/lib/distribution-steps"
 import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
 
@@ -13,7 +14,19 @@ import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
 
 const HLL = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
 
-export type ExportFile = { filename: string; csv: string; rows: number; batchName: string | null }
+export type ExportFile = {
+  filename: string
+  csv: string
+  rows: number
+  batchName: string | null
+  /**
+   * The rows behind this file, kept so an oversized file can be split at the ROW
+   * level. Splitting the CSV text is not safe: csvEscape quotes any value
+   * containing a comma, quote or newline, so a field may legitimately span lines
+   * and naive line-splitting would corrupt records.
+   */
+  rawRows: unknown[][]
+}
 
 export type ExportResult = {
   files: ExportFile[]
@@ -24,6 +37,8 @@ export type ExportResult = {
   lookupTier: LookupTier
   /** Why a tier was skipped, for surfacing to the operator. */
   lookupNotes: string[]
+  /** Column metadata, needed to re-serialise a subset of rows. */
+  columns: SnowflakeColumn[]
 }
 
 // Resolve the lead-expiry days configured for the campaign so the export's
@@ -228,12 +243,19 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
   if (groups.size === 0) {
     return {
       files: [
-        { filename: `${fallbackName}.csv`, csv: rowsToCsv(columns, rows), rows: rows.length, batchName: null },
+        {
+          filename: `${fallbackName}.csv`,
+          csv: rowsToCsv(columns, rows),
+          rows: rows.length,
+          batchName: null,
+          rawRows: rows,
+        },
       ],
       totalRows: rows.length,
       fallbackName,
       lookupTier: usedTier,
       lookupNotes: notes,
+      columns,
     }
   }
 
@@ -248,7 +270,49 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
       csv: rowsToCsv(columns, g.rows),
       rows: g.rows.length,
       batchName: g.batchName,
+      rawRows: g.rows,
     })
   }
-  return { files, totalRows: rows.length, fallbackName, lookupTier: usedTier, lookupNotes: notes }
+  return {
+    files,
+    totalRows: rows.length,
+    fallbackName,
+    lookupTier: usedTier,
+    lookupNotes: notes,
+    columns,
+  }
+}
+
+/**
+ * Split one export file into `parts` files of roughly equal row count, each with
+ * its own header row.
+ *
+ * Splits ROWS, not CSV text — see the note on ExportFile.rawRows. Each part is
+ * named "<batch>_batchN.csv" so the batch it came from stays legible and the
+ * parts sort in order.
+ */
+export function splitExportFile(
+  columns: SnowflakeColumn[],
+  file: ExportFile,
+  parts: number
+): ExportFile[] {
+  const n = Math.max(2, Math.floor(parts))
+  const total = file.rawRows.length
+  if (total < n) return [file]
+
+  const base = file.filename.replace(/\.csv$/i, "")
+  const per = Math.ceil(total / n)
+  const out: ExportFile[] = []
+  for (let i = 0; i < n; i++) {
+    const slice = file.rawRows.slice(i * per, (i + 1) * per)
+    if (slice.length === 0) continue
+    out.push({
+      filename: `${base}_batch${i + 1}.csv`,
+      csv: rowsToCsv(columns, slice),
+      rows: slice.length,
+      batchName: file.batchName,
+      rawRows: slice,
+    })
+  }
+  return out
 }

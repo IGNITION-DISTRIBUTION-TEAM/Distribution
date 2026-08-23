@@ -554,7 +554,8 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         error?: string
         to?: string[]
         messages?: number
-        files?: { filename: string; rows: number }[]
+        split?: boolean
+        sends?: { filename: string; rows: number }[]
       }
       try {
         data = JSON.parse(text)
@@ -562,12 +563,12 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         throw new Error(`Server returned ${res.status} (not JSON): ${text.slice(0, 160)}`)
       }
       if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-      const names = (data.files ?? []).map((f) => f.filename).join(", ")
       const n = data.messages ?? 1
+      const names = (data.sends ?? []).map((f) => f.filename).join(", ")
       setResult(
-        `Sent to ${(data.to ?? []).join(", ")}${
-          n > 1 ? ` in ${n} messages (one per batch)` : ""
-        } — ${names}`
+        n > 1
+          ? `Sent to ${(data.to ?? []).join(", ")} in ${n} emails — ${names}`
+          : `Sent to ${(data.to ?? []).join(", ")} — ${names}`
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -589,7 +590,8 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
         <span className="font-medium text-foreground">DATA Operations and Dialler</span>. The
         attachment is named after the batch; several batches are attached as separate files. Built
         from the same query as the download, so it is the identical file. A large export is
-        compressed, and split into one message per batch if it still will not fit.
+        compressed, and split across several emails if it still will not fit — each marked
+        &ldquo;batch 1 of N&rdquo; with the batch name, and each carrying its own header row.
       </p>
       <Button variant="outline" onClick={send} disabled={sending}>
         {sending ? (

@@ -516,6 +516,30 @@ export type MailFile = { name: string; content: Buffer; contentType?: string }
  */
 const INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024
 
+/** What one sendMail request can carry, so callers can plan a split. */
+export const INLINE_LIMIT_BYTES = INLINE_ATTACHMENT_LIMIT
+
+/**
+ * Compressed size of a set of files, for planning a split without sending
+ * anything. Returns null if compression fails, so the caller falls back to raw
+ * sizes rather than treating a zip failure as "it fits".
+ */
+export async function zippedBytesFor(files: MailFile[]): Promise<number | null> {
+  try {
+    const { default: JSZip } = await import("jszip")
+    const zip = new JSZip()
+    for (const f of files) zip.file(f.name, f.content)
+    const buf = await zip.generateAsync({
+      type: "nodebuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    })
+    return buf.length
+  } catch {
+    return null
+  }
+}
+
 /**
  * Upload chunks must be a multiple of 320 KiB, and Graph rejects requests over
  * 4MB, so 12 x 320 KiB (3.75MB) is the largest legal chunk.
