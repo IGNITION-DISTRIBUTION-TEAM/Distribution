@@ -518,7 +518,19 @@ async function graphJson(
   }
   if (!res.ok) {
     const err = parsed.error as { message?: string; code?: string } | undefined
-    throw new Error(`${what} failed (${res.status}): ${err?.message || err?.code || text.slice(0, 300)}`)
+    const detail = err?.message || err?.code || text.slice(0, 300)
+    // A 403 here is almost always a missing application permission rather than a
+    // bad credential: sending needs Mail.Send, but creating a draft and running
+    // an upload session need Mail.ReadWrite. Say so, because "Access is denied.
+    // Check credentials" sends people to check the certificate, which is fine.
+    if (res.status === 403) {
+      throw new Error(
+        `${what} failed (403): ${detail} — this step needs the Mail.ReadWrite ` +
+          "application permission on the mailbox; Mail.Send alone only covers the " +
+          "single-request send path."
+      )
+    }
+    throw new Error(`${what} failed (${res.status}): ${detail}`)
   }
   return parsed
 }
@@ -592,29 +604,60 @@ export async function sendGraphMailFiles(input: {
   contentType?: "Text" | "HTML"
   cc?: string[]
   bcc?: string[]
-}): Promise<{ path: "inline" | "upload"; bytes: number }> {
+  /** Name for the archive if the files have to be zipped to fit. */
+  archiveName?: string
+}): Promise<{ path: "inline" | "zipped" | "upload"; bytes: number; sentBytes: number }> {
   const config = await readGraphMailConfig()
   if (!config.enabled) throw new Error("Graph mail is disabled in App settings → Email.")
   if (!config.mailbox) throw new Error("Graph mail has no sending mailbox configured.")
 
   const bytes = input.files.reduce((a, f) => a + f.content.length, 0)
 
-  // Small enough to ride along in the send request.
-  if (bytes <= INLINE_ATTACHMENT_LIMIT) {
-    await sendGraphMailWith(config, {
+  const sendInline = async (files: MailFile[]) =>
+    sendGraphMailWith(config, {
       to: input.to,
       cc: input.cc,
       bcc: input.bcc,
       subject: input.subject,
       body: input.body,
       contentType: input.contentType,
-      attachments: input.files.map((f) => ({
+      attachments: files.map((f) => ({
         name: f.name,
         contentBytes: f.content.toString("base64"),
         contentType: f.contentType,
       })),
     })
-    return { path: "inline", bytes }
+
+  // Small enough to ride along in the send request.
+  if (bytes <= INLINE_ATTACHMENT_LIMIT) {
+    await sendInline(input.files)
+    return { path: "inline", bytes, sentBytes: bytes }
+  }
+
+  // Too big to send as-is. Try compressing before reaching for the draft path:
+  // CSV deflates to roughly a tenth of its size, so a 25MB export still fits in
+  // a single request — and that path needs only Mail.Send, where the draft plus
+  // upload-session path additionally needs Mail.ReadWrite.
+  try {
+    const { default: JSZip } = await import("jszip")
+    const zip = new JSZip()
+    for (const f of input.files) zip.file(f.name, f.content)
+    const zipped = await zip.generateAsync({
+      type: "nodebuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    })
+    if (zipped.length <= INLINE_ATTACHMENT_LIMIT) {
+      const name = `${(input.archiveName || "attachments").replace(/\.zip$/i, "")}.zip`
+      await sendInline([
+        { name, content: Buffer.from(zipped), contentType: "application/zip" },
+      ])
+      return { path: "zipped", bytes, sentBytes: zipped.length }
+    }
+  } catch (error) {
+    // Compression is an optimisation, not a requirement — fall through to the
+    // upload path rather than failing the send because zipping went wrong.
+    console.warn("[graph-mail] zip fallback failed, using upload session:", error)
   }
 
   const token = await getGraphAppToken(config)
@@ -655,5 +698,5 @@ export async function sendGraphMailFiles(input: {
     throw new Error(`Sending the draft failed (${sendRes.status}): ${text.slice(0, 300)}`)
   }
 
-  return { path: "upload", bytes }
+  return { path: "upload", bytes, sentBytes: bytes }
 }

@@ -92,6 +92,8 @@ export async function POST(request: NextRequest) {
       to,
       subject,
       body: lines.join("\n"),
+      // Used only if the files have to be zipped to fit a single request.
+      archiveName: batchNames.length === 1 ? batchNames[0] : `distribution_${cid}`,
       files: files.map((f) => ({
         name: f.filename,
         content: Buffer.from(f.csv, "utf-8"),
@@ -105,6 +107,7 @@ export async function POST(request: NextRequest) {
       subject,
       rows: totalRows,
       bytes: sent.bytes,
+      sentBytes: sent.sentBytes,
       // "upload" means it went via a draft and chunked upload sessions, which is
       // slower but unbounded; "inline" is the single-request path.
       transport: sent.path,
