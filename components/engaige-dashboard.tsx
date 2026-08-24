@@ -1537,17 +1537,35 @@ function AssignmentsSection() {
     load()
   }, [load])
 
+  const configActive = useMemo(
+    () => new Map(configs.map((c) => [c.configId, c.isActive])),
+    [configs]
+  )
+
+  /**
+   * An assignment only actually runs when BOTH it and its configuration are
+   * active — an active schedule under a switched-off configuration never fires.
+   * The filter therefore works on that effective status, not on the assignment
+   * flag alone: filtering "Active" used to list inactive configurations because
+   * they still held active schedules underneath.
+   */
+  const isEffectivelyActive = useCallback(
+    (a: EngaigeAssignment) => a.isActive && (configActive.get(a.configId) ?? false),
+    [configActive]
+  )
+
   const byConfig = useMemo(() => {
     const m = new Map<string, EngaigeAssignment[]>()
     for (const a of assignments) {
-      if (statusFilter === "active" && !a.isActive) continue
-      if (statusFilter === "inactive" && a.isActive) continue
+      const effective = a.isActive && (configActive.get(a.configId) ?? false)
+      if (statusFilter === "active" && !effective) continue
+      if (statusFilter === "inactive" && effective) continue
       const arr = m.get(a.configId) ?? []
       arr.push(a)
       m.set(a.configId, arr)
     }
     return m
-  }, [assignments, statusFilter])
+  }, [assignments, statusFilter, configActive])
 
   // Search by config name; when a status filter is on, hide configs with no
   // matching assignments so the list only shows relevant groups.
@@ -1799,6 +1817,11 @@ function AssignmentsSection() {
             </div>
             <span className="text-sm text-muted-foreground">
               {visibleConfigs.length} configuration{visibleConfigs.length === 1 ? "" : "s"}
+              {statusFilter !== "all" && (
+                <span className="ml-1">
+                  with {statusFilter === "active" ? "a running" : "a non-running"} schedule
+                </span>
+              )}
             </span>
           </div>
 
@@ -1933,13 +1956,24 @@ function AssignmentsSection() {
                             <Badge
                               variant="outline"
                               className={`ml-3 ${
-                                a.isActive
+                                isEffectivelyActive(a)
                                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                  : a.isActive
+                                  ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
                                   : "border-rose-500/30 bg-rose-500/10 text-rose-300"
                               }`}
                             >
-                              {a.isActive ? "Active" : "Inactive"}
+                              {isEffectivelyActive(a)
+                                ? "Active"
+                                : a.isActive
+                                ? "Won't run"
+                                : "Inactive"}
                             </Badge>
+                            {a.isActive && !isEffectivelyActive(a) && (
+                              <span className="ml-2 text-xs text-amber-200/80">
+                                schedule is on, configuration is off
+                              </span>
+                            )}
                           </div>
                           <div className="flex gap-2">
                             <Button variant="outline" size="sm" onClick={() => startEdit(a)}>
