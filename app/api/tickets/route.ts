@@ -21,6 +21,7 @@ import {
   rateLimitOk,
   sqlString,
 } from "@/lib/tickets-server"
+import { notifyTicketCreated } from "@/lib/ticket-notify"
 
 export const dynamic = "force-dynamic"
 
@@ -284,7 +285,21 @@ export async function POST(request: NextRequest) {
       SF_OPTS
     )
 
-    return NextResponse.json({ success: true, ticketRef, ticketId })
+    // Confirmation to the requestor. Deliberately AFTER the insert and awaited
+    // but never allowed to fail the request: the ticket exists either way, and a
+    // 500 here would have the requestor log a duplicate. notifyTicketCreated
+    // swallows its own errors.
+    const notified = await notifyTicketCreated({
+      ticketRef,
+      requestorName,
+      requestorEmail,
+      requestType,
+      urgency,
+      department: answers.department ?? null,
+      attachments: attachments.length,
+    })
+
+    return NextResponse.json({ success: true, ticketRef, ticketId, notified })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/tickets] create error:", message)

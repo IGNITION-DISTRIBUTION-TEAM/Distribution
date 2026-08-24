@@ -3,6 +3,7 @@ import { executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { TICKETS_TABLE, TICKET_STATUSES } from "@/lib/tickets-shared"
 import { SF_OPTS, sqlString } from "@/lib/tickets-server"
+import { notifyTicketUpdated } from "@/lib/ticket-notify"
 
 export const dynamic = "force-dynamic"
 
@@ -49,6 +50,34 @@ export async function PATCH(
   sets.push(`UPDATED_BY = ${sqlString(guard.email)}`, `UPDATED_AT = CURRENT_TIMESTAMP()`)
 
   try {
+    // Read the current state BEFORE updating: the notification needs the
+    // requestor and the status it is moving from, and neither survives the write.
+    // Best-effort — a failed read must not block the update itself.
+    let before: {
+      ref: string
+      name: string
+      email: string
+      status: string | null
+    } | null = null
+    try {
+      const prev = await executeSnowflakeQueryWithMeta(
+        `SELECT TICKET_REF, CREATED_BY_NAME, CREATED_BY_EMAIL, STATUS
+         FROM ${TICKETS_TABLE} WHERE TICKET_ID = ${sqlString(id)}`,
+        SF_OPTS
+      )
+      const r = prev.rows[0]
+      if (r) {
+        before = {
+          ref: String(r[0] ?? ""),
+          name: String(r[1] ?? ""),
+          email: String(r[2] ?? ""),
+          status: r[3] == null ? null : String(r[3]),
+        }
+      }
+    } catch (error) {
+      console.warn("[/api/tickets/[id]] could not read ticket before update:", error)
+    }
+
     const { rows } = await executeSnowflakeQueryWithMeta(
       `UPDATE ${TICKETS_TABLE} SET ${sets.join(", ")} WHERE TICKET_ID = ${sqlString(id)}`,
       SF_OPTS
@@ -58,7 +87,26 @@ export async function PATCH(
     if (updated === 0) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
     }
-    return NextResponse.json({ success: true })
+
+    // Notify the requestor. Never allowed to fail the update — the change is
+    // already committed, and notifyTicketUpdated swallows its own errors.
+    let notified = false
+    if (before?.email) {
+      notified = await notifyTicketUpdated({
+        ticketRef: before.ref,
+        requestorName: before.name,
+        requestorEmail: before.email,
+        status: body.status !== undefined ? String(body.status) : null,
+        previousStatus: before.status,
+        assignedTo:
+          body.assignedTo !== undefined && String(body.assignedTo).trim() !== ""
+            ? String(body.assignedTo).trim()
+            : null,
+        updatedBy: guard.email,
+      })
+    }
+
+    return NextResponse.json({ success: true, notified })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/tickets/[id]] update error:", message)
