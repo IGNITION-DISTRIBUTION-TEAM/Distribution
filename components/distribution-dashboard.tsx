@@ -42,6 +42,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -99,6 +100,7 @@ import {
   Server,
   Database,
   Settings as SettingsIcon,
+  DatabaseZap,
   LayoutDashboard,
   Mail,
   TrendingUp,
@@ -122,6 +124,7 @@ const navItems: NavItem[] = [
   { id: "automation", label: "Automation", icon: <Zap className="h-4 w-4" /> },
   { id: "extend-expired", label: "Extend Expired Leads", icon: <Clock className="h-4 w-4" /> },
   { id: "daily-files", label: "Daily Files", icon: <Files className="h-4 w-4" /> },
+  { id: "temp-upload", label: "Temp Upload", icon: <DatabaseZap className="h-4 w-4" /> },
   { id: "recycle", label: "Recycle", icon: <Recycle className="h-4 w-4" /> },
   { id: "silver-surfer", label: "Silver Surfer", icon: <Waves className="h-4 w-4" /> },
   { id: "forecasting", label: "Forecasting", icon: <TrendingUp className="h-4 w-4" /> },
@@ -4112,6 +4115,271 @@ function ForecastingContent() {
   )
 }
 
+type TempUploadResult = {
+  ok?: boolean
+  ran?: boolean
+  error?: string
+  columns?: { name: string; type: string }[]
+  rows?: unknown[][]
+  steps?: { step: string; ms: number; detail?: string }[]
+  ranBy?: string
+  ranAt?: string
+}
+
+/**
+ * Temp upload — truncate TEMP_UPLOAD, run SP_SYNC_BATCH_COUNTS_TODAY, show the
+ * result.
+ *
+ * The table is rendered from the returned column metadata rather than a fixed
+ * BATCHNAME / SYSTEMMESSAGE / COUNT shape, so a change to the procedure's output
+ * shows up instead of being silently dropped. Numeric columns are right-aligned
+ * and totalled.
+ */
+function TempUploadContent() {
+  const [data, setData] = useState<TempUploadResult | null>(null)
+  const [running, setRunning] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async (method: "GET" | "POST") => {
+    if (method === "POST") setRunning(true)
+    else setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/distribution/temp-upload", { method, cache: "no-store" })
+      const text = await res.text()
+      let json: TempUploadResult
+      try {
+        json = JSON.parse(text)
+      } catch {
+        throw new Error(`Server returned ${res.status} (not JSON): ${text.slice(0, 200)}`)
+      }
+      if (!res.ok || !json.ok) {
+        setData(json)
+        throw new Error(json.error || `HTTP ${res.status}`)
+      }
+      setData(json)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load("GET")
+  }, [load])
+
+  const columns = data?.columns ?? []
+  const rows = data?.rows ?? []
+
+  // Which columns are numeric, for alignment and totals.
+  const numericIdx = useMemo(() => {
+    const set = new Set<number>()
+    columns.forEach((c, i) => {
+      if (/^(FIXED|NUMBER|INTEGER|FLOAT|REAL|DECIMAL)/i.test(c.type || "")) set.add(i)
+    })
+    return set
+  }, [columns])
+
+  const totals = useMemo(() => {
+    const out = new Map<number, number>()
+    for (const i of numericIdx) {
+      let sum = 0
+      for (const row of rows) {
+        const n = Number(row[i])
+        if (Number.isFinite(n)) sum += n
+      }
+      out.set(i, sum)
+    }
+    return out
+  }, [rows, numericIdx])
+
+  const exportCsv = () => {
+    if (columns.length === 0) return
+    const esc = (v: unknown) => {
+      const t = v === null || v === undefined ? "" : String(v)
+      return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
+    }
+    const lines = [
+      columns.map((c) => esc(c.name)).join(","),
+      ...rows.map((r) => r.map(esc).join(",")),
+    ]
+    const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `temp_upload_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold text-foreground">Temp Upload</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Today&apos;s batch counts, refreshed from the source systems.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-medium text-foreground">Refresh batch counts</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Empties <span className="font-mono text-xs">TEMP_UPLOAD</span>, runs{" "}
+              <span className="font-mono text-xs">SP_SYNC_BATCH_COUNTS_TODAY()</span>, then reads the
+              table back. The truncate is intended — this table is a staging area for this process.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => load("GET")} disabled={running || loading}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Reload
+            </Button>
+            <Button onClick={() => load("POST")} disabled={running || loading}>
+              {running ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <DatabaseZap className="mr-2 h-4 w-4" />
+              )}
+              {running ? "Running..." : "Run refresh"}
+            </Button>
+          </div>
+        </div>
+
+        {data?.ranAt && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Last run {new Date(data.ranAt).toLocaleString()}
+            {data.ranBy ? ` by ${data.ranBy}` : ""}
+            {data.steps && data.steps.length > 0
+              ? ` · ${data.steps.map((st) => `${st.step} ${(st.ms / 1000).toFixed(1)}s`).join(" · ")}`
+              : ""}
+          </p>
+        )}
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+          {error}
+          {data?.steps && data.steps.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-rose-200/80">
+              {data.steps.map((st, i) => (
+                <li key={i}>
+                  {st.step} — {(st.ms / 1000).toFixed(1)}s{st.detail ? " — failed" : " — ok"}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h3 className="font-medium text-foreground">
+            TEMP_UPLOAD{" "}
+            <span className="text-sm text-muted-foreground">
+              ({rows.length.toLocaleString()} row{rows.length === 1 ? "" : "s"})
+            </span>
+          </h3>
+          <Button variant="outline" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
+        <div className="max-h-[640px] overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {columns.map((c, i) => (
+                  <TableHead key={c.name} className={numericIdx.has(i) ? "text-right" : undefined}>
+                    {c.name}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(loading || running) && (
+                <TableRow>
+                  <TableCell
+                    colSpan={Math.max(1, columns.length)}
+                    className="text-center text-sm text-muted-foreground"
+                  >
+                    {running ? "Running refresh..." : "Loading..."}
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && !running && rows.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={Math.max(1, columns.length)}
+                    className="text-center text-sm text-muted-foreground"
+                  >
+                    Empty — run the refresh to populate it.
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading &&
+                !running &&
+                rows.map((row, ri) => (
+                  <TableRow key={ri}>
+                    {columns.map((c, ci) => {
+                      const v = row[ci]
+                      const isNum = numericIdx.has(ci)
+                      const empty = v === null || v === undefined || v === ""
+                      return (
+                        <TableCell
+                          key={c.name}
+                          className={
+                            isNum
+                              ? "text-right font-mono text-sm"
+                              : "font-mono text-xs text-foreground"
+                          }
+                        >
+                          {empty ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : isNum ? (
+                            Number(v).toLocaleString()
+                          ) : (
+                            String(v)
+                          )}
+                        </TableCell>
+                      )
+                    })}
+                  </TableRow>
+                ))}
+            </TableBody>
+            {rows.length > 0 && numericIdx.size > 0 && (
+              <TableFooter>
+                <TableRow className="border-t-2 border-border">
+                  {columns.map((c, i) => (
+                    <TableCell
+                      key={c.name}
+                      className={
+                        numericIdx.has(i)
+                          ? "text-right font-mono text-sm font-medium text-foreground"
+                          : "text-muted-foreground"
+                      }
+                    >
+                      {i === 0
+                        ? "Total"
+                        : numericIdx.has(i)
+                        ? (totals.get(i) ?? 0).toLocaleString()
+                        : ""}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableFooter>
+            )}
+          </Table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RecycleContent() {
   return (
     <div className="flex flex-col gap-6">
@@ -7554,6 +7822,8 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
         return <ExtendExpiredContent />
       case "daily-files":
         return <DailyFilesContent />
+      case "temp-upload":
+        return <TempUploadContent />
       case "recycle":
         return <RecycleContent />
       case "silver-surfer":
