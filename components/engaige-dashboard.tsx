@@ -1475,6 +1475,13 @@ function AssignmentsSection() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  /**
+   * Which config card opened the form, or null when it was opened from the
+   * header. The form renders in that card so the schedule is created where the
+   * user clicked — hunting for the right entry in a 200-plus native select was
+   * the reason these looked unschedulable.
+   */
+  const [formAnchor, setFormAnchor] = useState<string | null>(null)
   const [form, setForm] = useState({
     configId: "",
     taskWindow: TIME_WINDOWS[0],
@@ -1644,12 +1651,25 @@ function AssignmentsSection() {
         body: JSON.stringify(form),
       })
       setShowForm(false)
+      setFormAnchor(null)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
+  }
+
+  const openFormFor = (configId: string | null) => {
+    setError(null)
+    if (configId) setForm((f) => ({ ...f, configId }))
+    setFormAnchor(configId)
+    setShowForm(true)
+  }
+
+  const closeForm = () => {
+    setShowForm(false)
+    setFormAnchor(null)
   }
 
   const toggle = async (assignmentId: string) => {
@@ -1686,6 +1706,87 @@ function AssignmentsSection() {
     return "Specific: " + map.filter(([v]) => v).map(([, l]) => l).join(", ")
   }
 
+  // One instance, rendered either at the top or inside the card that asked for
+  // it — never both at once.
+  const assignmentForm = (
+    <div className="flex flex-col gap-3 rounded-xl border border-primary/40 bg-background/40 p-5">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-muted-foreground">Configuration</span>
+          <select
+            className={inputCls}
+            value={form.configId}
+            onChange={(e) => setForm({ ...form, configId: e.target.value })}
+          >
+            {configs.map((c) => (
+              <option key={c.configId} value={c.configId}>
+                {c.configName}
+                {c.isActive ? "" : " (inactive)"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-muted-foreground">Time window</span>
+          <select
+            className={inputCls}
+            value={form.taskWindow}
+            onChange={(e) => setForm({ ...form, taskWindow: e.target.value })}
+          >
+            {TIME_WINDOWS.map((t) => (
+              <option key={t} value={t}>
+                {timeLabel(t)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-muted-foreground">Schedule type</span>
+          <select
+            className={inputCls}
+            value={form.scheduleType}
+            onChange={(e) => setScheduleType(e.target.value)}
+          >
+            {SCHEDULE_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {form.scheduleType === "Specific Days" && (
+        <div className="flex flex-wrap gap-3">
+          {DAY_KEYS.map((d) => (
+            <label key={d} className="flex items-center gap-1.5 text-sm capitalize text-foreground">
+              <input
+                type="checkbox"
+                checked={form.days[d]}
+                onChange={(e) => setForm({ ...form, days: { ...form.days, [d]: e.target.checked } })}
+              />
+              {d.slice(0, 3)}
+            </label>
+          ))}
+        </div>
+      )}
+      {!configActive.get(form.configId) && (
+        <p className="text-xs text-amber-200/80">
+          This configuration is switched off — the schedule will be saved but won&apos;t run until you
+          activate it.
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button onClick={addAssignment} disabled={busy}>
+          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+          Add assignment
+        </Button>
+        <Button variant="ghost" onClick={closeForm} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  )
+
   if (loading) return <Spinner label="Loading assignments…" />
 
   return (
@@ -1696,7 +1797,7 @@ function AssignmentsSection() {
           <p className="mt-1 text-sm text-muted-foreground">Scheduled run windows per configuration.</p>
         </div>
         {!showForm && configs.length > 0 && (
-          <Button size="sm" onClick={() => setShowForm(true)}>
+          <Button size="sm" onClick={() => openFormFor(null)}>
             <Plus className="mr-2 h-4 w-4" /> Add assignment
           </Button>
         )}
@@ -1709,78 +1810,7 @@ function AssignmentsSection() {
         </div>
       ) : (
         <>
-          {showForm && (
-            <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-muted-foreground">Configuration</span>
-                  <select
-                    className={inputCls}
-                    value={form.configId}
-                    onChange={(e) => setForm({ ...form, configId: e.target.value })}
-                  >
-                    {configs.map((c) => (
-                      <option key={c.configId} value={c.configId}>
-                        {c.configName}
-                        {c.isActive ? "" : " (inactive)"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-muted-foreground">Time window</span>
-                  <select
-                    className={inputCls}
-                    value={form.taskWindow}
-                    onChange={(e) => setForm({ ...form, taskWindow: e.target.value })}
-                  >
-                    {TIME_WINDOWS.map((t) => (
-                      <option key={t} value={t}>
-                        {timeLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-muted-foreground">Schedule type</span>
-                  <select
-                    className={inputCls}
-                    value={form.scheduleType}
-                    onChange={(e) => setScheduleType(e.target.value)}
-                  >
-                    {SCHEDULE_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {form.scheduleType === "Specific Days" && (
-                <div className="flex flex-wrap gap-3">
-                  {DAY_KEYS.map((d) => (
-                    <label key={d} className="flex items-center gap-1.5 text-sm capitalize text-foreground">
-                      <input
-                        type="checkbox"
-                        checked={form.days[d]}
-                        onChange={(e) => setForm({ ...form, days: { ...form.days, [d]: e.target.checked } })}
-                      />
-                      {d.slice(0, 3)}
-                    </label>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <Button onClick={addAssignment} disabled={busy}>
-                  {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Add assignment
-                </Button>
-                <Button variant="ghost" onClick={() => setShowForm(false)} disabled={busy}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
+          {showForm && formAnchor === null && assignmentForm}
 
           <div className="flex flex-wrap items-center gap-3">
             <input
@@ -1845,17 +1875,30 @@ function AssignmentsSection() {
                       </Badge>
                     )}
                   </h3>
-                  {!c.isActive && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!c.isActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => toggleConfigActive(c.configId)}
+                      >
+                        Activate configuration
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      onClick={() => toggleConfigActive(c.configId)}
+                      onClick={() => openFormFor(c.configId)}
                     >
-                      Activate configuration
+                      <Plus className="mr-2 h-4 w-4" /> Schedule
                     </Button>
-                  )}
+                  </div>
                 </div>
+                {showForm && formAnchor === c.configId && (
+                  <div className="mb-3">{assignmentForm}</div>
+                )}
                 {list.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {statusFilter === "all" ? "No assignments." : `No ${statusFilter} assignments.`}
@@ -2537,7 +2580,9 @@ const TOUR_STEPS: TourStep[] = [
       <>
         <p>Set the times a configuration should run on its own.</p>
         <ul className="ml-4 list-disc space-y-1">
-          <li><b>Add assignment</b> — pick a config, a time window, and a schedule (Daily / Weekdays / Weekends / specific days).</li>
+          <li><b>Schedule</b> (on a config card) — adds a run window to that config, with it already picked for you.</li>
+          <li><b>Add assignment</b> (top right) — the same form, but you pick the config yourself.</li>
+          <li>A config that is switched off can still be scheduled — the schedule just won&apos;t run until you activate it.</li>
           <li><b>Edit</b> — change an existing assignment's time or days.</li>
           <li><b>Activate / Deactivate</b> — pause a schedule without deleting it.</li>
           <li><b>Search &amp; the All/Active/Inactive filter</b> — find assignments quickly.</li>
