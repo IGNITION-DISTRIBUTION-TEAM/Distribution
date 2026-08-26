@@ -5766,8 +5766,11 @@ function SalesSummary({ data }: { data: SalesData }) {
 
 function AvgScoreLineChart({
   data,
+  filterNote,
 }: {
   data: { date: string; avgScore: number | null; count: number }[]
+  /** Set when the caller has narrowed the series with the grid's date filter. */
+  filterNote?: string
 }) {
   // Filter out days with no leads (avgScore null) so the line doesn't drop to 0.
   const series = data
@@ -5777,7 +5780,9 @@ function AvgScoreLineChart({
   if (series.length === 0) {
     return (
       <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">
-        No score data to plot.
+        {filterNote
+          ? "No score data for the selected days — widen the date filter on the grid."
+          : "No score data to plot."}
       </div>
     )
   }
@@ -5789,6 +5794,7 @@ function AvgScoreLineChart({
         <p className="text-sm text-muted-foreground">
           Mean of <span className="font-mono">SCORE</span> per day · {series.length} day
           {series.length === 1 ? "" : "s"} with data
+          {filterNote && <> · {filterNote}</>}
         </p>
       </div>
       <div className="h-64 w-full">
@@ -5835,8 +5841,19 @@ function AvgScoreLineChart({
 
 function ScoreDateHeatgrid({
   data,
+  selectedDates: controlledDates,
+  onSelectedDatesChange,
 }: {
   data: { scoreGroup: string; date: string; count: number }[]
+  /**
+   * Optional controlled date selection. When a parent passes the handler, the
+   * date filter is lifted out of this card so the same day selection can narrow
+   * other panels — the Distributed report uses it for the average-score line, so
+   * the grid and the line always describe the same days. Left out, the grid owns
+   * the selection itself.
+   */
+  selectedDates?: Set<string> | null
+  onSelectedDatesChange?: (next: Set<string> | null) => void
 }) {
   // All score groups present in the data, ordered by their numeric bound.
   const allScoreGroups = useMemo(() => {
@@ -5854,14 +5871,20 @@ function ScoreDateHeatgrid({
   const [filterOpen, setFilterOpen] = useState(false)
   const [dateFilterOpen, setDateFilterOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string> | null>(null)
-  const [selectedDates, setSelectedDates] = useState<Set<string> | null>(null)
+  const [ownSelectedDates, setOwnSelectedDates] = useState<Set<string> | null>(null)
   const [mode, setMode] = useState<"count" | "percent">("count")
 
-  // Reset filters whenever the underlying data changes (e.g. new query).
+  const datesControlled = onSelectedDatesChange !== undefined
+  const selectedDates = datesControlled ? controlledDates ?? null : ownSelectedDates
+  const setSelectedDates = datesControlled ? onSelectedDatesChange : setOwnSelectedDates
+
+  // Reset filters whenever the underlying data changes (e.g. new query). When
+  // the dates are controlled the owner resets them — clearing from here as well
+  // would fight it.
   useEffect(() => {
     setSelected(null)
-    setSelectedDates(null)
-  }, [allScoreGroups.join("|"), allDates.join("|")])
+    if (!datesControlled) setOwnSelectedDates(null)
+  }, [allScoreGroups.join("|"), allDates.join("|"), datesControlled])
 
   const isAllSelected = selected === null
   const activeSet = selected ?? new Set(allScoreGroups)
@@ -5876,13 +5899,14 @@ function ScoreDateHeatgrid({
       return next
     })
 
-  const toggleDate = (d: string) =>
-    setSelectedDates((prev) => {
-      const next = new Set(prev ?? allDates)
-      if (next.has(d)) next.delete(d)
-      else next.add(d)
-      return next
-    })
+  // Computed from the current value rather than an updater callback, since the
+  // controlled setter is a plain handler and cannot take one.
+  const toggleDate = (d: string) => {
+    const next = new Set(selectedDates ?? allDates)
+    if (next.has(d)) next.delete(d)
+    else next.add(d)
+    setSelectedDates(next)
+  }
 
   const filteredRows = useMemo(
     () => data.filter((r) => activeSet.has(r.scoreGroup) && activeDateSet.has(r.date)),
@@ -6228,6 +6252,35 @@ function DashboardSummary({
   const titleById = new Map(campaigns.map((c) => [c.id, c.title]))
   const dateLabel =
     data.startDate === data.endDate ? data.startDate : `${data.startDate} → ${data.endDate}`
+
+  // The grid's date filter is owned here rather than inside the grid so it also
+  // narrows the average-score line. Dropping a day from the grid and leaving it
+  // on the line had the two panels describing different days on the same screen.
+  const gridDates = useMemo(() => {
+    const set = new Set(data.byScoreDate.map((r) => r.date))
+    return Array.from(set).sort()
+  }, [data.byScoreDate])
+
+  const [selectedDates, setSelectedDates] = useState<Set<string> | null>(null)
+
+  // A new query brings a new window — start from all of it.
+  useEffect(() => {
+    setSelectedDates(null)
+  }, [gridDates.join("|")])
+
+  const avgScoreSeries = useMemo(
+    () =>
+      selectedDates === null
+        ? data.avgScoreByDay
+        : data.avgScoreByDay.filter((r) => selectedDates.has(r.date)),
+    [data.avgScoreByDay, selectedDates]
+  )
+
+  const dateFilterNote =
+    selectedDates === null
+      ? undefined
+      : `${selectedDates.size} of ${gridDates.length} days selected in the grid filter`
+
   return (
     <>
       {/* KPI strip — compact, two rows on most screens */}
@@ -6284,10 +6337,18 @@ function DashboardSummary({
       </div>
 
       {/* Heatgrid: SCOREGROUP × CREATEDONDATE */}
-      {data.byScoreDate.length > 0 && <ScoreDateHeatgrid data={data.byScoreDate} />}
+      {data.byScoreDate.length > 0 && (
+        <ScoreDateHeatgrid
+          data={data.byScoreDate}
+          selectedDates={selectedDates}
+          onSelectedDatesChange={setSelectedDates}
+        />
+      )}
 
-      {/* Avg score by day */}
-      {data.avgScoreByDay.length > 0 && <AvgScoreLineChart data={data.avgScoreByDay} />}
+      {/* Avg score by day — follows the grid's date filter */}
+      {data.avgScoreByDay.length > 0 && (
+        <AvgScoreLineChart data={avgScoreSeries} filterNote={dateFilterNote} />
+      )}
 
       {/* Status breakdown table */}
       {data.byStatus.length > 0 && (
