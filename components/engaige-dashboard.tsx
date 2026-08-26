@@ -1672,6 +1672,13 @@ function AssignmentsSection() {
     setFormAnchor(null)
   }
 
+  /** Rendered in the row's action group, ahead of Edit. */
+  const scheduleButton = (configId: string) => (
+    <Button variant="outline" size="sm" disabled={busy} onClick={() => openFormFor(configId)}>
+      <Plus className="mr-2 h-4 w-4" /> Schedule
+    </Button>
+  )
+
   const toggle = async (assignmentId: string) => {
     try {
       await jsonFetch("/api/engaige/assignments", {
@@ -1875,37 +1882,30 @@ function AssignmentsSection() {
                       </Badge>
                     )}
                   </h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!c.isActive && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => toggleConfigActive(c.configId)}
-                      >
-                        Activate configuration
-                      </Button>
-                    )}
+                  {!c.isActive && (
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      onClick={() => openFormFor(c.configId)}
+                      onClick={() => toggleConfigActive(c.configId)}
                     >
-                      <Plus className="mr-2 h-4 w-4" /> Schedule
+                      Activate configuration
                     </Button>
-                  </div>
+                  )}
                 </div>
                 {showForm && formAnchor === c.configId && (
                   <div className="mb-3">{assignmentForm}</div>
                 )}
                 {list.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {statusFilter === "all" ? "No assignments." : `No ${statusFilter} assignments.`}
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      {statusFilter === "all" ? "No assignments." : `No ${statusFilter} assignments.`}
+                    </p>
+                    {scheduleButton(c.configId)}
+                  </div>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {list.map((a) =>
+                    {list.map((a, i) =>
                       editing?.assignmentId === a.assignmentId ? (
                         <div
                           key={a.assignmentId}
@@ -2019,6 +2019,10 @@ function AssignmentsSection() {
                             )}
                           </div>
                           <div className="flex gap-2">
+                            {/* Adding a window is a per-config action, so it sits on
+                                the first row only — repeating it against every
+                                assignment would offer the same button three times. */}
+                            {i === 0 && scheduleButton(c.configId)}
                             <Button variant="outline" size="sm" onClick={() => startEdit(a)}>
                               Edit
                             </Button>
