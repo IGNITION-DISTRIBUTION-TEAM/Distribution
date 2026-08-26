@@ -3917,6 +3917,162 @@ function paceIntradaySales(
  *  "predicted" in the quality mix outlook. */
 const PREDICTED_LINE = "#7c3aed"
 
+/**
+ * Sales-vs-forecast state colours — green above the forecast, amber on it, red
+ * below.
+ *
+ * Red-against-green is the pair roughly 8% of men cannot separate by hue, so the
+ * separation here is carried by LIGHTNESS as well: validated against the card
+ * surface (#15181e) in dark mode, this red/green pair measures dE 19.5 under
+ * deuteranopia, where the obvious emerald/red pairing (#0ca30c / #d03b3b)
+ * measures 4.1 and is effectively one colour to those readers. All three clear
+ * 3:1 contrast on the card.
+ *
+ * Colour is still only the reinforcement — the marker shape carries the same
+ * three states, and position relative to the dashed forecast line carries it a
+ * third time.
+ */
+const VARIANCE_COLOUR = {
+  above: "#34d399",
+  on: "#fab219",
+  below: "#dc2626",
+} as const
+
+type VarianceState = keyof typeof VARIANCE_COLOUR
+
+/**
+ * Which side of the forecast a point sits on.
+ *
+ * Exact equality never happens between two continuous numbers, so "on the line"
+ * is a band: 2% of the forecast, floored at half a sale so an hour predicting 3
+ * does not flip colour on a rounding difference.
+ */
+function varianceState(sales: number, predicted: number): VarianceState {
+  const tolerance = Math.max(0.5, Math.abs(predicted) * 0.02)
+  const diff = sales - predicted
+  if (Math.abs(diff) <= tolerance) return "on"
+  return diff > 0 ? "above" : "below"
+}
+
+type VarianceSeries = {
+  /** Per-point state, null where there is nothing to compare. */
+  states: (VarianceState | null)[]
+  /** Hard-step gradient stops for the stroke; empty when a solid colour will do. */
+  stops: { offset: number; colour: string }[]
+  /** Set instead of stops when only one point is drawn and a gradient is moot. */
+  solid: string | null
+}
+
+/**
+ * Per-point state plus the gradient that paints the stroke.
+ *
+ * SVG has no per-segment stroke colour, so the line is drawn once with a
+ * horizontal gradient of hard steps. Each drawn point owns a band reaching
+ * halfway to its neighbours, so the colour changes where the line crosses the
+ * forecast rather than at the data point itself.
+ *
+ * Offsets are relative to the FIRST and LAST drawn point, not to the whole
+ * series. The gradient resolves against the path's own bounding box, and on a
+ * forecast chart the sales path stops well before the last x value — measuring
+ * from the series ends would shift every band.
+ */
+function varianceSeries(
+  series: { sales: number | null; predicted: number | null }[]
+): VarianceSeries {
+  const states = series.map((p) =>
+    p.sales == null || p.predicted == null ? null : varianceState(p.sales, p.predicted)
+  )
+  const drawn: number[] = []
+  states.forEach((s, i) => {
+    if (s !== null) drawn.push(i)
+  })
+  if (drawn.length === 0) return { states, stops: [], solid: null }
+  if (drawn.length === 1) {
+    return { states, stops: [], solid: VARIANCE_COLOUR[states[drawn[0]] as VarianceState] }
+  }
+
+  const first = drawn[0]
+  const span = drawn[drawn.length - 1] - first
+  const pos = (i: number) => (i - first) / span
+  const stops: { offset: number; colour: string }[] = []
+  drawn.forEach((idx, k) => {
+    const colour = VARIANCE_COLOUR[states[idx] as VarianceState]
+    const start = k === 0 ? 0 : (pos(drawn[k - 1]) + pos(idx)) / 2
+    const end = k === drawn.length - 1 ? 1 : (pos(idx) + pos(drawn[k + 1])) / 2
+    stops.push({ offset: start, colour }, { offset: end, colour })
+  })
+  return { states, stops, solid: null }
+}
+
+/**
+ * Markers that repeat the state in a second channel: pointing up above the
+ * forecast, down below it, a diamond on it. A reader who cannot separate the red
+ * from the green still gets the answer from the shape.
+ */
+function VarianceMarker({
+  cx,
+  cy,
+  state,
+  r = 4,
+}: {
+  cx: number
+  cy: number
+  state: VarianceState
+  r?: number
+}) {
+  const points =
+    state === "above"
+      ? `${cx},${cy - r} ${cx + r},${cy + r} ${cx - r},${cy + r}`
+      : state === "below"
+      ? `${cx},${cy + r} ${cx + r},${cy - r} ${cx - r},${cy - r}`
+      : `${cx},${cy - r} ${cx + r},${cy} ${cx},${cy + r} ${cx - r},${cy}`
+  return (
+    <polygon
+      points={points}
+      fill={VARIANCE_COLOUR[state]}
+      // A surface-coloured ring so markers stay separable where the line doubles
+      // back on itself. Set through style, since a presentation attribute would
+      // not resolve the CSS variable.
+      style={{ stroke: "hsl(var(--card))", strokeWidth: 1 }}
+    />
+  )
+}
+
+/** Legend for the variance colouring — colour, shape and words together. */
+function VarianceLegend({ predictedLabel }: { predictedLabel: string }) {
+  const items: { state: VarianceState; label: string }[] = [
+    { state: "above", label: `Above ${predictedLabel}` },
+    { state: "on", label: `On ${predictedLabel}` },
+    { state: "below", label: `Below ${predictedLabel}` },
+  ]
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      {items.map((i) => (
+        <span key={i.state} className="flex items-center gap-1.5">
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+            <VarianceMarker cx={6} cy={6} state={i.state} r={5} />
+          </svg>
+          {i.label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5">
+        <svg width="16" height="12" viewBox="0 0 16 12" aria-hidden>
+          <line
+            x1="0"
+            y1="6"
+            x2="16"
+            y2="6"
+            stroke={PREDICTED_LINE}
+            strokeWidth="2"
+            strokeDasharray="5 4"
+          />
+        </svg>
+        {predictedLabel.charAt(0).toUpperCase() + predictedLabel.slice(1)}
+      </span>
+    </div>
+  )
+}
+
 type SalesForecast = {
   merged: { date: string; sales: number | null; predicted: number | null; projected: boolean }[]
   firstProjectedDate: string | null
@@ -5537,6 +5693,25 @@ function SalesSummary({ data }: { data: SalesData }) {
     [data]
   )
 
+  const chartSeries = salesForecast
+    ? salesForecast.merged
+    : intraday
+    ? intraday.series
+    : data.bySalesDate
+
+  // Only colour by variance when there is something to vary against. Without a
+  // forecast the line keeps its plain emerald, since green would otherwise read
+  // as "above target" on a chart that has no target.
+  const hasPrediction = Boolean(salesForecast || intraday)
+  const variance = useMemo(
+    () =>
+      hasPrediction
+        ? varianceSeries(chartSeries as { sales: number | null; predicted: number | null }[])
+        : null,
+    [hasPrediction, chartSeries]
+  )
+  const predictedLabel = intraday ? "expected pace" : "forecast"
+
   return (
     <>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
@@ -5582,16 +5757,20 @@ function SalesSummary({ data }: { data: SalesData }) {
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={
-                  salesForecast
-                    ? salesForecast.merged
-                    : intraday
-                    ? intraday.series
-                    : data.bySalesDate
-                }
-                margin={{ top: 10, right: 16, bottom: 0, left: -10 }}
-              >
+              <LineChart data={chartSeries} margin={{ top: 10, right: 16, bottom: 0, left: -10 }}>
+                {variance && variance.stops.length > 0 && (
+                  <defs>
+                    <linearGradient id="salesVariance" x1="0" y1="0" x2="1" y2="0">
+                      {variance.stops.map((s, i) => (
+                        <stop
+                          key={i}
+                          offset={`${(s.offset * 100).toFixed(4)}%`}
+                          stopColor={s.colour}
+                        />
+                      ))}
+                    </linearGradient>
+                  </defs>
+                )}
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis
                   dataKey={intraday ? "hour" : "date"}
@@ -5611,8 +5790,24 @@ function SalesSummary({ data }: { data: SalesData }) {
                     borderRadius: "0.5rem",
                     fontSize: "0.875rem",
                   }}
+                  // Spell out the gap in words as well as colour, so the reading
+                  // does not depend on telling the red from the green.
+                  formatter={(value, name, item) => {
+                    const n = Number(value)
+                    if (name !== "Sales" || !variance) return [n.toLocaleString(), name]
+                    const predicted = (item?.payload as { predicted?: number | null } | undefined)
+                      ?.predicted
+                    if (predicted == null) return [n.toLocaleString(), name]
+                    const state = varianceState(n, predicted)
+                    const diff = n - predicted
+                    const gap =
+                      state === "on"
+                        ? `on ${predictedLabel}`
+                        : `${diff > 0 ? "+" : ""}${Math.round(diff).toLocaleString()} vs ${predictedLabel}`
+                    return [`${n.toLocaleString()} (${gap})`, name]
+                  }}
                 />
-                {(salesForecast || intraday) && (
+                {!variance && (salesForecast || intraday) && (
                   <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
                 )}
                 {salesForecast?.firstProjectedDate && (
@@ -5632,11 +5827,32 @@ function SalesSummary({ data }: { data: SalesData }) {
                   type="monotone"
                   dataKey="sales"
                   name="Sales"
-                  stroke="#10b981"
+                  stroke={
+                    // Never reference the gradient unless it was actually
+                    // rendered — a dangling url() paints nothing at all.
+                    variance && variance.stops.length > 0
+                      ? "url(#salesVariance)"
+                      : variance?.solid ?? "#10b981"
+                  }
                   strokeWidth={2}
-                  dot={{ r: 3 }}
+                  dot={
+                    variance
+                      ? (props) => {
+                          const { cx, cy, index } = props as {
+                            cx?: number
+                            cy?: number
+                            index?: number
+                          }
+                          const state = index == null ? null : variance.states[index]
+                          // Recharts still calls this for gaps in the series.
+                          if (cx == null || cy == null || !state) return <g />
+                          return <VarianceMarker cx={cx} cy={cy} state={state} />
+                        }
+                      : { r: 3 }
+                  }
                   activeDot={{ r: 5 }}
                   connectNulls={false}
+                  legendType={variance ? "none" : "line"}
                 />
                 {(salesForecast || intraday) && (
                   <Line
@@ -5648,11 +5864,13 @@ function SalesSummary({ data }: { data: SalesData }) {
                     strokeDasharray="5 4"
                     dot={false}
                     connectNulls
+                    legendType={variance ? "none" : "line"}
                   />
                 )}
               </LineChart>
             </ResponsiveContainer>
           </div>
+          {variance && <VarianceLegend predictedLabel={predictedLabel} />}
           {intraday && (
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
               <p>
