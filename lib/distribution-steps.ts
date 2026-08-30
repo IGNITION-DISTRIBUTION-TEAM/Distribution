@@ -333,17 +333,36 @@ export function procRefForStep(config: RunConfigRow, key: string): string | null
  * Returns "" for any other error, so callers can append it unconditionally.
  */
 export function callHint(message: string, procRef: string): string {
+  const name = procRef.split("(")[0]
+  const short = name.split(".").pop()
+
+  // Count what was actually passed, so the hint can be specific about arity.
+  const inner = procRef.includes("(") ? procRef.slice(procRef.indexOf("(") + 1, procRef.lastIndexOf(")")) : ""
+  const argCount = inner.trim() === "" ? 0 : inner.split(",").length
+
+  // "Invalid argument types" is the GOOD failure: the procedure exists and the
+  // role can see it, only the argument count is wrong. Worth its own message —
+  // it means the fix is the config field, not a grant.
+  if (/invalid argument types/i.test(message)) {
+    return (
+      ` — the app passed ${argCount} argument${argCount === 1 ? "" : "s"}. The procedure exists and ` +
+      `this role can reach it, so only the count is wrong: the signature changed, or the config was ` +
+      `never updated to match. SHOW PROCEDURES LIKE '${short}' IN SCHEMA ` +
+      `${name.split(".").slice(0, 2).join(".")} lists the signatures that do exist — put the right ` +
+      `one in the source object field and save.`
+    )
+  }
+
   if (!/unknown (user-defined )?function|does not exist or not authorized|invalid identifier/i.test(message)) {
     return ""
   }
-  const name = procRef.split("(")[0]
-  const args = procRef.includes("(")
+  const args = argCount > 0
     ? `called as ${procRef}`
     : `called with no arguments as ${name}()`
   return (
     ` — the app ${args}. Snowflake reports the same error whether (a) nothing of that name exists at ` +
     `${name}, (b) it exists but takes a different number of arguments — set the source object to ` +
     `NAME(1) to pass one, or (c) the app's Snowflake role has no USAGE on it. ` +
-    `SHOW PROCEDURES LIKE '${name.split(".").pop()}' IN ACCOUNT tells you which.`
+    `SHOW PROCEDURES LIKE '${short}' IN ACCOUNT tells you which.`
   )
 }
