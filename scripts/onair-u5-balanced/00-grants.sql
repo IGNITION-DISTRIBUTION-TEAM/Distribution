@@ -102,20 +102,20 @@ GRANT USAGE ON PROCEDURE
    The allocated table does not exist until the procedure completes once, so
    these cannot be run before then.
 ----------------------------------------------------------------------------- */
--- Replace <APP_ROLE> with what /api/distribution/snowflake-identity reports.
+-- SVC_VERCEL_APP_ROLE is the app's role, confirmed via /api/distribution/snowflake-identity.
 
 GRANT SELECT ON TABLE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT SELECT ON VIEW
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- The app also has to be able to CALL the procedure from the automation config.
 GRANT USAGE ON PROCEDURE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL(NUMBER, NUMBER, NUMBER, NUMBER, NUMBER)
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 /* TM_ONAIR_U5_BALANCED_POOL is also CREATE OR REPLACE ... COPY GRANTS, so the
    app's SELECT survives every re-run. Grant it once. */

@@ -79,20 +79,20 @@ CALL DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL(308, 
    It does nothing for the app, which connects as its own role and is not an
    account admin. Run these AFTER step 4 has created the table.
 ----------------------------------------------------------------------------- */
--- <APP_ROLE> is what /api/distribution/snowflake-identity reports.
+-- SVC_VERCEL_APP_ROLE is what /api/distribution/snowflake-identity reports.
 
 GRANT USAGE ON PROCEDURE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL
   (NUMBER, NUMBER, NUMBER, NUMBER, NUMBER)
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT SELECT ON VIEW
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT SELECT ON TABLE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 /* The allocated table is CREATE OR REPLACE ... COPY GRANTS, so that last grant
    survives every re-run. Grant it once. */

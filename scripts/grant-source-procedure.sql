@@ -42,24 +42,24 @@ SHOW PROCEDURES LIKE 'SP_ONAIR_NEW_POOL_BR' IN ACCOUNT;
 -- ============================================================================
 -- 3. The grants
 -- ============================================================================
--- Replace <APP_ROLE> with what section 1 reported, and (NUMBER) with the real
--- signature from section 2.
+-- SVC_VERCEL_APP_ROLE is the app's role, confirmed via section 1. Substitute the real
+-- signature from section 2 for (NUMBER) if it differs.
 --
 -- USAGE on the database and schema is required as well: without it the schema
 -- is invisible and everything inside it fails the same way.
 
-GRANT USAGE ON DATABASE DATAWAREHOUSE TO ROLE <APP_ROLE>;
-GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION TO ROLE <APP_ROLE>;
+GRANT USAGE ON DATABASE DATAWAREHOUSE TO ROLE SVC_VERCEL_APP_ROLE;
+GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT USAGE ON PROCEDURE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_NEW_POOL_BR(NUMBER)
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- The step after this one reads the upload target, so grant that too or "load
 -- into HLL" fails next.
 GRANT SELECT ON VIEW
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_OPTIMIZED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 
 -- ============================================================================
@@ -72,7 +72,7 @@ SELECT GET_DDL('PROCEDURE',
   'DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_NEW_POOL_BR(NUMBER)');
 -- EXECUTE AS OWNER  -> USAGE on the procedure is enough; it runs with the
 --                     owner's rights and the body's grants do not matter.
--- EXECUTE AS CALLER -> grant the body's reads and writes to <APP_ROLE> as well.
+-- EXECUTE AS CALLER -> grant the body's reads and writes to SVC_VERCEL_APP_ROLE as well.
 
 
 -- ============================================================================

@@ -12,11 +12,9 @@
 
    Run everything as ACCOUNTADMIN.
 
-   BEFORE YOU START: find and replace <APP_ROLE> throughout this file.
-   Get the real value by opening this in the browser, signed in to the portal:
-     /api/distribution/snowflake-identity
-   Read "role" from the JSON. Do not guess it, and do not use your own role —
-   the app connects as its own.
+   The app's role is SVC_VERCEL_APP_ROLE, confirmed from
+   /api/distribution/snowflake-identity — the app's own live connection, not a
+   guess. Every grant below is ready to run as written.
 ============================================================================= */
 
 
@@ -42,8 +40,8 @@ SHOW TABLES LIKE 'TM_ONAIR_U5_BALANCED_POOL'
    Without these nothing else in the file has any effect — an object in a schema
    you cannot USE is invisible however it is granted.
 ----------------------------------------------------------------------------- */
-GRANT USAGE ON DATABASE DATAWAREHOUSE TO ROLE <APP_ROLE>;
-GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION TO ROLE <APP_ROLE>;
+GRANT USAGE ON DATABASE DATAWAREHOUSE TO ROLE SVC_VERCEL_APP_ROLE;
+GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION TO ROLE SVC_VERCEL_APP_ROLE;
 
 
 /* -----------------------------------------------------------------------------
@@ -54,7 +52,7 @@ GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION TO ROLE <APP_R
 GRANT USAGE ON PROCEDURE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL
   (NUMBER, NUMBER, NUMBER, NUMBER, NUMBER)
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 
 /* -----------------------------------------------------------------------------
@@ -65,7 +63,7 @@ GRANT USAGE ON PROCEDURE
 ----------------------------------------------------------------------------- */
 GRANT SELECT ON VIEW
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- The app never queries the base table directly — the view is enough, because a
 -- view runs with its owner's rights against what it reads. Grant this anyway so
@@ -73,7 +71,7 @@ GRANT SELECT ON VIEW
 -- Only possible once the procedure has created it; skip until then.
 GRANT SELECT ON TABLE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_U5_BALANCED_POOL
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
 
 
 /* -----------------------------------------------------------------------------
@@ -83,7 +81,27 @@ GRANT SELECT ON TABLE
 ----------------------------------------------------------------------------- */
 GRANT SELECT, INSERT ON TABLE
   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED
-  TO ROLE <APP_ROLE>;
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+
+/* -----------------------------------------------------------------------------
+   5b. The EXISTING Default automation, while you are here
+   Same role, and the original "Unknown user-defined function" on
+   SP_ONAIR_NEW_POOL_BR was never confirmed resolved. If it is still failing
+   after the (1) argument was added, this is why.
+----------------------------------------------------------------------------- */
+GRANT USAGE ON PROCEDURE
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_NEW_POOL_BR(NUMBER)
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT SELECT ON VIEW
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_OPTIMIZED_POOL
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+-- Only if a "Top up" automation calls it directly:
+-- GRANT USAGE ON PROCEDURE
+--   DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIRICUBATION_NEW_POOL_BR(NUMBER)
+--   TO ROLE SVC_VERCEL_APP_ROLE;
 
 
 /* -----------------------------------------------------------------------------
@@ -113,7 +131,7 @@ GRANT SELECT, INSERT ON TABLE
    7. Verify, without guessing
 ----------------------------------------------------------------------------- */
 -- As ACCOUNTADMIN: everything the role now holds in this schema.
-SHOW GRANTS TO ROLE <APP_ROLE>;
+SHOW GRANTS TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- Better: ask the app itself. In the browser, signed in to the portal:
 --   /api/distribution/snowflake-identity?object=DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL
