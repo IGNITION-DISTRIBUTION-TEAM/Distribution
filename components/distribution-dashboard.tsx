@@ -110,7 +110,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react"
-import { useState, useCallback, useEffect, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { cn } from "@/lib/utils"
 
 type NavItem = {
@@ -6799,6 +6799,41 @@ function CampaignSettingsPanel() {
   const [stepState, setStepState] = useState<Record<string, { status: StepView["status"]; message?: string }>>({})
   const [syncBg, setSyncBg] = useState<{ status: string; at?: string | null; finishedAt?: string | null; error?: string } | null>(null)
 
+  /**
+   * Unsaved-change detection for the fields a run actually builds SQL from.
+   *
+   * Running uses the last SAVED config, so an edited-but-unsaved procedure keeps
+   * sending the old CALL — and Snowflake's reply looks identical either way,
+   * which is a genuinely hard thing to diagnose from the error alone. The note
+   * under the buttons said as much and still got missed, so the mismatch is now
+   * called out where it matters.
+   *
+   * Only run-critical fields count. SFTP credentials and the config name are
+   * left out deliberately: they change nothing about the statements, and
+   * flagging them would train people to ignore the warning.
+   */
+  const runKey = useMemo(
+    () =>
+      JSON.stringify([
+        sourceKind, sourceObject.trim(), targetTable.trim(), updateHllProcs,
+        syncProcedure.trim(), syncSourceView.trim(), syncTargetTable.trim(),
+        syncColumns.trim(), syncBatch.trim(), String(leadExpiryDays).trim(),
+        batchTemplate.trim(), sourceMapping, isActive,
+      ]),
+    [sourceKind, sourceObject, targetTable, updateHllProcs, syncProcedure, syncSourceView,
+     syncTargetTable, syncColumns, syncBatch, leadExpiryDays, batchTemplate, sourceMapping, isActive]
+  )
+  const [savedRunKey, setSavedRunKey] = useState<string | null>(null)
+  // Set when a config has just been loaded into the form; the snapshot is taken
+  // on the following render, once React has flushed all of applyConfig's setters.
+  const wantRunSnapshot = useRef(false)
+  useEffect(() => {
+    if (!wantRunSnapshot.current) return
+    wantRunSnapshot.current = false
+    setSavedRunKey(runKey)
+  }, [runKey])
+  const runDirty = savedRunKey !== null && runKey !== savedRunKey
+
   // Run history is shown for the whole campaign (all its configs).
   const loadHistory = useCallback(async (cid: string) => {
     if (!cid) { setHistory([]); return }
@@ -6984,6 +7019,8 @@ function CampaignSettingsPanel() {
     setLastRunMessage(c.LAST_RUN_MESSAGE ?? null)
     setConfigExists(c.CONFIG_ID != null)
     setSettingsOpen(true)
+    // Everything above is now the saved state; snapshot it next render.
+    wantRunSnapshot.current = true
   }, [])
 
   // Load all configs for a campaign; select one (default first / "last" / by id).
@@ -7764,6 +7801,20 @@ function CampaignSettingsPanel() {
               {configExists && plan.length > 0 && (
                 <div className="mt-3">
                   <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run individual steps</div>
+                  {runDirty && (
+                    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        You have unsaved changes. Running uses the{" "}
+                        <span className="font-medium">saved</span> config, so these edits won&apos;t apply
+                        until you save.
+                      </span>
+                      <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
+                        {saving ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                        Save now
+                      </Button>
+                    </div>
+                  )}
                   <ul className="flex flex-col divide-y divide-border/60 rounded-md border border-border">
                     {plan.map((s) => {
                       const st = stepState[s.key]
