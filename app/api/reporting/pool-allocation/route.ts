@@ -43,6 +43,8 @@ export type PoolBand = {
   scoreMax: number
   weight: number
   targetOverride: number | null
+  /** Ceiling on the share of this band's combined pool a run may take. */
+  maxDepletionPct: number | null
   topupEnabled: boolean
   enabled: boolean
   /** Eligible and still in the default pool right now. */
@@ -84,6 +86,7 @@ export type PoolAllocationData = {
     selectedDefault: number | null
     selectedTopup: number | null
     shortfall: number | null
+    allocMode: number | null
   } | null
   runs: {
     runAt: string
@@ -94,6 +97,7 @@ export type PoolAllocationData = {
     selectedTotal: number | null
     selectedDefault: number | null
     selectedTopup: number | null
+    allocMode: number | null
   }[]
   /** Set when the balanced process has not been stood up in this environment. */
   notConfigured?: string
@@ -125,7 +129,7 @@ export async function GET(request: NextRequest) {
   const bandsSql = `
     WITH cfg AS (
       SELECT BAND_LABEL, SCORE_MIN, SCORE_MAX, WEIGHT, TARGET_ROWS,
-             TOPUP_ENABLED, ENABLED
+             MAX_DEPLETION_PCT, TOPUP_ENABLED, ENABLED
       FROM ${BANDS}
     ),
     pool AS (
@@ -154,7 +158,7 @@ export async function GET(request: NextRequest) {
       GROUP BY 1
     )
     SELECT c.BAND_LABEL, c.SCORE_MIN, c.SCORE_MAX, c.WEIGHT, c.TARGET_ROWS,
-           c.TOPUP_ENABLED, c.ENABLED,
+           c.MAX_DEPLETION_PCT, c.TOPUP_ENABLED, c.ENABLED,
            COALESCE(v.AVAIL_DEFAULT, 0) AS AVAIL_DEFAULT,
            COALESCE(v.AVAIL_TOPUP, 0)   AS AVAIL_TOPUP,
            COALESCE(a.ALLOC_DEFAULT, 0) AS ALLOC_DEFAULT,
@@ -202,7 +206,7 @@ export async function GET(request: NextRequest) {
   const runsSql = `
     SELECT TO_VARCHAR(RUN_AT, 'YYYY-MM-DD HH24:MI') AS RUN_AT,
            AGENTS, DAYS, LEADS_PER_AGENT_DAY, TARGET_TOTAL,
-           SELECTED_TOTAL, SELECTED_DEFAULT, SELECTED_TOPUP, SHORTFALL
+           SELECTED_TOTAL, SELECTED_DEFAULT, SELECTED_TOPUP, SHORTFALL, ALLOC_MODE
     FROM ${RUNS}
     ORDER BY RUN_AT DESC
     LIMIT 20`
@@ -233,6 +237,7 @@ export async function GET(request: NextRequest) {
       scoreMax: num(r.SCORE_MAX),
       weight: numOrNull(r.WEIGHT) ?? 1,
       targetOverride: numOrNull(r.TARGET_ROWS),
+      maxDepletionPct: numOrNull(r.MAX_DEPLETION_PCT),
       topupEnabled: r.TOPUP_ENABLED !== false,
       enabled: r.ENABLED !== false,
       availDefault: num(r.AVAIL_DEFAULT),
@@ -251,6 +256,7 @@ export async function GET(request: NextRequest) {
       selectedTotal: numOrNull(r.SELECTED_TOTAL),
       selectedDefault: numOrNull(r.SELECTED_DEFAULT),
       selectedTopup: numOrNull(r.SELECTED_TOPUP),
+      allocMode: numOrNull(r.ALLOC_MODE),
     }))
 
     const first = runRows[0]
@@ -265,6 +271,7 @@ export async function GET(request: NextRequest) {
           selectedDefault: numOrNull(first.SELECTED_DEFAULT),
           selectedTopup: numOrNull(first.SELECTED_TOPUP),
           shortfall: numOrNull(first.SHORTFALL),
+          allocMode: numOrNull(first.ALLOC_MODE),
         }
       : null
 

@@ -2041,6 +2041,7 @@ type PoolBand = {
   scoreMax: number
   weight: number
   targetOverride: number | null
+  maxDepletionPct: number | null
   topupEnabled: boolean
   enabled: boolean
   availDefault: number
@@ -2059,6 +2060,7 @@ type PoolRun = {
   selectedTotal: number | null
   selectedDefault: number | null
   selectedTopup: number | null
+  allocMode: number | null
 }
 
 type PoolVolume = {
@@ -2079,6 +2081,20 @@ type PoolAllocationData = {
   notConfigured?: string
 }
 
+/**
+ * How a band's quota is sized.
+ *
+ *   even  every band gets the same slice of the target, whatever it holds. The
+ *         thin bands are emptied and the fat ones barely touched.
+ *   pool  every band gets a share of the COMBINED base + top-up pool, so all of
+ *         them give up the same proportion and none is over-depleted.
+ *
+ * They pull against each other: even keeps the score mix flat and drains the
+ * thin bands; pool protects the pools and lets the book drift back towards the
+ * high-score end. The depletion column is where you see which you are getting.
+ */
+type AllocMode = "even" | "pool"
+
 /** One band's simulated outcome under the settings currently on screen. */
 type SimRow = {
   band: PoolBand
@@ -2086,10 +2102,14 @@ type SimRow = {
   topup: boolean
   enabled: boolean
   quota: number
+  /** Both pools together — what the band's claim is now sized against. */
+  combined: number
   fromDefault: number
   fromTopup: number
   total: number
   short: number
+  /** Share of the combined pool this run would consume. */
+  depletion: number
   leftDefault: number
   leftTopup: number
 }
@@ -2107,33 +2127,57 @@ type SimRow = {
 function simulate(
   bands: PoolBand[],
   target: number,
+  mode: AllocMode,
   overrides: Record<string, { weight: number; topup: boolean; enabled: boolean }>
 ): SimRow[] {
-  const live = bands.filter((b) => (overrides[b.band]?.enabled ?? b.enabled))
+  const combinedOf = (b: PoolBand) =>
+    b.availDefault + ((overrides[b.band]?.topup ?? b.topupEnabled) ? b.availTopup : 0)
+
+  const live = bands.filter((b) => overrides[b.band]?.enabled ?? b.enabled)
   const sumW = live.reduce((a, b) => a + (overrides[b.band]?.weight ?? b.weight), 0)
+  // Pool-weighted mode divides the target by each band's share of the COMBINED
+  // pool, so the denominator is weighted depth rather than a count of bands.
+  const sumCW = live.reduce(
+    (a, b) => a + combinedOf(b) * (overrides[b.band]?.weight ?? b.weight),
+    0
+  )
 
   return bands.map((b) => {
     const o = overrides[b.band]
     const weight = o?.weight ?? b.weight
     const topup = o?.topup ?? b.topupEnabled
     const enabled = o?.enabled ?? b.enabled
+    const combined = combinedOf(b)
 
-    if (!enabled || sumW <= 0) {
+    if (!enabled || (mode === "even" ? sumW <= 0 : sumCW <= 0)) {
       return {
-        band: b, weight, topup, enabled, quota: 0,
-        fromDefault: 0, fromTopup: 0, total: 0, short: 0,
+        band: b, weight, topup, enabled, quota: 0, combined,
+        fromDefault: 0, fromTopup: 0, total: 0, short: 0, depletion: 0,
         leftDefault: b.availDefault, leftTopup: b.availTopup,
       }
     }
-    // An explicit TARGET_ROWS pins the band; otherwise split the target by weight.
-    const quota = b.targetOverride ?? Math.floor((target * weight) / sumW)
+
+    // An explicit TARGET_ROWS pins the band. Otherwise: a flat slice of the
+    // target, or a share of the combined pool — the difference between draining
+    // the thin bands and depleting every band at the same rate.
+    const base =
+      b.targetOverride ??
+      (mode === "pool"
+        ? Math.floor((target * combined * weight) / sumCW)
+        : Math.floor((target * weight) / sumW))
+
+    // The ceiling applies in both modes and can only lower a quota.
+    const cap = b.maxDepletionPct === null ? combined : Math.floor((combined * b.maxDepletionPct) / 100)
+    const quota = Math.min(base, cap)
+
     const fromDefault = Math.min(quota, b.availDefault)
     const fromTopup = topup ? Math.min(quota - fromDefault, b.availTopup) : 0
     const total = fromDefault + fromTopup
     return {
-      band: b, weight, topup, enabled, quota,
+      band: b, weight, topup, enabled, quota, combined,
       fromDefault, fromTopup, total,
       short: Math.max(0, quota - total),
+      depletion: combined > 0 ? total / combined : 0,
       leftDefault: b.availDefault - fromDefault,
       leftTopup: b.availTopup - fromTopup,
     }
@@ -2326,6 +2370,7 @@ function PoolAllocationReport() {
   const [overrides, setOverrides] = useState<
     Record<string, { weight: number; topup: boolean; enabled: boolean }>
   >({})
+  const [mode, setMode] = useState<AllocMode>("pool")
   const [showSim, setShowSim] = useState(false)
 
   const load = useCallback(async () => {
@@ -2342,6 +2387,8 @@ function PoolAllocationReport() {
     if (r?.agents) setAgents(String(r.agents))
     if (r?.days) setDays(String(r.days))
     if (r?.leadsPerAgentDay) setPerDay(String(r.leadsPerAgentDay))
+    // Show what the last run actually did, not a default.
+    setMode(r?.allocMode === 0 ? "even" : "pool")
     setOverrides({})
     setLoading(false)
   }, [])
@@ -2354,8 +2401,8 @@ function PoolAllocationReport() {
     (Number(agents) || 0) * (Number(days) || 0) * (Number(perDay) || 0)
 
   const sim = useMemo(
-    () => (data ? simulate(data.bands, target, overrides) : []),
-    [data, target, overrides]
+    () => (data ? simulate(data.bands, target, mode, overrides) : []),
+    [data, target, mode, overrides]
   )
 
   // Actuals from the last run, straight off the allocated table.
@@ -2378,6 +2425,7 @@ function PoolAllocationReport() {
     const t = sim.reduce(
       (a, r) => ({
         quota: a.quota + r.quota,
+        combined: a.combined + r.combined,
         fromDefault: a.fromDefault + r.fromDefault,
         fromTopup: a.fromTopup + r.fromTopup,
         total: a.total + r.total,
@@ -2385,7 +2433,7 @@ function PoolAllocationReport() {
         leftDefault: a.leftDefault + r.leftDefault,
         leftTopup: a.leftTopup + r.leftTopup,
       }),
-      { quota: 0, fromDefault: 0, fromTopup: 0, total: 0, short: 0, leftDefault: 0, leftTopup: 0 }
+      { quota: 0, combined: 0, fromDefault: 0, fromTopup: 0, total: 0, short: 0, leftDefault: 0, leftTopup: 0 }
     )
     return t
   }, [sim])
@@ -2397,6 +2445,7 @@ function PoolAllocationReport() {
 
   const dirty =
     Object.keys(overrides).length > 0 ||
+    (data?.lastRun ? (data.lastRun.allocMode === 0 ? "even" : "pool") !== mode : false) ||
     String(data?.lastRun?.agents ?? "") !== agents ||
     String(data?.lastRun?.days ?? "") !== days ||
     String(data?.lastRun?.leadsPerAgentDay ?? "") !== perDay
@@ -2423,6 +2472,7 @@ function PoolAllocationReport() {
     const lines: string[] = [
       "-- Generated by Reporting → Pool allocation. Review before running.",
       `-- Scenario: ${agents} agents × ${days} days × ${perDay} = ${fmtInt(target)} leads.`,
+      `-- Quota sizing: ${mode === "pool" ? "share of the combined pool" : "even split"}.`,
       "",
     ]
     for (const r of sim) {
@@ -2441,11 +2491,12 @@ function PoolAllocationReport() {
     lines.push(
       "",
       "-- Then re-run the allocation with the new head count.",
-      "-- The last two arguments are HISTORY_CHECK and REBUILD_POOLS.",
-      `CALL DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1);`,
+      "-- The last three arguments are HISTORY_CHECK, REBUILD_POOLS and ALLOC_MODE",
+      "-- (0 = even split, 1 = share of the combined pool).",
+      `CALL DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1, ${mode === "pool" ? 1 : 0});`,
       "",
       "-- In the app, set the Procedure field on the automation to match:",
-      `--   ...SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1)`
+      `--   ...SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1, ${mode === "pool" ? 1 : 0})`
     )
     const text = lines.join("\n")
     navigator.clipboard?.writeText(text)
@@ -2465,13 +2516,14 @@ function PoolAllocationReport() {
       return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
     }
     const rows = [
-      ["Band", "Score min", "Score max", "Weight", "Quota",
+      ["Band", "Score min", "Score max", "Weight", "Combined pool", "Quota", "Depletion %",
        "Actual default", "Actual top-up", "Actual total",
        "In pool default", "In pool top-up",
        "Sim from default", "Sim from top-up", "Sim total", "Sim short",
        "Left in default", "Left in top-up"],
       ...sim.map((r) => [
-        r.band.band, r.band.scoreMin, r.band.scoreMax, r.weight, r.quota,
+        r.band.band, r.band.scoreMin, r.band.scoreMax, r.weight, r.combined, r.quota,
+        (r.depletion * 100).toFixed(1),
         r.band.allocDefault, r.band.allocTopup, r.band.allocDefault + r.band.allocTopup,
         r.band.availDefault, r.band.availTopup,
         r.fromDefault, r.fromTopup, r.total, r.short,
@@ -2661,10 +2713,37 @@ function PoolAllocationReport() {
               <div className="text-xs text-muted-foreground">Target</div>
               <div className="font-mono text-lg font-semibold text-foreground">{fmtInt(target)}</div>
             </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Quota sizing</Label>
+              <div className="inline-flex rounded-md border border-border bg-background/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setMode("pool")}
+                  className={cn(
+                    "rounded px-3 py-1.5 text-xs font-medium transition-colors",
+                    mode === "pool" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Share of pool
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("even")}
+                  className={cn(
+                    "rounded px-3 py-1.5 text-xs font-medium transition-colors",
+                    mode === "even" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Even
+                </button>
+              </div>
+            </div>
             <div className="pb-1">
-              <div className="text-xs text-muted-foreground">Per band, even</div>
+              <div className="text-xs text-muted-foreground">Depletion</div>
               <div className="font-mono text-lg font-semibold text-foreground">
-                {fmtInt(Math.floor(target / Math.max(1, sim.filter((r) => r.enabled).length)))}
+                {simTotals.combined > 0
+                  ? `${((simTotals.total / simTotals.combined) * 100).toFixed(1)}%`
+                  : "—"}
               </div>
             </div>
           </div>
@@ -2689,8 +2768,11 @@ function PoolAllocationReport() {
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Nothing here changes the warehouse. The table below re-runs the same arithmetic the
-          procedure uses — quota by weight, base pool first, top-up only for the remainder — against
-          today&apos;s pool counts. <span className="text-foreground">Copy SQL to apply</span> gives you
+          procedure uses — base pool first, top-up only for the remainder — against today&apos;s pool
+          counts.{" "}
+          {mode === "pool"
+            ? "Share of pool sizes each band's quota by what the base and top-up pools hold between them, so every band gives up the same proportion."
+            : "Even gives every band the same slice of the target regardless of what it holds, which empties the thin bands and barely touches the fat ones."}{" "} <span className="text-foreground">Copy SQL to apply</span> gives you
           the statements to make a scenario real, to run deliberately.
         </p>
         {dirty && (
@@ -2727,11 +2809,13 @@ function PoolAllocationReport() {
                 <TableHead>Band</TableHead>
                 {showSim && <TableHead className="text-right">Weight</TableHead>}
                 {showSim && <TableHead className="text-center">Top-up</TableHead>}
+                <TableHead className="text-right">In pool</TableHead>
                 <TableHead className="text-right">Quota</TableHead>
                 <TableHead className="text-right">Base</TableHead>
                 <TableHead className="text-right">Top-up</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Short</TableHead>
+                <TableHead className="text-right">Depletion</TableHead>
                 <TableHead>Split</TableHead>
                 <TableHead className="text-right">Left in base</TableHead>
                 <TableHead className="text-right">Left in top-up</TableHead>
@@ -2784,6 +2868,9 @@ function PoolAllocationReport() {
                     </TableCell>
                   )}
                   <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {fmtInt(r.combined)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
                     {fmtInt(r.quota)}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm" style={{ color: POOL_DEFAULT_COLOUR }}>
@@ -2802,6 +2889,21 @@ function PoolAllocationReport() {
                     )}
                   >
                     {r.short > 0 ? fmtInt(r.short) : "—"}
+                  </TableCell>
+                  {/* The number that says whether a band is being over-drained.
+                      Amber past 80%, red at 95% — a band emptied today has
+                      nothing to give tomorrow. */}
+                  <TableCell
+                    className={cn(
+                      "text-right font-mono text-sm",
+                      r.depletion >= 0.95
+                        ? "text-rose-300"
+                        : r.depletion >= 0.8
+                        ? "text-amber-300"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {r.combined > 0 ? `${(r.depletion * 100).toFixed(0)}%` : "—"}
                   </TableCell>
                   <TableCell>
                     <SplitBar
@@ -2830,6 +2932,9 @@ function PoolAllocationReport() {
                 <TableCell className="font-medium">Total</TableCell>
                 {showSim && <TableCell />}
                 {showSim && <TableCell />}
+                <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                  {fmtInt(simTotals.combined)}
+                </TableCell>
                 <TableCell className="text-right font-mono text-sm">{fmtInt(simTotals.quota)}</TableCell>
                 <TableCell className="text-right font-mono text-sm" style={{ color: POOL_DEFAULT_COLOUR }}>
                   {fmtInt(simTotals.fromDefault)}
@@ -2847,6 +2952,11 @@ function PoolAllocationReport() {
                   )}
                 >
                   {simTotals.short > 0 ? fmtInt(simTotals.short) : "—"}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                  {simTotals.combined > 0
+                    ? `${((simTotals.total / simTotals.combined) * 100).toFixed(0)}%`
+                    : "—"}
                 </TableCell>
                 <TableCell />
                 <TableCell className="text-right font-mono text-sm text-muted-foreground">
@@ -2867,9 +2977,11 @@ function PoolAllocationReport() {
         <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
           Quota is a ceiling, never a floor — a band delivers the lesser of its quota and what the
           two pools hold, so <span className="text-foreground">Short</span> means the pools ran dry,
-          not that anything failed. Unfilled quota is not reallocated to bands with spare capacity:
-          refilling a short book from the high-score end is the drift this exercise exists to
-          correct.
+          not that anything failed. <span className="text-foreground">Depletion</span> is the share
+          of that band&apos;s combined pool this run consumes; a band emptied today has nothing to
+          give tomorrow, so anything near 100% is borrowing from the next distribution. Unfilled
+          quota is not reallocated to bands with spare capacity: refilling a short book from the
+          high-score end is the drift this exercise exists to correct.
         </p>
       </div>
 
