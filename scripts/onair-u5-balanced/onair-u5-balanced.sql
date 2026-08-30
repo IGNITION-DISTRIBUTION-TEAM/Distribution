@@ -343,6 +343,10 @@ $$;
 ----------------------------------------------------------------------------- */
 CREATE OR REPLACE VIEW
     DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.VW_V_U5_BALANCED_POOL
+-- COPY GRANTS or the app loses its SELECT the next time this view is edited.
+-- CREATE OR REPLACE VIEW drops every grant by default, unlike the tables above
+-- where the builders already carry the clause.
+COPY GRANTS
 AS
 SELECT
      IDNUMBER

@@ -7521,6 +7521,16 @@ function CampaignSettingsPanel() {
                     <Button type="button" variant="outline" size="sm" onClick={loadSourceColumns} disabled={colsLoading}>
                       {colsLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…</> : <>Load columns &amp; map {sourceKind === "proc" ? "(stage → HLL)" : "(view → HLL)"}</>}
                     </Button>
+                    {/* A procedure source maps FROM the upload target, which sits two
+                        sections further down — say so here rather than after a click
+                        that could only fail. */}
+                    {sourceKind === "proc" && !targetTable.trim() && (
+                      <span className="text-xs text-amber-400">
+                        Set <span className="font-medium">Upload target</span> first — under
+                        &ldquo;Destination &amp; sync&rdquo; below. The columns come from there, not from the
+                        procedure.
+                      </span>
+                    )}
                     {Object.keys(sourceMapping).length > 0 && <span className="text-xs text-muted-foreground">{Object.keys(sourceMapping).length} column(s) mapped</span>}
                   </div>
                   {colsMsg && <p className="mt-2 text-xs text-rose-400">{colsMsg}</p>}
