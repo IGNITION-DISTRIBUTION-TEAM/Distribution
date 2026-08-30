@@ -56,8 +56,24 @@ export type PoolBand = {
   quota: number | null
 }
 
+export type PoolVolume = {
+  pool: "default" | "topup"
+  table: string
+  /** Every row the builder left behind, eligible or not. */
+  total: number
+  /** Rows carrying the LEAD_DESCRIPTION that makes them distributable. */
+  eligible: number
+  /** Eligible but outside every configured band — usually a gap in the ranges. */
+  eligibleOutsideBands: number
+  /** When the builder last replaced this table. */
+  builtAt: string | null
+  /** Why the rest were dropped, largest first. */
+  reasons: { reason: string; count: number }[]
+}
+
 export type PoolAllocationData = {
   bands: PoolBand[]
+  volumes: PoolVolume[]
   lastRun: {
     runAt: string | null
     agents: number | null
@@ -149,6 +165,40 @@ export async function GET(request: NextRequest) {
     LEFT JOIN alloc a ON a.BAND_LABEL = c.BAND_LABEL
     ORDER BY c.SCORE_MIN`
 
+  // Whole-pool volumes, one scan per table, grouped by exclusion reason.
+  //
+  // LEAD_DESCRIPTION carries both the outcome and the reason: the eligible rows
+  // are the ones labelled 'ONAIR 5' / 'ONAIR INCUBATION' and everything else is
+  // a reason they were dropped. A NULL is neither — in the default builder a
+  // lead only reaches 'ONAIR 5' via a join to the package model, so one missing
+  // from that table stays unlabelled and is silently undistributable. Surfacing
+  // it as "(unclassified)" is the point of grouping this way.
+  const volumesSql = `
+    WITH raw AS (
+      SELECT 'default' AS POOL, LEAD_DESCRIPTION, CREATEDDATE, XDSPRESAGE3
+      FROM ${POOL_DEFAULT}
+      UNION ALL
+      SELECT 'topup', LEAD_DESCRIPTION, CREATEDDATE, XDSPRESAGE3
+      FROM ${POOL_TOPUP}
+    ),
+    banded AS (
+      SELECT r.POOL, r.LEAD_DESCRIPTION, r.CREATEDDATE,
+             EXISTS (
+               SELECT 1 FROM ${BANDS} b
+               WHERE b.ENABLED
+                 AND r.XDSPRESAGE3::INT BETWEEN b.SCORE_MIN AND b.SCORE_MAX
+             ) AS IN_BAND
+      FROM raw r
+    )
+    SELECT POOL,
+           COALESCE(NULLIF(TRIM(LEAD_DESCRIPTION), ''), '(unclassified)') AS REASON,
+           COUNT(*) AS N,
+           COUNT_IF(NOT IN_BAND) AS OUTSIDE_BANDS,
+           TO_VARCHAR(MAX(CREATEDDATE), 'YYYY-MM-DD HH24:MI') AS BUILT_AT
+    FROM banded
+    GROUP BY 1, 2
+    ORDER BY 1, 3 DESC`
+
   const runsSql = `
     SELECT TO_VARCHAR(RUN_AT, 'YYYY-MM-DD HH24:MI') AS RUN_AT,
            AGENTS, DAYS, LEADS_PER_AGENT_DAY, TARGET_TOTAL,
@@ -157,8 +207,16 @@ export async function GET(request: NextRequest) {
     ORDER BY RUN_AT DESC
     LIMIT 20`
 
+  const ELIGIBLE: Record<string, string> = {
+    default: "ONAIR 5",
+    topup: "ONAIR INCUBATION",
+  }
+
   try {
-    const bandRows = await executeSnowflakeQuery<Record<string, unknown>>(bandsSql, SF)
+    const [bandRows, volumeRows] = await Promise.all([
+      executeSnowflakeQuery<Record<string, unknown>>(bandsSql, SF),
+      executeSnowflakeQuery<Record<string, unknown>>(volumesSql, SF),
+    ])
 
     // The run log is a nicety — an empty or missing one must not cost you the
     // report itself.
@@ -210,7 +268,30 @@ export async function GET(request: NextRequest) {
         }
       : null
 
-    const data: PoolAllocationData = { bands, lastRun, runs }
+    const volumes: PoolVolume[] = (["default", "topup"] as const).map((pool) => {
+      const rows = volumeRows.filter((r) => String(r.POOL) === pool)
+      const reasons = rows
+        .map((r) => ({ reason: String(r.REASON ?? ""), count: num(r.N) }))
+        .sort((a, b) => b.count - a.count)
+      const eligibleLabel = ELIGIBLE[pool]
+      const eligibleRow = rows.find((r) => String(r.REASON) === eligibleLabel)
+      const builtAt = rows
+        .map((r) => (r.BUILT_AT == null ? null : String(r.BUILT_AT)))
+        .filter((v): v is string => v !== null)
+        .sort()
+        .pop()
+      return {
+        pool,
+        table: pool === "default" ? POOL_DEFAULT : POOL_TOPUP,
+        total: reasons.reduce((a, r) => a + r.count, 0),
+        eligible: eligibleRow ? num(eligibleRow.N) : 0,
+        eligibleOutsideBands: eligibleRow ? num(eligibleRow.OUTSIDE_BANDS) : 0,
+        builtAt: builtAt ?? null,
+        reasons: reasons.filter((r) => r.reason !== eligibleLabel),
+      }
+    })
+
+    const data: PoolAllocationData = { bands, volumes, lastRun, runs }
     return NextResponse.json(data)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -219,6 +300,7 @@ export async function GET(request: NextRequest) {
       // missing rather than returning an empty report that looks like real data.
       return NextResponse.json({
         bands: [],
+        volumes: [],
         lastRun: null,
         runs: [],
         notConfigured: message,

@@ -2061,8 +2061,19 @@ type PoolRun = {
   selectedTopup: number | null
 }
 
+type PoolVolume = {
+  pool: "default" | "topup"
+  table: string
+  total: number
+  eligible: number
+  eligibleOutsideBands: number
+  builtAt: string | null
+  reasons: { reason: string; count: number }[]
+}
+
 type PoolAllocationData = {
   bands: PoolBand[]
+  volumes: PoolVolume[]
   lastRun: (PoolRun & { shortfall: number | null }) | null
   runs: PoolRun[]
   notConfigured?: string
@@ -2159,6 +2170,146 @@ function SplitBar({
         />
       )}
     </span>
+  )
+}
+
+/**
+ * One pool as the builder last left it: everything it holds, how much of that
+ * is distributable, and why the rest is not.
+ *
+ * The exclusion breakdown is the useful half. A pool that looks thin is usually
+ * thin for a nameable reason — DNC, a recent contact, a low propensity score —
+ * and the counts say which, rather than leaving "not enough leads" as the whole
+ * story.
+ */
+function PoolVolumeCard({
+  volume,
+  allocated,
+  colour,
+  title,
+  note,
+}: {
+  volume: PoolVolume
+  allocated: number
+  colour: string
+  title: string
+  note: string
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const excluded = volume.total - volume.eligible
+  const shown = showAll ? volume.reasons : volume.reasons.slice(0, 6)
+  const rest = volume.reasons.length - shown.length
+  const share = (n: number) => (volume.total > 0 ? (n / volume.total) * 100 : 0)
+
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h4 className="flex items-center gap-2 font-medium text-foreground">
+            <i className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: colour }} />
+            {title}
+          </h4>
+          <p className="mt-0.5 text-xs text-muted-foreground">{note}</p>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-muted-foreground">Rebuilt</div>
+          <div className="font-mono text-xs text-foreground">{volume.builtAt ?? "—"}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div>
+          <div className="text-xs text-muted-foreground">In the pool</div>
+          <div className="font-mono text-lg font-semibold text-foreground">{fmtInt(volume.total)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Distributable</div>
+          <div className="font-mono text-lg font-semibold" style={{ color: colour }}>
+            {fmtInt(volume.eligible)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Taken last run</div>
+          <div className="font-mono text-lg font-semibold text-foreground">{fmtInt(allocated)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Untouched</div>
+          <div className="font-mono text-lg font-semibold text-foreground">
+            {fmtInt(Math.max(0, volume.eligible - allocated))}
+          </div>
+        </div>
+      </div>
+
+      {/* Distributable vs excluded, as a share of the whole pool. */}
+      <div>
+        <div className="flex h-2.5 w-full overflow-hidden rounded-sm bg-muted/40">
+          <span style={{ width: `${share(volume.eligible).toFixed(2)}%`, backgroundColor: colour }} />
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          <span className="font-mono text-foreground">{share(volume.eligible).toFixed(1)}%</span> of the
+          pool is distributable · {fmtInt(excluded)} excluded
+        </p>
+      </div>
+
+      {volume.eligibleOutsideBands > 0 && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          <span className="font-mono">{fmtInt(volume.eligibleOutsideBands)}</span> distributable leads
+          fall outside every enabled band and can never be selected. Usually a gap between two score
+          ranges, or a band switched off.
+        </p>
+      )}
+
+      {volume.reasons.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Why the rest were dropped
+          </div>
+          <div className="flex flex-col gap-1">
+            {shown.map((r) => (
+              <div key={r.reason} className="flex items-center gap-2 text-xs">
+                <span
+                  className={cn(
+                    "flex-1 truncate",
+                    r.reason === "(unclassified)" ? "text-amber-300" : "text-muted-foreground"
+                  )}
+                  title={r.reason}
+                >
+                  {r.reason}
+                </span>
+                <span className="h-1.5 w-24 shrink-0 rounded-sm bg-muted/40">
+                  <span
+                    className="block h-full rounded-sm bg-muted-foreground/60"
+                    style={{ width: `${Math.min(100, share(r.count) * 3).toFixed(2)}%` }}
+                  />
+                </span>
+                <span className="w-20 shrink-0 text-right font-mono text-foreground">
+                  {fmtInt(r.count)}
+                </span>
+                <span className="w-12 shrink-0 text-right font-mono text-muted-foreground">
+                  {share(r.count).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+          {rest > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className="mt-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Show {rest} more
+            </button>
+          )}
+          {volume.reasons.some((r) => r.reason === "(unclassified)") && (
+            <p className="mt-2 text-xs text-amber-200/80">
+              &ldquo;Unclassified&rdquo; leads were neither excluded nor promoted. In the base builder a
+              lead only becomes distributable through a join to the package model, so one missing from
+              that table stays unlabelled — available in principle, unreachable in practice.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2444,6 +2595,33 @@ function PoolAllocationReport() {
           </p>
         )}
       </div>
+
+      {/* ---- Pool volumes, as the builders left them ---- */}
+      {(data?.volumes.length ?? 0) > 0 && (
+        <div>
+          <h3 className="mb-2 font-medium text-foreground">Pool volumes</h3>
+          <p className="mb-3 max-w-3xl text-sm text-muted-foreground">
+            Both source pools as the procedures last rebuilt them. &ldquo;Distributable&rdquo; is what
+            the allocation can actually draw on — the rest is excluded, and the reasons say why.
+          </p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {data!.volumes.map((v) => (
+              <PoolVolumeCard
+                key={v.pool}
+                volume={v}
+                allocated={v.pool === "default" ? actual.fromDefault : actual.fromTopup}
+                colour={v.pool === "default" ? POOL_DEFAULT_COLOUR : POOL_TOPUP_COLOUR}
+                title={v.pool === "default" ? "Base pool" : "Top-up pool"}
+                note={
+                  v.pool === "default"
+                    ? "Existing OnAir book · TM_ONAIR_SCORE_OTPUT"
+                    : "Never in OnAir · TM_ONAIR_INCUBATION_SCORE_OTPUT"
+                }
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ---- What-if settings ---- */}
       <div className="rounded-xl border border-border bg-card p-5">
