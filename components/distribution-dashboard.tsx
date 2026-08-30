@@ -2784,8 +2784,18 @@ function AutomationContent() {
               </div>
               {form.sourceKind !== "none" && (
                 <div>
-                  <Label htmlFor="src-obj">{form.sourceKind === "proc" ? "Stored procedure" : "View"} (DB.SCHEMA.NAME)</Label>
-                  <Input id="src-obj" className="mt-1 font-mono text-xs" value={form.sourceObject} onChange={(e) => setF("sourceObject", e.target.value)} placeholder="DATAWAREHOUSE.SCHEMA.NAME" />
+                  <Label htmlFor="src-obj">
+                    {form.sourceKind === "proc"
+                      ? "Stored procedure (DB.SCHEMA.NAME, with any arguments)"
+                      : "View (DB.SCHEMA.NAME)"}
+                  </Label>
+                  <Input id="src-obj" className="mt-1 font-mono text-xs" value={form.sourceObject} onChange={(e) => setF("sourceObject", e.target.value)} placeholder={form.sourceKind === "proc" ? "DATAWAREHOUSE.SCHEMA.PROC(1)" : "DATAWAREHOUSE.SCHEMA.NAME"} />
+                  {form.sourceKind === "proc" && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Exactly as you would write the <span className="font-mono">CALL</span> — Snowflake matches on
+                      name and argument count, so include the arguments.
+                    </p>
+                  )}
                 </div>
               )}
               {form.sourceKind === "proc" && (
@@ -7429,13 +7439,28 @@ function CampaignSettingsPanel() {
                 </div>
                 {sourceKind !== "none" && (
                   <div>
-                    <Label className="mb-1.5 block text-xs text-muted-foreground">{sourceKind === "proc" ? "Procedure" : "View"} (DB.SCHEMA.NAME)</Label>
-                    <Input value={sourceObject} onChange={(e) => setSourceObject(e.target.value)} placeholder="DATABASE.SCHEMA.NAME" className="font-mono text-sm" />
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">
+                      {sourceKind === "proc" ? "Procedure (DB.SCHEMA.NAME, with any arguments)" : "View (DB.SCHEMA.NAME)"}
+                    </Label>
+                    <Input
+                      value={sourceObject}
+                      onChange={(e) => setSourceObject(e.target.value)}
+                      placeholder={sourceKind === "proc" ? "DATABASE.SCHEMA.PROC(1)" : "DATABASE.SCHEMA.NAME"}
+                      className="font-mono text-sm"
+                    />
                   </div>
                 )}
               </div>
               {sourceKind === "proc" && (
-                <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
+                <>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Write it exactly as you would the <span className="font-mono">CALL</span>. Snowflake matches a
+                    procedure on its name <em>and</em> its argument count, so one that takes an argument has to be
+                    written <span className="font-mono">…NAME(1)</span> — without the argument it reports the
+                    procedure as unknown rather than as wrongly called.
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
+                </>
               )}
               {sourceKind !== "none" && (
                 <div className="mt-3">

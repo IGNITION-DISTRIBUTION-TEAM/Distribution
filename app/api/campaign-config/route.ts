@@ -11,8 +11,12 @@ export const SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION"
 // target table.
 const QUALIFIED_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // A procedure reference: DATABASE.SCHEMA.PROC, optionally with a call-argument
-// list of digits / identifiers / commas (e.g. SP_ONAIR_NEW_POOL_BR(1) or
-// PROC(campaignid)). Only safe chars inside the parens — no quotes/semicolons.
+// list (e.g. SP_ONAIR_NEW_POOL_BR(1)). The argument list is passed to Snowflake
+// VERBATIM — nothing is substituted — so the only things that work here are SQL
+// literals valid on their own: numbers, and keywords such as NULL / TRUE. A bare
+// identifier like PROC(campaignid) passes this check and then fails at run time
+// on "invalid identifier"; there is no campaign-id placeholder.
+// Only safe chars inside the parens — no quotes/semicolons.
 const PROC_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
 
 export function escapeSqlString(s: string): string {
