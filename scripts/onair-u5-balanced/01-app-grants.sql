@@ -85,6 +85,50 @@ GRANT SELECT, INSERT ON TABLE
 
 
 /* -----------------------------------------------------------------------------
+   5a. The Pool allocation REPORT — Reporting → Distribution
+   Symptom without these:
+     Object '...TM_U5_BAND_TARGETS' does not exist or not authorized.
+
+   The grants above cover RUNNING the process. The report READS four more
+   objects, and reads them as the app rather than as the procedure's owner — so
+   the SELECTs granted to SYSADMIN in 00-grants.sql do nothing for it.
+----------------------------------------------------------------------------- */
+
+-- The band configuration and the run log.
+GRANT SELECT ON TABLE
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_U5_BAND_TARGETS
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT SELECT ON TABLE
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_U5_ALLOCATION_RUNS
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+-- Both source pools. The report counts what is still available per band, which
+-- it cannot get from the allocated table — that only holds what was taken.
+-- Granted to SYSADMIN already for the procedure's own use; the app is a
+-- different role and needs its own.
+GRANT SELECT ON TABLE
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_SCORE_OTPUT
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT SELECT ON TABLE
+  DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_INCUBATION_SCORE_OTPUT
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+/* Persistence:
+     TM_U5_BAND_TARGETS / TM_U5_ALLOCATION_RUNS  CREATE TABLE IF NOT EXISTS —
+       never replaced, so these grants are permanent.
+     The two pool tables                         CREATE OR REPLACE ... COPY
+       GRANTS in the builders, so they survive each nightly rebuild.
+
+   Narrower option, if you would rather the app did not hold SELECT on the raw
+   pools: the report only ever counts rows per band, so a counts-only view over
+   each pool would serve it and expose no identifiers. Say the word and I will
+   move the route onto them — it is a small change and strictly better under
+   POPIA, just more objects to keep in step. */
+
+
+/* -----------------------------------------------------------------------------
    5b. The EXISTING Default automation, while you are here
    Same role, and the original "Unknown user-defined function" on
    SP_ONAIR_NEW_POOL_BR was never confirmed resolved. If it is still failing

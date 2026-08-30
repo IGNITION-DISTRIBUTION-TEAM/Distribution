@@ -2358,12 +2358,16 @@ function PoolAllocationReport() {
   if (data?.notConfigured || (data?.bands.length ?? 0) === 0) {
     return (
       <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-card p-8">
-        <h3 className="font-medium text-foreground">The balanced pool is not set up yet</h3>
+        <h3 className="font-medium text-foreground">Can&apos;t read the balanced pool</h3>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          This report reads the band configuration and the allocated leads produced by
-          <span className="font-mono text-xs"> SP_ONAIR_U5_BALANCED_POOL</span>. Run steps 1 to 6 of
-          <span className="font-mono text-xs"> scripts/onair-u5-balanced/onair-u5-balanced.sql</span>, then
-          reload.
+          Snowflake reports a missing object and a missing privilege with the same message, so this
+          is one of two things. Either the balanced process has not been created here — run steps 1
+          to 6 of{" "}
+          <span className="font-mono text-xs">scripts/onair-u5-balanced/onair-u5-balanced.sql</span> —
+          or it exists and this app&apos;s Snowflake role has no{" "}
+          <span className="font-mono text-xs">SELECT</span> on it. If the distribution has already
+          run, it is the second: see section 5a of{" "}
+          <span className="font-mono text-xs">scripts/onair-u5-balanced/01-app-grants.sql</span>.
         </p>
         {data?.notConfigured && (
           <p className="max-w-2xl font-mono text-xs text-amber-300">{data.notConfigured}</p>
