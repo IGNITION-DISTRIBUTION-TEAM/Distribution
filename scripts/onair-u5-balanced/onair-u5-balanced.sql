@@ -26,6 +26,13 @@
      7  verify
      8  wire it into the app                       see the runbook
 
+   GRANTS: see 00-grants.sql in this folder. The procedure is EXECUTE AS OWNER,
+   so the rights that matter are its OWNER's — not yours and not the app's. The
+   pool tables are created by the two builders running as a different owner, so
+   the new procedure's owner has to be granted SELECT on them explicitly. Run
+   00-grants.sql section 2 before STEP 6 or the first call fails on
+   "Insufficient privileges to operate on table TM_ONAIR_INCUBATION_SCORE_OTPUT".
+
    NOT YET TESTED against the warehouse — I have no Snowflake access from here.
    Step 5 is the check that catches anything wrong before a lead moves.
 ============================================================================= */
