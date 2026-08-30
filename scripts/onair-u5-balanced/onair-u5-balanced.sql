@@ -244,10 +244,21 @@ BEGIN
         FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_INCUBATION_SCORE_OTPUT
         WHERE LEAD_DESCRIPTION = 'ONAIR INCUBATION'
     ),
-    -- Band each lead by its actual score. The two pools are disjoint by
-    -- construction (incubation is built WHERE NOT EXISTS in IGNITION_ONAIR), but
-    -- the QUALIFY costs almost nothing and means a change to either builder can
-    -- never silently start issuing the same lead twice.
+    -- Band each lead by its actual score.
+    --
+    -- ::INT and not TRY_TO_NUMBER. XDSPRESAGE3 is CREDITRISK.SCORE3, a FLOAT,
+    -- and Snowflake's TRY_ conversion functions only accept VARCHAR input —
+    -- TRY_TO_NUMBER(FLOAT) fails to compile with "TRY_CAST cannot be used with
+    -- arguments of types FLOAT and NUMBER(38,0)". A plain cast cannot fail on a
+    -- numeric source anyway, and rounding to whole points before banding is what
+    -- the two source procedures already do with XDSPRESAGE3::INT, so the bands
+    -- line up with their 650 cut-off. Casting after banding would leave a lead
+    -- scoring 661.4 in no band at all.
+    --
+    -- The two pools are disjoint by construction (incubation is built WHERE NOT
+    -- EXISTS in IGNITION_ONAIR), but the QUALIFY costs almost nothing and means a
+    -- change to either builder can never silently start issuing the same lead
+    -- twice.
     banded AS (
         SELECT
              p.*
@@ -255,7 +266,7 @@ BEGIN
             ,q.QUOTA
         FROM pool p
         JOIN quota q
-          ON TRY_TO_NUMBER(p.XDSPRESAGE3) BETWEEN q.SCORE_MIN AND q.SCORE_MAX
+          ON p.XDSPRESAGE3::INT BETWEEN q.SCORE_MIN AND q.SCORE_MAX
         WHERE p.CONTACTNUMBER1 IS NOT NULL
           AND (p.POOL = 'default' OR q.TOPUP_ENABLED)
         QUALIFY ROW_NUMBER() OVER (
@@ -289,7 +300,7 @@ BEGIN
               ELSE CONCAT('0', RIGHT(CONTACTNUMBER2, 9)) END AS ALT_NUMBER1
         ,CASE WHEN CONTACTNUMBER3 IS NULL THEN NULL
               ELSE CONCAT('0', RIGHT(CONTACTNUMBER3, 9)) END AS ALT_NUMBER2
-        ,TRY_TO_NUMBER(XDSPRESAGE3)                 AS SCORE
+        ,XDSPRESAGE3::INT                           AS SCORE
         ,XDSPRESAGESCOREGROUP3                      AS SOURCE_SCOREGROUP
         ,BAND_LABEL                                 AS SCOREGROUP
         ,POOL                                       AS SOURCE_POOL
@@ -368,11 +379,11 @@ quota AS (
     FROM cfg c
 ),
 pool AS (
-    SELECT 'default' AS POOL, TRY_TO_NUMBER(XDSPRESAGE3) AS SCORE
+    SELECT 'default' AS POOL, XDSPRESAGE3::INT AS SCORE
     FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_SCORE_OTPUT
     WHERE LEAD_DESCRIPTION = 'ONAIR 5' AND CONTACTNUMBER1 IS NOT NULL
     UNION ALL
-    SELECT 'topup', TRY_TO_NUMBER(XDSPRESAGE3)
+    SELECT 'topup', XDSPRESAGE3::INT
     FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_INCUBATION_SCORE_OTPUT
     WHERE LEAD_DESCRIPTION = 'ONAIR INCUBATION' AND CONTACTNUMBER1 IS NOT NULL
 ),
@@ -411,11 +422,11 @@ quota AS (
              FLOOR($TARGET * c.WEIGHT / SUM(c.WEIGHT) OVER ())) AS QUOTA FROM cfg c
 ),
 pool AS (
-    SELECT 'default' AS POOL, TRY_TO_NUMBER(XDSPRESAGE3) AS SCORE
+    SELECT 'default' AS POOL, XDSPRESAGE3::INT AS SCORE
     FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_SCORE_OTPUT
     WHERE LEAD_DESCRIPTION = 'ONAIR 5' AND CONTACTNUMBER1 IS NOT NULL
     UNION ALL
-    SELECT 'topup', TRY_TO_NUMBER(XDSPRESAGE3)
+    SELECT 'topup', XDSPRESAGE3::INT
     FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_INCUBATION_SCORE_OTPUT
     WHERE LEAD_DESCRIPTION = 'ONAIR INCUBATION' AND CONTACTNUMBER1 IS NOT NULL
 ),
@@ -448,7 +459,7 @@ FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_ONAIR_SCORE_OTPUT p
 WHERE p.LEAD_DESCRIPTION = 'ONAIR 5'
   AND NOT EXISTS (
       SELECT 1 FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_U5_BAND_TARGETS b
-      WHERE b.ENABLED AND TRY_TO_NUMBER(p.XDSPRESAGE3) BETWEEN b.SCORE_MIN AND b.SCORE_MAX
+      WHERE b.ENABLED AND p.XDSPRESAGE3::INT BETWEEN b.SCORE_MIN AND b.SCORE_MAX
   );
 
 

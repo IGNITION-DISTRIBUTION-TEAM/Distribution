@@ -90,7 +90,7 @@ WHERE NOT EXISTS (
     SELECT 1 FROM DATAWAREHOUSE.DW_XDS.ACCOUNT_DATA_MODEL_OUTPUT b
     WHERE a.IDENTIFIERNUMBER = b.IDNO
 )
-AND TRY_TO_NUMBER(c.SCORE3) >= 650;
+AND c.SCORE3::INT >= 650;
 
 
 -- ============================================================================
