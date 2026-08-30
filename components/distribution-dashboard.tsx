@@ -198,7 +198,13 @@ async function runStepwiseAt(
       // Poll the async statement until it completes or errors.
       for (;;) {
         await new Promise((r) => setTimeout(r, 2500))
-        const pr = await fetch(`${base}/step?handle=${encodeURIComponent(handle)}`, { cache: "no-store" })
+        // The key goes back on the poll so a failure can name the procedure the
+        // step called — the SQL is long gone by the time Snowflake reports a
+        // compilation error.
+        const pr = await fetch(
+          `${base}/step?handle=${encodeURIComponent(handle)}&key=${encodeURIComponent(plan[i].key)}`,
+          { cache: "no-store" }
+        )
         const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
         if (ps.status === "running") continue
         if (ps.status === "error") throw new Error(ps.error || "Step failed")
@@ -257,7 +263,10 @@ async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; e
   if (!handle) return { ok: false, error: "No statement handle returned" }
   for (;;) {
     await new Promise((r) => setTimeout(r, 2500))
-    const pr = await fetch(`${base}/step?handle=${encodeURIComponent(handle)}`, { cache: "no-store" })
+    const pr = await fetch(
+      `${base}/step?handle=${encodeURIComponent(handle)}&key=${encodeURIComponent(key)}`,
+      { cache: "no-store" }
+    )
     const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
     if (ps.status === "running") continue
     if (ps.status === "error") return { ok: false, error: ps.error || "Step failed" }

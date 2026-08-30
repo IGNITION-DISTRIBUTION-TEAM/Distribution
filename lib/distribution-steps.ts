@@ -307,3 +307,43 @@ export async function buildStepSql(
   if (!RUN_PROC_IDENT.test(proc)) throw new Error(`Configured ${key} procedure is invalid: ${proc || "(empty)"}`)
   return { sql: buildCall(proc), ...dbSchemaOf(proc) }
 }
+
+// The procedure a step CALLs, or null for steps that run plain SQL.
+export function procRefForStep(config: RunConfigRow, key: string): string | null {
+  if (key === "source_proc") return str(config, "SOURCE_OBJECT") || null
+  if (key === "sync") return str(config, "SYNC_PROCEDURE") || null
+  if (key === "load_history") return str(config, "LOAD_HISTORY_PROCEDURE") || null
+  if (key === "update_hll" || key.startsWith("update_hll:")) {
+    const list = getUpdateHllProcs(config)
+    const idx = key.includes(":") ? Number(key.split(":")[1]) : 0
+    return list[idx] ?? null
+  }
+  return null
+}
+
+/**
+ * Turn Snowflake's unresolved-CALL errors into something actionable.
+ *
+ * Snowflake reports "Unknown user-defined function" for THREE different
+ * situations and does not distinguish between them — deliberately, so a missing
+ * grant does not leak the existence of an object. Naming all three is the only
+ * honest hint we can give, and the argument-count case is the one people miss:
+ * the app sends CALL NAME() unless the config carries its own argument list.
+ *
+ * Returns "" for any other error, so callers can append it unconditionally.
+ */
+export function callHint(message: string, procRef: string): string {
+  if (!/unknown (user-defined )?function|does not exist or not authorized|invalid identifier/i.test(message)) {
+    return ""
+  }
+  const name = procRef.split("(")[0]
+  const args = procRef.includes("(")
+    ? `called as ${procRef}`
+    : `called with no arguments as ${name}()`
+  return (
+    ` — the app ${args}. Snowflake reports the same error whether (a) nothing of that name exists at ` +
+    `${name}, (b) it exists but takes a different number of arguments — set the source object to ` +
+    `NAME(1) to pass one, or (c) the app's Snowflake role has no USAGE on it. ` +
+    `SHOW PROCEDURES LIKE '${name.split(".").pop()}' IN ACCOUNT tells you which.`
+  )
+}

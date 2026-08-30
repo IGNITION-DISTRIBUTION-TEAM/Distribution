@@ -9,6 +9,7 @@ import {
   RUN_PROC_IDENT,
 } from "@/app/api/campaign-config/route"
 import { IDENT_COL } from "@/app/api/distribution/tasks/route"
+import { callHint } from "@/lib/distribution-steps"
 import {
   HLL_TABLE,
   hllColumnSet,
@@ -46,17 +47,6 @@ type RunEvent =
 function parseId(raw: string): number | null {
   const n = parseInt(raw, 10)
   return Number.isInteger(n) && n >= 0 ? n : null
-}
-
-// When Snowflake can't resolve a CALL target, it's almost always the exact
-// name/schema or the argument count (overload resolution). Add an actionable
-// hint for that error class; return "" otherwise.
-function callHint(message: string, procRef: string): string {
-  if (/unknown (user-defined )?function|does not exist or not authorized|invalid identifier/i.test(message)) {
-    const hasArgs = procRef.includes("(")
-    return ` — check that ${procRef.split("(")[0]} exists at that exact DATABASE.SCHEMA.NAME and that the argument count matches${hasArgs ? "" : " (if it takes an argument, configure it as NAME(1))"}.`
-  }
-  return ""
 }
 
 // A proc reference may carry a call-argument list (e.g. DB.SCHEMA.SP_X(1)).

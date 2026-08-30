@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { submitSnowflakeStatementAsync, getSnowflakeStatementStatus } from "@/lib/snowflake"
-import { readRunConfig, buildStepSql } from "@/lib/distribution-steps"
+import { readRunConfig, buildStepSql, procRefForStep, callHint } from "@/lib/distribution-steps"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -42,14 +42,34 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireDepartmentAccess(request, "distribution")
   if (guard instanceof NextResponse) return guard
-  await params // id not needed for the poll, but keep the signature consistent
+  const { id } = await params
   const handle = request.nextUrl.searchParams.get("handle")
   if (!handle) return NextResponse.json({ error: "handle required" }, { status: 400 })
+  // The step key is optional and used only to explain a failure — a compile
+  // error surfaces here, on the poll, long after the SQL was built.
+  const key = String(request.nextUrl.searchParams.get("key") ?? "").trim()
   try {
     const status = await getSnowflakeStatementStatus(handle)
+    if (status.status === "error" && status.error && key) {
+      return NextResponse.json({ ...status, error: status.error + (await hintFor(id, key, status.error)) })
+    }
     return NextResponse.json(status)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ status: "error", error: message }, { status: 200 })
+  }
+}
+
+// Re-read the config to name the procedure the failed step called. Best effort
+// and only on failure, so a config read that itself fails costs nothing.
+async function hintFor(id: string, key: string, message: string): Promise<string> {
+  const campaignId = parseId(id)
+  if (campaignId === null) return ""
+  try {
+    const config = await readRunConfig(campaignId)
+    const ref = config ? procRefForStep(config, key) : null
+    return ref ? callHint(message, ref) : ""
+  } catch {
+    return ""
   }
 }
