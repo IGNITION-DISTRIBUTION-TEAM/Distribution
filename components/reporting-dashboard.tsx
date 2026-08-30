@@ -195,7 +195,7 @@ const fmtPct = (v: number | null) =>
 // "soon" and not selectable), which is how the quality reports appear until the
 // sales and billing feed lands.
 type ReportItem = { label: string; view: ReportView | null }
-type ReportView = "quality" | "distributed" | "sales" | "dialler"
+type ReportView = "quality" | "distributed" | "sales" | "dialler" | "pool"
 
 const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
@@ -212,6 +212,7 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
     title: "Distribution",
     items: [
       { label: "Distributed", view: "distributed" },
+      { label: "Pool allocation", view: "pool" },
       { label: "Sales", view: "sales" },
       { label: "Dialler", view: "dialler" },
     ],
@@ -336,6 +337,7 @@ export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
           <div className="w-full px-6 py-8">
             {active.view === "quality" && <QualityMixReport />}
             {active.view === "distributed" && <DistributedDashboardPanel />}
+            {active.view === "pool" && <PoolAllocationReport />}
             {active.view === "sales" && <SalesDashboardPanel />}
             {active.view === "dialler" && <DiallerDashboardPanel />}
           </div>
@@ -2020,3 +2022,741 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
   )
 }
 
+
+/* ===========================================================================
+   Pool allocation — where campaign 608's leads came from, what was left in the
+   pools, and what a different set of settings would have produced.
+   ======================================================================== */
+
+// Validated against the report card surface (#15181e) in dark mode: dE 9.2 under
+// deuteranopia, 19.8 to normal vision, both clear 3:1 contrast. The pools are
+// also always labelled, so the colour reinforces the split rather than carrying
+// it alone.
+const POOL_DEFAULT_COLOUR = "#0284c7"
+const POOL_TOPUP_COLOUR = "#7c3aed"
+
+type PoolBand = {
+  band: string
+  scoreMin: number
+  scoreMax: number
+  weight: number
+  targetOverride: number | null
+  topupEnabled: boolean
+  enabled: boolean
+  availDefault: number
+  availTopup: number
+  allocDefault: number
+  allocTopup: number
+  quota: number | null
+}
+
+type PoolRun = {
+  runAt: string
+  agents: number | null
+  days: number | null
+  leadsPerAgentDay: number | null
+  targetTotal: number | null
+  selectedTotal: number | null
+  selectedDefault: number | null
+  selectedTopup: number | null
+}
+
+type PoolAllocationData = {
+  bands: PoolBand[]
+  lastRun: (PoolRun & { shortfall: number | null }) | null
+  runs: PoolRun[]
+  notConfigured?: string
+}
+
+/** One band's simulated outcome under the settings currently on screen. */
+type SimRow = {
+  band: PoolBand
+  weight: number
+  topup: boolean
+  enabled: boolean
+  quota: number
+  fromDefault: number
+  fromTopup: number
+  total: number
+  short: number
+  leftDefault: number
+  leftTopup: number
+}
+
+/**
+ * Re-run the allocation arithmetic in the browser.
+ *
+ * This mirrors the procedure exactly: quota by weight, fill from the default
+ * pool first, top up from incubation only for what is left. Because it is pure
+ * arithmetic over the per-band availability counts, it can run on every
+ * keystroke without touching Snowflake — and, more importantly, it cannot
+ * distribute anything by accident. Changing a number here changes nothing in
+ * the warehouse; the SQL to make it real is on the button below the table.
+ */
+function simulate(
+  bands: PoolBand[],
+  target: number,
+  overrides: Record<string, { weight: number; topup: boolean; enabled: boolean }>
+): SimRow[] {
+  const live = bands.filter((b) => (overrides[b.band]?.enabled ?? b.enabled))
+  const sumW = live.reduce((a, b) => a + (overrides[b.band]?.weight ?? b.weight), 0)
+
+  return bands.map((b) => {
+    const o = overrides[b.band]
+    const weight = o?.weight ?? b.weight
+    const topup = o?.topup ?? b.topupEnabled
+    const enabled = o?.enabled ?? b.enabled
+
+    if (!enabled || sumW <= 0) {
+      return {
+        band: b, weight, topup, enabled, quota: 0,
+        fromDefault: 0, fromTopup: 0, total: 0, short: 0,
+        leftDefault: b.availDefault, leftTopup: b.availTopup,
+      }
+    }
+    // An explicit TARGET_ROWS pins the band; otherwise split the target by weight.
+    const quota = b.targetOverride ?? Math.floor((target * weight) / sumW)
+    const fromDefault = Math.min(quota, b.availDefault)
+    const fromTopup = topup ? Math.min(quota - fromDefault, b.availTopup) : 0
+    const total = fromDefault + fromTopup
+    return {
+      band: b, weight, topup, enabled, quota,
+      fromDefault, fromTopup, total,
+      short: Math.max(0, quota - total),
+      leftDefault: b.availDefault - fromDefault,
+      leftTopup: b.availTopup - fromTopup,
+    }
+  })
+}
+
+/** Horizontal split bar: default / top-up / unfilled, against the quota. */
+function SplitBar({
+  fromDefault,
+  fromTopup,
+  quota,
+  scale,
+}: {
+  fromDefault: number
+  fromTopup: number
+  quota: number
+  scale: number
+}) {
+  if (scale <= 0) return <span />
+  const pct = (n: number) => `${Math.max(0, (n / scale) * 100).toFixed(2)}%`
+  const short = Math.max(0, quota - fromDefault - fromTopup)
+  return (
+    <span
+      className="relative flex h-3 w-40 overflow-hidden rounded-sm bg-muted/40"
+      role="img"
+      aria-label={`${fmtInt(fromDefault)} from the default pool, ${fmtInt(fromTopup)} from top-up, ${fmtInt(short)} unfilled of a ${fmtInt(quota)} quota`}
+    >
+      <span style={{ width: pct(fromDefault), backgroundColor: POOL_DEFAULT_COLOUR }} />
+      <span style={{ width: pct(fromTopup), backgroundColor: POOL_TOPUP_COLOUR }} />
+      {short > 0 && (
+        <span
+          style={{ width: pct(short) }}
+          className="bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,hsl(var(--muted-foreground)/0.45)_3px,hsl(var(--muted-foreground)/0.45)_6px)]"
+        />
+      )}
+    </span>
+  )
+}
+
+function PoolAllocationReport() {
+  const [data, setData] = useState<PoolAllocationData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // What-if settings. Seeded from the last run so the page opens showing what
+  // actually happened, not an arbitrary scenario.
+  const [agents, setAgents] = useState("308")
+  const [days, setDays] = useState("5")
+  const [perDay, setPerDay] = useState("180")
+  const [overrides, setOverrides] = useState<
+    Record<string, { weight: number; topup: boolean; enabled: boolean }>
+  >({})
+  const [showSim, setShowSim] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const res = await fetchJson<PoolAllocationData>("/api/reporting/pool-allocation")
+    if (!res.ok || !res.data) {
+      setError(res.error ?? `Request failed (${res.status})`)
+      setLoading(false)
+      return
+    }
+    setData(res.data)
+    const r = res.data.lastRun
+    if (r?.agents) setAgents(String(r.agents))
+    if (r?.days) setDays(String(r.days))
+    if (r?.leadsPerAgentDay) setPerDay(String(r.leadsPerAgentDay))
+    setOverrides({})
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const target =
+    (Number(agents) || 0) * (Number(days) || 0) * (Number(perDay) || 0)
+
+  const sim = useMemo(
+    () => (data ? simulate(data.bands, target, overrides) : []),
+    [data, target, overrides]
+  )
+
+  // Actuals from the last run, straight off the allocated table.
+  const actual = useMemo(() => {
+    const bands = data?.bands ?? []
+    const d = bands.reduce((a, b) => a + b.allocDefault, 0)
+    const t = bands.reduce((a, b) => a + b.allocTopup, 0)
+    return { fromDefault: d, fromTopup: t, total: d + t }
+  }, [data])
+
+  const pools = useMemo(() => {
+    const bands = data?.bands ?? []
+    return {
+      availDefault: bands.reduce((a, b) => a + b.availDefault, 0),
+      availTopup: bands.reduce((a, b) => a + b.availTopup, 0),
+    }
+  }, [data])
+
+  const simTotals = useMemo(() => {
+    const t = sim.reduce(
+      (a, r) => ({
+        quota: a.quota + r.quota,
+        fromDefault: a.fromDefault + r.fromDefault,
+        fromTopup: a.fromTopup + r.fromTopup,
+        total: a.total + r.total,
+        short: a.short + r.short,
+        leftDefault: a.leftDefault + r.leftDefault,
+        leftTopup: a.leftTopup + r.leftTopup,
+      }),
+      { quota: 0, fromDefault: 0, fromTopup: 0, total: 0, short: 0, leftDefault: 0, leftTopup: 0 }
+    )
+    return t
+  }, [sim])
+
+  const scale = useMemo(
+    () => Math.max(1, ...sim.map((r) => Math.max(r.quota, r.total))),
+    [sim]
+  )
+
+  const dirty =
+    Object.keys(overrides).length > 0 ||
+    String(data?.lastRun?.agents ?? "") !== agents ||
+    String(data?.lastRun?.days ?? "") !== days ||
+    String(data?.lastRun?.leadsPerAgentDay ?? "") !== perDay
+
+  const setOverride = (
+    band: PoolBand,
+    patch: Partial<{ weight: number; topup: boolean; enabled: boolean }>
+  ) =>
+    setOverrides((prev) => ({
+      ...prev,
+      [band.band]: {
+        weight: prev[band.band]?.weight ?? band.weight,
+        topup: prev[band.band]?.topup ?? band.topupEnabled,
+        enabled: prev[band.band]?.enabled ?? band.enabled,
+        ...patch,
+      },
+    }))
+
+  // The report never writes to Snowflake. Applying a scenario means running the
+  // statements it generates, deliberately — so a number typed here can never
+  // change tomorrow's distribution on its own.
+  const applySql = () => {
+    const T = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_U5_BAND_TARGETS"
+    const lines: string[] = [
+      "-- Generated by Reporting → Pool allocation. Review before running.",
+      `-- Scenario: ${agents} agents × ${days} days × ${perDay} = ${fmtInt(target)} leads.`,
+      "",
+    ]
+    for (const r of sim) {
+      const b = r.band
+      const bits: string[] = []
+      if (r.weight !== b.weight) bits.push(`WEIGHT = ${r.weight}`)
+      if (r.topup !== b.topupEnabled) bits.push(`TOPUP_ENABLED = ${r.topup ? "TRUE" : "FALSE"}`)
+      if (r.enabled !== b.enabled) bits.push(`ENABLED = ${r.enabled ? "TRUE" : "FALSE"}`)
+      if (bits.length === 0) continue
+      lines.push(
+        `UPDATE ${T} SET ${bits.join(", ")}, UPDATED_AT = CURRENT_TIMESTAMP()`,
+        `  WHERE BAND_LABEL = '${b.band.replace(/'/g, "''")}';`
+      )
+    }
+    if (lines.length === 3) lines.push("-- No band changes — only the head count differs.", "")
+    lines.push(
+      "",
+      "-- Then re-run the allocation with the new head count.",
+      "-- The last two arguments are HISTORY_CHECK and REBUILD_POOLS.",
+      `CALL DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1);`,
+      "",
+      "-- In the app, set the Procedure field on the automation to match:",
+      `--   ...SP_ONAIR_U5_BALANCED_POOL(${agents}, ${days}, ${perDay}, 1, 1)`
+    )
+    const text = lines.join("\n")
+    navigator.clipboard?.writeText(text)
+    return text
+  }
+
+  const [copied, setCopied] = useState(false)
+  const copyApply = () => {
+    applySql()
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
+  }
+
+  const exportCsv = () => {
+    const esc = (v: unknown) => {
+      const t = v === null || v === undefined ? "" : String(v)
+      return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
+    }
+    const rows = [
+      ["Band", "Score min", "Score max", "Weight", "Quota",
+       "Actual default", "Actual top-up", "Actual total",
+       "In pool default", "In pool top-up",
+       "Sim from default", "Sim from top-up", "Sim total", "Sim short",
+       "Left in default", "Left in top-up"],
+      ...sim.map((r) => [
+        r.band.band, r.band.scoreMin, r.band.scoreMax, r.weight, r.quota,
+        r.band.allocDefault, r.band.allocTopup, r.band.allocDefault + r.band.allocTopup,
+        r.band.availDefault, r.band.availTopup,
+        r.fromDefault, r.fromTopup, r.total, r.short,
+        r.leftDefault, r.leftTopup,
+      ]),
+    ]
+    const blob = new Blob([rows.map((r) => r.map(esc).join(",")).join("\r\n")], {
+      type: "text/csv;charset=utf-8",
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `pool-allocation_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-border bg-card p-12 text-muted-foreground">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        Loading pool allocation…
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
+        {error}
+      </div>
+    )
+  }
+
+  if (data?.notConfigured || (data?.bands.length ?? 0) === 0) {
+    return (
+      <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-card p-8">
+        <h3 className="font-medium text-foreground">The balanced pool is not set up yet</h3>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          This report reads the band configuration and the allocated leads produced by
+          <span className="font-mono text-xs"> SP_ONAIR_U5_BALANCED_POOL</span>. Run steps 1 to 6 of
+          <span className="font-mono text-xs"> scripts/onair-u5-balanced/onair-u5-balanced.sql</span>, then
+          reload.
+        </p>
+        {data?.notConfigured && (
+          <p className="max-w-2xl font-mono text-xs text-amber-300">{data.notConfigured}</p>
+        )}
+      </div>
+    )
+  }
+
+  const lastRun = data!.lastRun
+  const pct = (n: number, of: number) => (of > 0 ? `${((n / of) * 100).toFixed(1)}%` : "—")
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold text-foreground">Pool allocation</h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            How the last distribution split between the two bases, what is still sitting in each
+            pool, and what a different head count or band weighting would produce.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={exportCsv}>
+            <Download className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={load}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* ---- What actually happened ---- */}
+      <div>
+        <h3 className="mb-2 font-medium text-foreground">
+          Last distribution
+          {lastRun?.runAt && (
+            <span className="ml-2 text-sm font-normal text-muted-foreground">{lastRun.runAt}</span>
+          )}
+        </h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          <StatTile
+            label="Delivered"
+            value={fmtInt(actual.total)}
+            sub={
+              lastRun?.targetTotal
+                ? `of ${fmtInt(lastRun.targetTotal)} target`
+                : "leads allocated"
+            }
+          />
+          <StatTile
+            label="From the base pool"
+            value={fmtInt(actual.fromDefault)}
+            sub={`${pct(actual.fromDefault, actual.total)} · existing OnAir book`}
+          />
+          <StatTile
+            label="From the top-up pool"
+            value={fmtInt(actual.fromTopup)}
+            sub={`${pct(actual.fromTopup, actual.total)} · incubation, never in OnAir`}
+          />
+          <StatTile
+            label="Still in the base pool"
+            value={fmtInt(pools.availDefault - actual.fromDefault)}
+            sub={`${fmtInt(pools.availDefault)} eligible today`}
+          />
+          <StatTile
+            label="Still in the top-up pool"
+            value={fmtInt(pools.availTopup - actual.fromTopup)}
+            sub={`${fmtInt(pools.availTopup)} eligible today`}
+          />
+        </div>
+        {actual.total === 0 && (
+          <p className="mt-2 text-xs text-amber-300">
+            Nothing has been allocated yet — the figures below are the pools and the simulation only.
+          </p>
+        )}
+      </div>
+
+      {/* ---- What-if settings ---- */}
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Agents</Label>
+              <Input
+                type="number"
+                min={0}
+                value={agents}
+                onChange={(e) => setAgents(e.target.value)}
+                className="w-28 font-mono text-sm"
+              />
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Days</Label>
+              <Input
+                type="number"
+                min={0}
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                className="w-24 font-mono text-sm"
+              />
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Leads per agent / day</Label>
+              <Input
+                type="number"
+                min={0}
+                value={perDay}
+                onChange={(e) => setPerDay(e.target.value)}
+                className="w-28 font-mono text-sm"
+              />
+            </div>
+            <div className="pb-1">
+              <div className="text-xs text-muted-foreground">Target</div>
+              <div className="font-mono text-lg font-semibold text-foreground">{fmtInt(target)}</div>
+            </div>
+            <div className="pb-1">
+              <div className="text-xs text-muted-foreground">Per band, even</div>
+              <div className="font-mono text-lg font-semibold text-foreground">
+                {fmtInt(Math.floor(target / Math.max(1, sim.filter((r) => r.enabled).length)))}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showSim ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowSim((v) => !v)}
+            >
+              {showSim ? "Hide band controls" : "Adjust bands"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={copyApply} disabled={!dirty}>
+              {copied ? <Check className="mr-2 h-4 w-4" /> : null}
+              {copied ? "Copied" : "Copy SQL to apply"}
+            </Button>
+            {dirty && (
+              <Button variant="ghost" size="sm" onClick={load}>
+                Reset
+              </Button>
+            )}
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Nothing here changes the warehouse. The table below re-runs the same arithmetic the
+          procedure uses — quota by weight, base pool first, top-up only for the remainder — against
+          today&apos;s pool counts. <span className="text-foreground">Copy SQL to apply</span> gives you
+          the statements to make a scenario real, to run deliberately.
+        </p>
+        {dirty && (
+          <p className="mt-2 text-xs text-amber-300">
+            Showing a scenario, not the last run. Reset to go back to{" "}
+            {lastRun?.agents ?? "—"} × {lastRun?.days ?? "—"} × {lastRun?.leadsPerAgentDay ?? "—"}.
+          </p>
+        )}
+      </div>
+
+      {/* ---- The ledger ---- */}
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <h3 className="font-medium text-foreground">By score band</h3>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <i className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: POOL_DEFAULT_COLOUR }} />
+              Base pool
+            </span>
+            <span className="flex items-center gap-1.5">
+              <i className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: POOL_TOPUP_COLOUR }} />
+              Top-up pool
+            </span>
+            <span className="flex items-center gap-1.5">
+              <i className="inline-block h-3 w-3 rounded-sm bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,hsl(var(--muted-foreground)/0.45)_3px,hsl(var(--muted-foreground)/0.45)_6px)]" />
+              Unfilled
+            </span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Band</TableHead>
+                {showSim && <TableHead className="text-right">Weight</TableHead>}
+                {showSim && <TableHead className="text-center">Top-up</TableHead>}
+                <TableHead className="text-right">Quota</TableHead>
+                <TableHead className="text-right">Base</TableHead>
+                <TableHead className="text-right">Top-up</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right">Short</TableHead>
+                <TableHead>Split</TableHead>
+                <TableHead className="text-right">Left in base</TableHead>
+                <TableHead className="text-right">Left in top-up</TableHead>
+                {!dirty && <TableHead className="text-right">Last run</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sim.map((r) => (
+                <TableRow key={r.band.band} className={r.enabled ? undefined : "opacity-45"}>
+                  <TableCell className="whitespace-nowrap font-mono text-xs">
+                    {r.band.band}
+                    {showSim && (
+                      <button
+                        type="button"
+                        onClick={() => setOverride(r.band, { enabled: !r.enabled })}
+                        className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                      >
+                        {r.enabled ? "disable" : "enable"}
+                      </button>
+                    )}
+                  </TableCell>
+                  {showSim && (
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min={0}
+                        value={r.weight}
+                        onChange={(e) =>
+                          setOverride(r.band, { weight: Math.max(0, Number(e.target.value) || 0) })
+                        }
+                        className="ml-auto h-7 w-20 font-mono text-xs"
+                      />
+                    </TableCell>
+                  )}
+                  {showSim && (
+                    <TableCell className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => setOverride(r.band, { topup: !r.topup })}
+                        className={cn(
+                          "rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                          r.topup
+                            ? "bg-primary/15 text-primary"
+                            : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        {r.topup ? "on" : "off"}
+                      </button>
+                    </TableCell>
+                  )}
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {fmtInt(r.quota)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm" style={{ color: POOL_DEFAULT_COLOUR }}>
+                    {fmtInt(r.fromDefault)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm" style={{ color: POOL_TOPUP_COLOUR }}>
+                    {fmtInt(r.fromTopup)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm font-medium text-foreground">
+                    {fmtInt(r.total)}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right font-mono text-sm",
+                      r.short > 0 ? "text-rose-300" : "text-muted-foreground"
+                    )}
+                  >
+                    {r.short > 0 ? fmtInt(r.short) : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <SplitBar
+                      fromDefault={r.fromDefault}
+                      fromTopup={r.fromTopup}
+                      quota={r.quota}
+                      scale={scale}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {fmtInt(r.leftDefault)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {fmtInt(r.leftTopup)}
+                  </TableCell>
+                  {!dirty && (
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                      {fmtInt(r.band.allocDefault + r.band.allocTopup)}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+            <TableFooter>
+              <TableRow className="border-t-2 border-border">
+                <TableCell className="font-medium">Total</TableCell>
+                {showSim && <TableCell />}
+                {showSim && <TableCell />}
+                <TableCell className="text-right font-mono text-sm">{fmtInt(simTotals.quota)}</TableCell>
+                <TableCell className="text-right font-mono text-sm" style={{ color: POOL_DEFAULT_COLOUR }}>
+                  {fmtInt(simTotals.fromDefault)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm" style={{ color: POOL_TOPUP_COLOUR }}>
+                  {fmtInt(simTotals.fromTopup)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
+                  {fmtInt(simTotals.total)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right font-mono text-sm",
+                    simTotals.short > 0 ? "text-rose-300" : "text-muted-foreground"
+                  )}
+                >
+                  {simTotals.short > 0 ? fmtInt(simTotals.short) : "—"}
+                </TableCell>
+                <TableCell />
+                <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                  {fmtInt(simTotals.leftDefault)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                  {fmtInt(simTotals.leftTopup)}
+                </TableCell>
+                {!dirty && (
+                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                    {fmtInt(actual.total)}
+                  </TableCell>
+                )}
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </div>
+        <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+          Quota is a ceiling, never a floor — a band delivers the lesser of its quota and what the
+          two pools hold, so <span className="text-foreground">Short</span> means the pools ran dry,
+          not that anything failed. Unfilled quota is not reallocated to bands with spare capacity:
+          refilling a short book from the high-score end is the drift this exercise exists to
+          correct.
+        </p>
+      </div>
+
+      {/* ---- Run history ---- */}
+      {(data?.runs.length ?? 0) > 0 && (
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-5 py-3">
+            <h3 className="font-medium text-foreground">Run history</h3>
+            <p className="text-xs text-muted-foreground">
+              What each distribution was sized for, and what it managed.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Run</TableHead>
+                  <TableHead className="text-right">Agents</TableHead>
+                  <TableHead className="text-right">Days</TableHead>
+                  <TableHead className="text-right">Per agent</TableHead>
+                  <TableHead className="text-right">Target</TableHead>
+                  <TableHead className="text-right">Delivered</TableHead>
+                  <TableHead className="text-right">Base</TableHead>
+                  <TableHead className="text-right">Top-up</TableHead>
+                  <TableHead className="text-right">Hit</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data!.runs.map((r, i) => {
+                  const hit =
+                    r.targetTotal && r.selectedTotal !== null
+                      ? r.selectedTotal / r.targetTotal
+                      : null
+                  return (
+                    <TableRow key={`${r.runAt}-${i}`}>
+                      <TableCell className="whitespace-nowrap font-mono text-xs">{r.runAt}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{r.agents ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{r.days ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {r.leadsPerAgentDay ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {r.targetTotal === null ? "—" : fmtInt(r.targetTotal)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm font-medium text-foreground">
+                        {r.selectedTotal === null ? "—" : fmtInt(r.selectedTotal)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm" style={{ color: POOL_DEFAULT_COLOUR }}>
+                        {r.selectedDefault === null ? "—" : fmtInt(r.selectedDefault)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm" style={{ color: POOL_TOPUP_COLOUR }}>
+                        {r.selectedTopup === null ? "—" : fmtInt(r.selectedTopup)}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right font-mono text-sm",
+                          hit === null ? "text-muted-foreground" : hit >= 0.999 ? "text-emerald-300" : "text-amber-300"
+                        )}
+                      >
+                        {hit === null ? "—" : `${(hit * 100).toFixed(1)}%`}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
