@@ -31,7 +31,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!config) return NextResponse.json({ error: "No campaign config found for this campaign." }, { status: 400 })
     const { sql, database, schema } = await buildStepSql(config, campaignId, key)
     const handle = await submitSnowflakeStatementAsync(sql, { database, schema })
-    return NextResponse.json({ handle })
+    // Hand the statement back so a failure can show what actually ran. Reading
+    // the CALL is the fastest way to tell a bad procedure from a config edit
+    // that was never saved.
+    return NextResponse.json({ handle, sql })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ error: message }, { status: 200 })

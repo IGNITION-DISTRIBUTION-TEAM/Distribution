@@ -194,6 +194,7 @@ async function runStepwiseAt(
       const sub = await subRes.json().catch(() => ({}))
       if ((sub as { error?: string }).error) throw new Error((sub as { error: string }).error)
       const handle = (sub as { handle?: string }).handle
+      const ranSql = (sub as { sql?: string }).sql ?? ""
       if (!handle) throw new Error("No statement handle returned")
       // Poll the async statement until it completes or errors.
       for (;;) {
@@ -207,7 +208,7 @@ async function runStepwiseAt(
         )
         const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
         if (ps.status === "running") continue
-        if (ps.status === "error") throw new Error(ps.error || "Step failed")
+        if (ps.status === "error") throw new Error(withRanSql(ps.error || "Step failed", ranSql))
         break
       }
       views[i] = { step: plan[i].label, status: "success", message: "done" }
@@ -249,6 +250,20 @@ async function recordStepRun(configId: number | string, label: string, ok: boole
   }).catch(() => {})
 }
 
+/**
+ * Append the statement that was actually submitted to a failure message.
+ *
+ * Reading the CALL is the fastest way to separate "the procedure is wrong" from
+ * "the config edit was never saved" — the two look identical in Snowflake's
+ * reply. Long statements (the HLL INSERT) are clipped; the head carries the
+ * useful part.
+ */
+function withRanSql(message: string, sql: string): string {
+  if (!sql) return message
+  const shown = sql.length > 300 ? `${sql.slice(0, 300)}…` : sql
+  return `${message}\nRan: ${shown}`
+}
+
 // Run a single step (submit async + poll to completion). Used by the per-step
 // "Run" buttons in Settings.
 async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; error?: string }> {
@@ -260,6 +275,7 @@ async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; e
   const sub = await subRes.json().catch(() => ({}))
   if ((sub as { error?: string }).error) return { ok: false, error: (sub as { error: string }).error }
   const handle = (sub as { handle?: string }).handle
+  const ranSql = (sub as { sql?: string }).sql ?? ""
   if (!handle) return { ok: false, error: "No statement handle returned" }
   for (;;) {
     await new Promise((r) => setTimeout(r, 2500))
@@ -269,7 +285,7 @@ async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; e
     )
     const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
     if (ps.status === "running") continue
-    if (ps.status === "error") return { ok: false, error: ps.error || "Step failed" }
+    if (ps.status === "error") return { ok: false, error: withRanSql(ps.error || "Step failed", ranSql) }
     return { ok: true }
   }
 }
@@ -2354,7 +2370,7 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
                   <span className="flex items-center gap-2">
                     {st ? <StepStatusIcon status={st.status} /> : <span className="h-4 w-4" />}
                     <span className="text-foreground">{s.label}</span>
-                    {st?.status === "error" && st.message && <span className="text-rose-400">— {st.message}</span>}
+                    {st?.status === "error" && st.message && <span className="whitespace-pre-wrap text-rose-400">— {st.message}</span>}
                   </span>
                   <Button type="button" variant="ghost" size="sm" disabled={running || st?.status === "running"} onClick={() => runOne(s.key)}>
                     {st?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Run"}
@@ -2372,7 +2388,7 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
             <li key={i} className="flex items-start gap-2 text-sm">
               <StepStatusIcon status={r.status} />
               <span className="font-medium text-foreground">{r.step}:</span>
-              <span className="text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
+              <span className="whitespace-pre-wrap text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
             </li>
           ))}
         </ul>
@@ -7756,7 +7772,7 @@ function CampaignSettingsPanel() {
                           <span className="flex items-center gap-2">
                             {st ? <StepStatusIcon status={st.status} /> : <span className="h-4 w-4" />}
                             <span className="text-foreground">{s.label}</span>
-                            {st?.status === "error" && st.message && <span className="text-rose-400">— {st.message}</span>}
+                            {st?.status === "error" && st.message && <span className="whitespace-pre-wrap text-rose-400">— {st.message}</span>}
                           </span>
                           <Button
                             type="button"
@@ -7781,7 +7797,7 @@ function CampaignSettingsPanel() {
                     <li key={i} className="flex items-start gap-2 text-xs">
                       <StepStatusIcon status={r.status} />
                       <span className="font-medium text-foreground">{r.step}:</span>
-                      <span className="text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
+                      <span className="whitespace-pre-wrap text-muted-foreground">{r.status === "running" ? "running…" : r.message}</span>
                     </li>
                   ))}
                 </ul>
