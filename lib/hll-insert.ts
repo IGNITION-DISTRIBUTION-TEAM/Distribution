@@ -13,7 +13,8 @@ export const BATCHNAME_COL = "BATCHNAME"
 export const AUTO_HLL_COLUMNS = [CAMPAIGN_ID_COL, CREATED_ON_COL, LEAD_EXPIRY_COL, BATCHNAME_COL]
 
 export const DEFAULT_LEAD_EXPIRY_DAYS = 45
-// Editable batch-name template. `{date}` expands to today's date as YYYYMMDD.
+// Editable batch-name template. `{date}` expands to today as YYYYMMDD and
+// `{expiry}` to today + the config's lead-expiry days, same format.
 // Default reproduces CONCAT('BATCH_ONAIR_ULTRA5', REPLACE(CURRENT_DATE,'-','')).
 export const DEFAULT_BATCH_TEMPLATE = "BATCH_ONAIR_ULTRA5{date}"
 
@@ -27,24 +28,40 @@ export function normLeadExpiryDays(raw: unknown): number {
 // the template can never inject SQL (the only dynamic part is the date expr).
 const BATCH_SEGMENT = /^[A-Za-z0-9_.-]*$/
 export const BATCH_DATE_TOKEN = "{date}"
+export const BATCH_EXPIRY_TOKEN = "{expiry}"
+// Splits on either token while keeping the delimiters, so a template can use
+// both in any order.
+const BATCH_TOKEN_SPLIT = /(\{date\}|\{expiry\})/
 
 /**
  * Turn an editable batch-name template into a safe SQL string expression.
- * `{date}` → REPLACE(TO_VARCHAR(CURRENT_DATE),'-','') (today as YYYYMMDD);
- * every other segment must be a plain identifier-ish literal. Returns null for
- * an empty or invalid template (caller then leaves BATCHNAME unmapped).
+ *
+ *   {date}    REPLACE(TO_VARCHAR(CURRENT_DATE),'-','')            today, YYYYMMDD
+ *   {expiry}  the same for CURRENT_DATE + leadExpiryDays          the lead's expiry
+ *
+ * Every other segment must be a plain identifier-ish literal, so the only
+ * dynamic parts are the two date expressions and the template can never inject
+ * SQL. `leadExpiryDays` must already be a validated integer — it is interpolated
+ * straight into DATEADD. Returns null for an empty or invalid template, and the
+ * caller then leaves BATCHNAME unmapped.
  */
-export function batchNameSql(template: string | null | undefined): string | null {
+export function batchNameSql(
+  template: string | null | undefined,
+  leadExpiryDays: number = DEFAULT_LEAD_EXPIRY_DAYS
+): string | null {
   const t = (template ?? "").trim()
   if (!t || t.length > 200) return null
-  const parts = t.split(BATCH_DATE_TOKEN)
-  for (const seg of parts) if (!BATCH_SEGMENT.test(seg)) return null
+  const days = normLeadExpiryDays(leadExpiryDays)
+  const parts = t.split(BATCH_TOKEN_SPLIT)
   const dateExpr = "REPLACE(TO_VARCHAR(CURRENT_DATE), '-', '')"
+  const expiryExpr = `REPLACE(TO_VARCHAR(DATEADD(day, ${days}, CURRENT_DATE)), '-', '')`
   const pieces: string[] = []
-  parts.forEach((seg, i) => {
+  for (const seg of parts) {
+    if (seg === BATCH_DATE_TOKEN) { pieces.push(dateExpr); continue }
+    if (seg === BATCH_EXPIRY_TOKEN) { pieces.push(expiryExpr); continue }
+    if (!BATCH_SEGMENT.test(seg)) return null
     if (seg) pieces.push(`'${seg.replace(/'/g, "''")}'`)
-    if (i < parts.length - 1) pieces.push(dateExpr)
-  })
+  }
   if (pieces.length === 0) return null
   return pieces.length === 1 ? pieces[0] : `CONCAT(${pieces.join(", ")})`
 }
@@ -78,7 +95,7 @@ export function buildAutoExprs(
     [LEAD_EXPIRY_COL]: `DATEADD(day, ${leadExpiryDays}, CURRENT_DATE)`,
   }
   if (campaignId != null) out[CAMPAIGN_ID_COL] = String(campaignId)
-  const batch = batchNameSql(batchTemplate ?? DEFAULT_BATCH_TEMPLATE)
+  const batch = batchNameSql(batchTemplate ?? DEFAULT_BATCH_TEMPLATE, leadExpiryDays)
   if (batch) out[BATCHNAME_COL] = batch
   return out
 }

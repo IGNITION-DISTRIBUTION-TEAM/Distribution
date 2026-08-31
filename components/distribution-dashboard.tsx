@@ -7602,9 +7602,21 @@ function CampaignSettingsPanel() {
                       className="mt-1 font-mono text-sm"
                     />
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Use <span className="font-mono">{"{date}"}</span> for today&apos;s date (YYYYMMDD). Example today:{" "}
+                      <span className="font-mono">{"{date}"}</span> is today,{" "}
+                      <span className="font-mono">{"{expiry}"}</span> is today + the lead-expiry days
+                      above — both YYYYMMDD. Example today:{" "}
                       <span className="font-mono text-foreground">
-                        {(batchTemplate || "").split("{date}").join(new Date().toISOString().slice(0, 10).replace(/-/g, "")) || "—"}
+                        {(() => {
+                          const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, "")
+                          const today = new Date()
+                          const exp = new Date(today)
+                          exp.setDate(exp.getDate() + (Number(leadExpiryDays) || 45))
+                          return (
+                            (batchTemplate || "")
+                              .split("{date}").join(ymd(today))
+                              .split("{expiry}").join(ymd(exp)) || "—"
+                          )
+                        })()}
                       </span>
                     </p>
                   </div>
