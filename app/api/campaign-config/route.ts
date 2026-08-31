@@ -19,6 +19,49 @@ const QUALIFIED_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // Only safe chars inside the parens — no quotes/semicolons.
 const PROC_IDENT = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
 
+/**
+ * Normalise a pasted identifier before validating it.
+ *
+ * These values are usually pasted, and a paste out of a document, a chat window
+ * or a SQL comment routinely carries a non-breaking space, a zero-width
+ * character or a soft line break. None of those belong inside
+ * DATABASE.SCHEMA.NAME, and left in place they fail the pattern while looking
+ * completely correct on screen — which is close to impossible to diagnose from
+ * the field alone.
+ */
+export function normIdent(raw: unknown): string {
+  return String(raw ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")      // zero-width and BOM
+    .replace(/[\u00A0\u2007\u202F\u2000-\u200A]/g, " ") // non-breaking / typographic spaces
+    .replace(/\s+/g, " ")                        // newlines and tabs
+    .trim()
+}
+
+/**
+ * Say what was actually received, and name the offending character when there
+ * is one. "must be DATABASE.SCHEMA.NAME" is the rule, not the diagnosis — and
+ * when the culprit is invisible the rule alone is no help at all.
+ */
+export function identProblem(value: string): string {
+  if (!value) return " — the field was empty."
+  const bad = Array.from(value).find((c) => !/[A-Za-z0-9_.,() ]/.test(c))
+  if (bad) {
+    const cp = (bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")
+    return ` — received "${value}", which contains ${JSON.stringify(bad)} (U+${cp}). That character is not visible in the field; retype the value rather than pasting it.`
+  }
+  // A space before the argument list means the name itself is broken — usually a
+  // line break in the pasted value, which normIdent turns into a space.
+  const head = value.split("(")[0]
+  if (/\s/.test(head)) {
+    return ` — received "${value}". The name contains a space, which usually means the value was pasted across a line break.`
+  }
+  const dots = (head.match(/\./g) ?? []).length
+  if (dots !== 2) {
+    return ` — received "${value}", which has ${dots} dot${dots === 1 ? "" : "s"}. It needs exactly two: DATABASE.SCHEMA.NAME.`
+  }
+  return ` — received "${value}".`
+}
+
 export function escapeSqlString(s: string): string {
   return s.replace(/'/g, "''")
 }
@@ -103,37 +146,33 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sftpAuthType = a
   }
 
-  const uploadTargetTable = body.uploadTargetTable ? String(body.uploadTargetTable).trim() : ""
+  const uploadTargetTable = normIdent(body.uploadTargetTable)
   if (uploadTargetTable && !QUALIFIED_IDENT.test(uploadTargetTable)) {
-    return { error: 'uploadTargetTable must be "DATABASE.SCHEMA.NAME" (A-Z, 0-9, _ only)' }
+    return { error: 'Upload target must be "DATABASE.SCHEMA.NAME" (A-Z, 0-9, _ only)' + identProblem(uploadTargetTable) }
   }
 
-  const loadHistoryProcedure = body.loadHistoryProcedure
-    ? String(body.loadHistoryProcedure).trim()
-    : ""
+  const loadHistoryProcedure = normIdent(body.loadHistoryProcedure)
   if (loadHistoryProcedure && !PROC_IDENT.test(loadHistoryProcedure)) {
-    return { error: 'loadHistoryProcedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }
+    return { error: 'Load-history procedure must be "DATABASE.SCHEMA.PROC" with optional (args)' + identProblem(loadHistoryProcedure) }
   }
 
-  const updateHllProcedure = body.updateHllProcedure
-    ? String(body.updateHllProcedure).trim()
-    : ""
+  const updateHllProcedure = normIdent(body.updateHllProcedure)
   if (updateHllProcedure && !PROC_IDENT.test(updateHllProcedure)) {
-    return { error: 'updateHllProcedure must be "DATABASE.SCHEMA.PROC" with optional (args)' }
+    return { error: 'Update-HLL procedure must be "DATABASE.SCHEMA.PROC" with optional (args)' + identProblem(updateHllProcedure) }
   }
 
-  const syncProcedure = body.syncProcedure ? String(body.syncProcedure).trim() : ""
+  const syncProcedure = normIdent(body.syncProcedure)
   if (syncProcedure && !PROC_IDENT.test(syncProcedure)) {
-    return { error: 'syncProcedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP_X(1)' }
+    return { error: 'Sync procedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP_X(1)' + identProblem(syncProcedure) }
   }
 
   const sourceKind = body.sourceKind ? String(body.sourceKind).trim().toLowerCase() : "none"
   if (!["none", "proc", "view"].includes(sourceKind)) {
     return { error: "sourceKind must be none | proc | view" }
   }
-  const sourceObject = body.sourceObject ? String(body.sourceObject).trim() : ""
+  const sourceObject = normIdent(body.sourceObject)
   if (sourceObject && !PROC_IDENT.test(sourceObject)) {
-    return { error: 'sourceObject must be "DATABASE.SCHEMA.NAME" with optional (args)' }
+    return { error: 'Procedure / view must be "DATABASE.SCHEMA.NAME" with optional (args)' + identProblem(sourceObject) }
   }
   const sourceMappingJson = validateSourceMapping(body.sourceMapping)
   const leadExpiryDays = normLeadExpiryDays(body.leadExpiryDays)
@@ -141,8 +180,8 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
   // Batch-name template: default when empty; reject anything that doesn't
   // compile to a safe expression.
   const batchNameTemplate = body.batchNameTemplate ? String(body.batchNameTemplate).trim() : DEFAULT_BATCH_TEMPLATE
-  if (batchNameSql(batchNameTemplate) === null) {
-    return { error: "Batch name is invalid. Use letters, digits, _ . - and the token {date}, e.g. BATCH_ONAIR_ULTRA5{date}" }
+  if (batchNameSql(batchNameTemplate, leadExpiryDays) === null) {
+    return { error: `Batch name is invalid. Use letters, digits, _ . - and the tokens {date} and {expiry}, e.g. BATCH_ONAIR_ULTRA5{date} — received "${batchNameTemplate}"` }
   }
 
   const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))

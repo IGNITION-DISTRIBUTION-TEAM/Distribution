@@ -10,6 +10,7 @@ import {
   SF_OPTS,
 } from "@/app/api/campaign-config/route"
 import { CONFIGS_TABLE, CONFIGS_COLUMNS, ensureConfigsTable } from "@/lib/distribution-steps"
+import { normIdent, identProblem } from "@/app/api/campaign-config/route"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -130,18 +131,39 @@ export async function POST(request: NextRequest) {
   const rawList = Array.isArray(body.updateHllProcedures)
     ? body.updateHllProcedures
     : (parsed.updateHllProcedure ? [parsed.updateHllProcedure] : [])
-  const updateHllList = rawList.map((p) => String(p).trim()).filter(Boolean)
-  const badProc = updateHllList.find((p) => !RUN_PROC_IDENT.test(p))
-  if (badProc) return NextResponse.json({ error: `Update-HLL procedure is invalid: ${badProc}` }, { status: 400 })
+  const updateHllList = rawList.map((p) => normIdent(p)).filter(Boolean)
+  const badIdx = updateHllList.findIndex((p) => !RUN_PROC_IDENT.test(p))
+  if (badIdx >= 0) {
+    // Name the position as well as the value — the list is rendered numbered, so
+    // "#3" points straight at the row to fix.
+    return NextResponse.json(
+      { error: `Update-HLL procedure #${badIdx + 1} is invalid${identProblem(updateHllList[badIdx])}` },
+      { status: 400 }
+    )
+  }
 
   // Structured sync fields (validated at run in buildStepSql).
-  const syncSourceView = body.syncSourceView != null ? String(body.syncSourceView).trim() : ""
-  const syncTargetTable = body.syncTargetTable != null ? String(body.syncTargetTable).trim() : ""
-  const syncColumns = body.syncColumns != null ? String(body.syncColumns).trim() : ""
+  const syncSourceView = normIdent(body.syncSourceView)
+  const syncTargetTable = normIdent(body.syncTargetTable)
+  // Column lists legitimately contain commas; only whitespace is stripped.
+  const syncColumns = String(body.syncColumns ?? "").replace(/\s+/g, "").trim()
   const syncBatchRaw = body.syncBatchSize != null ? String(body.syncBatchSize).trim() : ""
   const syncBatch = /^[0-9]+$/.test(syncBatchRaw) ? Number(syncBatchRaw) : 10000
   if (syncSourceView && !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(syncSourceView)) {
-    return NextResponse.json({ error: 'Sync source view must be "DATABASE.SCHEMA.NAME"' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'Sync source view must be "DATABASE.SCHEMA.NAME"' + identProblem(syncSourceView) },
+      { status: 400 }
+    )
+  }
+  if (syncColumns && !/^[A-Za-z0-9_,]+$/.test(syncColumns)) {
+    // Caught here rather than at run time, where it would fail mid-distribution
+    // after the leads had already been loaded.
+    const bad = Array.from(syncColumns).find((c) => !/[A-Za-z0-9_,]/.test(c))
+    const cp = bad ? (bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0") : ""
+    return NextResponse.json(
+      { error: `Sync columns must be a comma-separated list of column names — it contains ${JSON.stringify(bad)} (U+${cp}).` },
+      { status: 400 }
+    )
   }
 
   try {
