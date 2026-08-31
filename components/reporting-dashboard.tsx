@@ -199,14 +199,8 @@ type ReportView = "quality" | "distributed" | "sales" | "dialler" | "pool"
 
 const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
-    title: "Customer quality",
-    items: [
-      // One report covers score mix, FTC/FID and VAS attachment — they share a
-      // base (accounts written) and reading them apart invites wrong compares.
-      { label: "Quality mix (FTC / FID)", view: "quality" },
-    ],
-  },
-  {
+    // First, and so the landing report: this is the day-to-day view, checked
+    // every morning. Quality mix is read weekly at most.
     // Moved out of the Distribution department's Dashboard tab, which no longer
     // exists — reporting belongs in one place.
     title: "Distribution",
@@ -215,6 +209,14 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
       { label: "Pool allocation", view: "pool" },
       { label: "Sales", view: "sales" },
       { label: "Dialler", view: "dialler" },
+    ],
+  },
+  {
+    title: "Customer quality",
+    items: [
+      // One report covers score mix, FTC/FID and VAS attachment — they share a
+      // base (accounts written) and reading them apart invites wrong compares.
+      { label: "Quality mix (FTC / FID)", view: "quality" },
     ],
   },
 ]
