@@ -4261,6 +4261,35 @@ const DATE_PRESETS: DateRangePreset[] = [
   { label: "Last 12 months", range: () => monthsBack(12) },
 ]
 
+/**
+ * Re-run the report against the filters already on screen.
+ *
+ * A bumped counter in the fetch effect's dependencies rather than a remount:
+ * remounting would clear the campaign picker, the dates and every filter, and a
+ * refresh that resets what you were looking at is worse than no refresh at all.
+ */
+function ReportRefreshButton({
+  busy,
+  onRefresh,
+}: {
+  busy: boolean
+  onRefresh: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onRefresh}
+      disabled={busy}
+      title="Re-run with the current filters"
+    >
+      <RefreshCw className={cn("mr-2 h-3.5 w-3.5", busy && "animate-spin")} />
+      Refresh
+    </Button>
+  )
+}
+
 function DatePresets({
   onPick,
 }: {
@@ -4597,6 +4626,8 @@ function RecycleContent() {
 // department (components/reporting-dashboard.tsx), not from here. The tab
 // wrapper that used to host them was removed with the Dashboard nav entry.
 export function DistributedDashboardPanel() {
+  // Bumped by the Refresh button; the data effect depends on it.
+  const [reloadKey, setReloadKey] = useState(0)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -4677,7 +4708,7 @@ export function DistributedDashboardPanel() {
     return () => {
       cancelled = true
     }
-  }, [selectedCampaignIds, startDate, endDate])
+  }, [selectedCampaignIds, startDate, endDate, reloadKey])
 
   const selectedCampaigns = useMemo(
     () => campaigns.filter((c) => selectedCampaignIds.includes(c.id)),
@@ -4811,6 +4842,7 @@ export function DistributedDashboardPanel() {
                 setEndDate(end)
               }}
             />
+            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
       </div>
@@ -4882,6 +4914,8 @@ type DiallerData = {
 }
 
 export function DiallerDashboardPanel() {
+  // Bumped by the Refresh button; the data effect depends on it.
+  const [reloadKey, setReloadKey] = useState(0)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -4992,7 +5026,7 @@ export function DiallerDashboardPanel() {
     return () => {
       cancelled = true
     }
-  }, [selectedCampaigns, startDate, endDate, selectedStatuses])
+  }, [selectedCampaigns, startDate, endDate, selectedStatuses, reloadKey])
 
   const toggleCampaign = (id: string) =>
     setSelectedCampaignIds((prev) =>
@@ -5119,6 +5153,7 @@ export function DiallerDashboardPanel() {
                 setEndDate(end)
               }}
             />
+            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
 
@@ -5317,6 +5352,8 @@ function DiallerSummary({ data }: { data: DiallerData }) {
 }
 
 export function SalesDashboardPanel() {
+  // Bumped by the Refresh button; the data effect depends on it.
+  const [reloadKey, setReloadKey] = useState(0)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
@@ -5447,7 +5484,7 @@ export function SalesDashboardPanel() {
     return () => {
       cancelled = true
     }
-  }, [selectedCampaigns, startDate, endDate, selectedProviders, selectedInsurable])
+  }, [selectedCampaigns, startDate, endDate, selectedProviders, selectedInsurable, reloadKey])
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -5564,6 +5601,7 @@ export function SalesDashboardPanel() {
                 setEndDate(end)
               }}
             />
+            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
 
