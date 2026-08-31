@@ -4835,6 +4835,9 @@ export function DistributedDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
+              {/* Inside the date row, not under the presets — it belongs with the
+                  controls that decide what is fetched. */}
+              <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
             </div>
             <DatePresets
               onPick={(start, end) => {
@@ -4842,7 +4845,6 @@ export function DistributedDashboardPanel() {
                 setEndDate(end)
               }}
             />
-            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
       </div>
@@ -5146,6 +5148,9 @@ export function DiallerDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
+              {/* Inside the date row, not under the presets — it belongs with the
+                  controls that decide what is fetched. */}
+              <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
             </div>
             <DatePresets
               onPick={(start, end) => {
@@ -5153,7 +5158,6 @@ export function DiallerDashboardPanel() {
                 setEndDate(end)
               }}
             />
-            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
 
@@ -5594,6 +5598,9 @@ export function SalesDashboardPanel() {
                 min={startDate}
                 className="w-44 rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
+              {/* Inside the date row, not under the presets — it belongs with the
+                  controls that decide what is fetched. */}
+              <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
             </div>
             <DatePresets
               onPick={(start, end) => {
@@ -5601,7 +5608,6 @@ export function SalesDashboardPanel() {
                 setEndDate(end)
               }}
             />
-            <ReportRefreshButton busy={loading} onRefresh={() => setReloadKey((k) => k + 1)} />
           </div>
         </div>
 
