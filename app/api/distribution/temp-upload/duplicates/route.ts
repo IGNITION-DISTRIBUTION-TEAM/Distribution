@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
+import { callHint } from "@/lib/distribution-steps"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -33,6 +34,8 @@ const DUPES_TABLE = `${SCHEMA}.TEMP_UPLOAD_DUPES`
 const SYNC_PROC = `${SCHEMA}.SP_SYNC_FROM_SQLSERVER`
 const SOURCE = "Upload.TempUpload"
 const SF = { database: "DATAWAREHOUSE", schema: "DISTRIBUTION_AUTOMATION" } as const
+/** Only for error messages — the real calls build their own argument list. */
+const SYNC_PROC_REF = `${SYNC_PROC}(source, target, options, mode)`
 
 /** The duplicate key. Fixed: changing it changes which rows are destroyed. */
 const PARTITION_BY = ["CELLNUMBER", "CAMPAIGNID", "IDNUMBER"] as const
@@ -180,7 +183,10 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[temp-upload/duplicates] scan error:", message)
-      return NextResponse.json({ error: message, steps }, { status: 500 })
+      return NextResponse.json(
+        { error: message + callHint(message, SYNC_PROC_REF), steps },
+        { status: 500 }
+      )
     }
   }
 
@@ -242,7 +248,10 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[temp-upload/duplicates] delete error:", message)
-      return NextResponse.json({ error: message, steps }, { status: 500 })
+      return NextResponse.json(
+        { error: message + callHint(message, SYNC_PROC_REF), steps },
+        { status: 500 }
+      )
     }
   }
 
