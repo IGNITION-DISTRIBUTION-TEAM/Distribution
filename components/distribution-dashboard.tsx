@@ -4355,7 +4355,439 @@ type TempUploadResult = {
  * shows up instead of being silently dropped. Numeric columns are right-aligned
  * and totalled.
  */
+type DupesResult = {
+  ok?: boolean
+  scanned?: boolean
+  deleted?: boolean
+  error?: string
+  columns?: { name: string; type: string }[]
+  rows?: unknown[][]
+  summary?: {
+    duplicateGroups: number
+    rowsInDuplicateGroups: number
+    rowsToDelete: number
+  }
+  truncated?: boolean
+  topN?: number
+  rescanError?: string | null
+  steps?: { step: string; ms: number; detail?: string }[]
+  ranBy?: string
+  ranAt?: string
+}
+
+/**
+ * Remove duplicates from Upload.TempUpload, the SQL Server staging table.
+ *
+ * Scan and delete are separate on purpose. The scan reads and writes only the
+ * Snowflake side; the delete removes rows from SQL Server with no dry run and no
+ * undo, so it stays behind a confirmation that names the count.
+ */
+function RemoveDuplicatesTab() {
+  const [data, setData] = useState<DupesResult | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [scanning, setScanning] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [topN, setTopN] = useState("1000")
+  const [keepNewest, setKeepNewest] = useState(true)
+  // Deleting is only offered after a scan in this session. The stored counts
+  // otherwise describe whatever the last person left in the table, which may be
+  // hours old and no longer true.
+  const [scannedNow, setScannedNow] = useState(false)
+
+  const call = useCallback(
+    async (init?: RequestInit, kind: "load" | "scan" | "delete" = "load") => {
+      if (kind === "scan") setScanning(true)
+      else if (kind === "delete") setDeleting(true)
+      else setLoading(true)
+      setError(null)
+      try {
+        const res = await fetch("/api/distribution/temp-upload/duplicates", {
+          cache: "no-store",
+          ...init,
+        })
+        const text = await res.text()
+        let json: DupesResult
+        try {
+          json = JSON.parse(text)
+        } catch {
+          throw new Error(`Server returned ${res.status} (not JSON): ${text.slice(0, 200)}`)
+        }
+        if (!res.ok || !json.ok) {
+          setData(json)
+          throw new Error(json.error || `HTTP ${res.status}`)
+        }
+        setData(json)
+        if (kind === "scan") setScannedNow(true)
+        if (kind === "delete") {
+          setScannedNow(false)
+          toast.success("Duplicates deleted from Upload.TempUpload")
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setScanning(false)
+        setDeleting(false)
+        setLoading(false)
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    call()
+  }, [call])
+
+  const scan = () =>
+    call(
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "scan", topN: Number(topN) || 1000, keepNewest }),
+      },
+      "scan"
+    )
+
+  const runDelete = () => {
+    setConfirmOpen(false)
+    call(
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          confirm: "DELETE",
+          keepNewest,
+          topN: Number(topN) || 1000,
+        }),
+      },
+      "delete"
+    )
+  }
+
+  const columns = data?.columns ?? []
+  const rows = data?.rows ?? []
+  const summary = data?.summary
+  const busy = loading || scanning || deleting
+
+  // RN is only present when the bridge was given an order_by. 1 is the row that
+  // survives; anything higher is a row the delete would remove.
+  const rnIndex = columns.findIndex((c) => c.name.toUpperCase() === "RN")
+
+  const exportCsv = () => {
+    if (columns.length === 0) return
+    const esc = (v: unknown) => {
+      const t = v === null || v === undefined ? "" : String(v)
+      return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
+    }
+    const lines = [
+      columns.map((c) => esc(c.name)).join(","),
+      ...rows.map((r) => r.map(esc).join(",")),
+    ]
+    const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `temp_upload_duplicates_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <h3 className="font-medium text-foreground">Find duplicates</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Reads <span className="font-mono text-xs">Upload.TempUpload</span> and lands the
+              duplicate rows in <span className="font-mono text-xs">TEMP_UPLOAD_DUPES</span>.
+              Nothing in SQL Server is changed by a scan.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              A duplicate is a repeated{" "}
+              <span className="font-mono">CELLNUMBER + CAMPAIGNID + IDNUMBER</span>, among rows
+              where <span className="font-mono">PROCESSEDFAILED = 0</span>. Both are fixed — they
+              decide which rows get destroyed.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Keep</Label>
+              <Select
+                value={keepNewest ? "newest" : "oldest"}
+                onValueChange={(v) => setKeepNewest(v === "newest")}
+              >
+                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest (highest ID)</SelectItem>
+                  <SelectItem value="oldest">Oldest (lowest ID)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Scan limit</Label>
+              <Input
+                type="number"
+                min={1}
+                max={50000}
+                value={topN}
+                onChange={(e) => setTopN(e.target.value)}
+                className="w-28 font-mono text-sm"
+              />
+            </div>
+            <Button onClick={scan} disabled={busy}>
+              {scanning ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="mr-2 h-4 w-4" />
+              )}
+              {scanning ? "Scanning..." : "Scan for duplicates"}
+            </Button>
+          </div>
+        </div>
+
+        {data?.ranAt && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Last run {new Date(data.ranAt).toLocaleString()}
+            {data.ranBy ? ` by ${data.ranBy}` : ""}
+            {data.steps && data.steps.length > 0
+              ? ` · ${data.steps.map((st) => `${st.step} ${(st.ms / 1000).toFixed(1)}s`).join(" · ")}`
+              : ""}
+          </p>
+        )}
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+          {error}
+          {data?.steps && data.steps.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-rose-200/80">
+              {data.steps.map((st, i) => (
+                <li key={i}>
+                  {st.step} — {(st.ms / 1000).toFixed(1)}s{st.detail ? " — failed" : " — ok"}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {data?.rescanError && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          The delete succeeded, but re-reading the duplicates afterwards failed, so the figures
+          below are the pre-delete ones. Scan again to see the current state. ({data.rescanError})
+        </div>
+      )}
+
+      {summary && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <CompactStat label="Duplicate groups" value={summary.duplicateGroups.toLocaleString()} />
+          <CompactStat
+            label="Rows in those groups"
+            value={summary.rowsInDuplicateGroups.toLocaleString()}
+          />
+          <CompactStat
+            label="Rows that would be deleted"
+            value={summary.rowsToDelete.toLocaleString()}
+            accent={summary.rowsToDelete > 0 ? "danger" : "muted"}
+          />
+        </div>
+      )}
+
+      {data?.truncated && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+          <span className="font-medium">The scan hit its limit.</span> It returned exactly{" "}
+          <span className="font-mono">{(data.topN ?? 0).toLocaleString()}</span> rows, so the counts
+          above are a floor, not a total — there are more duplicates than shown.{" "}
+          <span className="font-medium">The delete is not limited</span> and will remove all of
+          them. Raise the scan limit if you want to see the real figure first.
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h3 className="font-medium text-foreground">
+            Duplicate rows{" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              ({rows.length.toLocaleString()} shown)
+            </span>
+            {rnIndex >= 0 && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                RN 1 is kept · RN 2+ would be deleted
+              </span>
+            )}
+          </h3>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy || !scannedNow || (summary?.rowsToDelete ?? 0) === 0}
+              title={
+                !scannedNow
+                  ? "Scan first — the stored counts may be out of date"
+                  : (summary?.rowsToDelete ?? 0) === 0
+                  ? "Nothing to delete"
+                  : undefined
+              }
+              onClick={() => setConfirmOpen(true)}
+            >
+              {deleting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete duplicates
+            </Button>
+          </div>
+        </div>
+        <div className="max-h-[560px] overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {columns.map((c) => (
+                  <TableHead key={c.name}>{c.name}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {busy && (
+                <TableRow>
+                  <TableCell
+                    colSpan={Math.max(1, columns.length)}
+                    className="text-center text-sm text-muted-foreground"
+                  >
+                    {scanning ? "Scanning..." : deleting ? "Deleting..." : "Loading..."}
+                  </TableCell>
+                </TableRow>
+              )}
+              {!busy && rows.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={Math.max(1, columns.length)}
+                    className="text-center text-sm text-muted-foreground"
+                  >
+                    No duplicates found — scan to check again.
+                  </TableCell>
+                </TableRow>
+              )}
+              {!busy &&
+                rows.map((row, ri) => {
+                  const keeper = rnIndex >= 0 && Number(row[rnIndex]) === 1
+                  return (
+                    <TableRow key={ri} className={keeper ? undefined : "bg-rose-500/5"}>
+                      {columns.map((c, ci) => {
+                        const v = row[ci]
+                        const empty = v === null || v === undefined || v === ""
+                        return (
+                          <TableCell key={c.name} className="whitespace-nowrap font-mono text-xs">
+                            {empty ? <span className="text-muted-foreground">—</span> : String(v)}
+                            {ci === rnIndex && (
+                              <span
+                                className={cn(
+                                  "ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                                  keeper
+                                    ? "bg-emerald-500/15 text-emerald-300"
+                                    : "bg-rose-500/15 text-rose-300"
+                                )}
+                              >
+                                {keeper ? "keep" : "delete"}
+                              </span>
+                            )}
+                          </TableCell>
+                        )
+                      })}
+                    </TableRow>
+                  )
+                })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete duplicates from Upload.TempUpload?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  This deletes rows from SQL Server. There is no dry run and no undo.
+                </p>
+                <p>
+                  Keeping the{" "}
+                  <span className="font-medium text-foreground">
+                    {keepNewest ? "newest" : "oldest"}
+                  </span>{" "}
+                  row of each{" "}
+                  <span className="font-mono text-xs">CELLNUMBER + CAMPAIGNID + IDNUMBER</span>{" "}
+                  group, among rows where{" "}
+                  <span className="font-mono text-xs">PROCESSEDFAILED = 0</span>.
+                </p>
+                {data?.truncated ? (
+                  <p className="text-amber-300">
+                    The scan was capped at {(data.topN ?? 0).toLocaleString()} rows, so more than
+                    the {(summary?.rowsToDelete ?? 0).toLocaleString()} shown will be deleted. The
+                    delete is not capped.
+                  </p>
+                ) : (
+                  <p>
+                    About{" "}
+                    <span className="font-mono text-foreground">
+                      {(summary?.rowsToDelete ?? 0).toLocaleString()}
+                    </span>{" "}
+                    row(s) will be removed.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={runDelete}
+              className="bg-rose-600 text-white hover:bg-rose-700"
+            >
+              Delete duplicates
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+/** Temp Upload — batch counts, and de-duplicating the SQL Server staging table. */
 function TempUploadContent() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold text-foreground">Temp Upload</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Today&apos;s batch counts, and duplicate removal on the upload staging table.
+        </p>
+      </div>
+      <Tabs defaultValue="counts">
+        <TabsList>
+          <TabsTrigger value="counts">Batch counts</TabsTrigger>
+          <TabsTrigger value="duplicates">Remove duplicates</TabsTrigger>
+        </TabsList>
+        <TabsContent value="counts" className="mt-4">
+          <TempUploadCountsTab />
+        </TabsContent>
+        <TabsContent value="duplicates" className="mt-4">
+          <RemoveDuplicatesTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function TempUploadCountsTab() {
   const [data, setData] = useState<TempUploadResult | null>(null)
   const [running, setRunning] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -4442,12 +4874,6 @@ function TempUploadContent() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-foreground">Temp Upload</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Today&apos;s batch counts, refreshed from the source systems.
-        </p>
-      </div>
 
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
