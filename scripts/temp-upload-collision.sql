@@ -77,3 +77,61 @@ LIMIT 50;
    SP_SYNC_BATCH_COUNTS_TODAY at its own table (TM_BATCH_COUNTS_TODAY, say) and
    the app with it. One line in the app, one in the procedure.
 ----------------------------------------------------------------------------- */
+
+
+/* =============================================================================
+   WHERE THE AGGREGATED DATA GOES
+   -----------------------------------------------------------------------------
+   /aggregate-data returns {"data": [[0, {...}], [1, {...}], ...]} — the Snowflake
+   EXTERNAL FUNCTION envelope. So it does not "go" anywhere on its own: it is a
+   return value. Whatever Snowflake statement calls the external function decides
+   where it lands.
+
+   The endpoint's own docstring gives the example:
+
+       "select_columns": ["COUNT(1) AS count", "BATCHNAME", "SYSTEMMESSAGE"],
+       "group_by":       ["BATCHNAME", "SYSTEMMESSAGE"]
+
+   which is exactly the three columns the worksheet found in TEMP_UPLOAD. That
+   is strong evidence the chain is:
+
+       SP_SYNC_BATCH_COUNTS_TODAY()
+         -> external function  -> POST /aggregate-data?table=Upload.TempUpload
+         -> writes the result into DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.TEMP_UPLOAD
+
+   And the CXM-shaped rows the app showed are the OTHER endpoint — /query-data,
+   which does SELECT * against the same SQL Server table and returns every lead
+   column — landing in the same Snowflake table from a different caller.
+
+   Sections 6 to 8 confirm or refute that.
+============================================================================= */
+
+
+-- 6. The external functions, and which API integration they use.
+SHOW EXTERNAL FUNCTIONS IN ACCOUNT;
+
+-- Their definitions include the endpoint path, so this shows which one is
+-- pointed at /aggregate-data and which at /query-data.
+SELECT FUNCTION_SCHEMA, FUNCTION_NAME, ARGUMENT_SIGNATURE, DATA_TYPE
+FROM DATAWAREHOUSE.INFORMATION_SCHEMA.FUNCTIONS
+WHERE IS_EXTERNAL = 'YES'
+ORDER BY 1, 2;
+
+-- 7. Which procedures call an external function AND write TEMP_UPLOAD.
+SELECT PROCEDURE_SCHEMA, PROCEDURE_NAME, ARGUMENT_SIGNATURE
+FROM DATAWAREHOUSE.INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_DEFINITION ILIKE '%TEMP_UPLOAD%'
+   OR PROCEDURE_DEFINITION ILIKE '%aggregate-data%'
+   OR PROCEDURE_DEFINITION ILIKE '%query-data%'
+ORDER BY 1, 2;
+
+-- 8. The decisive one — the actual statements that wrote the table, newest
+--    first. A CREATE_TABLE_AS_SELECT here naming an external function tells you
+--    which endpoint produced the shape currently in the table.
+SELECT START_TIME, USER_NAME, ROLE_NAME, QUERY_TYPE,
+       LEFT(QUERY_TEXT, 400) AS QUERY
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE QUERY_TEXT ILIKE '%DISTRIBUTION_AUTOMATION.TEMP_UPLOAD%'
+  AND START_TIME > DATEADD(day, -7, CURRENT_TIMESTAMP())
+ORDER BY START_TIME DESC
+LIMIT 100;
