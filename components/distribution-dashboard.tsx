@@ -4360,6 +4360,10 @@ function TempUploadContent() {
   const [running, setRunning] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // When this table was last read. Without it a screen showing yesterday's shape
+  // is indistinguishable from one showing today's, and TEMP_UPLOAD's columns
+  // change depending on which process wrote it last.
+  const [readAt, setReadAt] = useState<Date | null>(null)
 
   const load = useCallback(async (method: "GET" | "POST") => {
     if (method === "POST") setRunning(true)
@@ -4379,6 +4383,7 @@ function TempUploadContent() {
         throw new Error(json.error || `HTTP ${res.status}`)
       }
       setData(json)
+      setReadAt(new Date())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -4501,8 +4506,14 @@ function TempUploadContent() {
           <h3 className="font-medium text-foreground">
             TEMP_UPLOAD{" "}
             <span className="text-sm text-muted-foreground">
-              ({rows.length.toLocaleString()} row{rows.length === 1 ? "" : "s"})
+              ({rows.length.toLocaleString()} row{rows.length === 1 ? "" : "s"},{" "}
+              {columns.length} column{columns.length === 1 ? "" : "s"})
             </span>
+            {readAt && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                read {readAt.toLocaleTimeString()}
+              </span>
+            )}
           </h3>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
             <Download className="mr-2 h-4 w-4" />
