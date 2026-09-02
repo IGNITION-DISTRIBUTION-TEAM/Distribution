@@ -98,14 +98,40 @@ export async function POST(request: Request) {
   const insertSql = `INSERT INTO ${table} (${finalCols.join(", ")}) VALUES\n${valuesSql}`
   const sfOpts = { database, schema }
 
-  // --- truncate (first batch only) ---
+  // --- empty the table (first batch only) ---
+  //
+  // TRUNCATE is preferred — it is far cheaper on a large staging table — but
+  // Snowflake has no TRUNCATE privilege: it requires OWNERSHIP. A staging table
+  // owned by another role therefore cannot be truncated by this app however many
+  // grants it holds, so fall back to DELETE, which IS grantable. Same outcome
+  // here, since the table is being replaced wholesale either way.
   if (body.truncate === true) {
     try {
       await executeSnowflakeQuery(`TRUNCATE TABLE ${table}`, sfOpts)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.error("[/api/upload/load] truncate error:", message)
-      return NextResponse.json({ error: `Truncate failed: ${message}` }, { status: 500 })
+      const privilegeIssue = /insufficient privileges|not authorized|access control/i.test(message)
+      if (!privilegeIssue) {
+        console.error("[/api/upload/load] truncate error:", message)
+        return NextResponse.json({ error: `Truncate failed: ${message}` }, { status: 500 })
+      }
+      console.warn("[/api/upload/load] truncate not permitted, falling back to DELETE:", message)
+      try {
+        await executeSnowflakeQuery(`DELETE FROM ${table}`, sfOpts)
+      } catch (deleteError) {
+        const dm = deleteError instanceof Error ? deleteError.message : String(deleteError)
+        console.error("[/api/upload/load] delete fallback failed:", dm)
+        return NextResponse.json(
+          {
+            error:
+              `Could not empty ${table}. TRUNCATE needs OWNERSHIP of the table and DELETE was ` +
+              `also refused, so this app's Snowflake role has neither. Grant it DELETE (and ` +
+              `INSERT) on the table, or hand it ownership. Truncate said: ${message}. ` +
+              `Delete said: ${dm}`,
+          },
+          { status: 500 }
+        )
+      }
     }
   }
 
