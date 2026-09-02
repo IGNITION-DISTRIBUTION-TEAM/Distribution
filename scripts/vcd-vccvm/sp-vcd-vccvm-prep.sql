@@ -7,14 +7,17 @@
    per statement so the app's run log tells you what actually happened rather
    than just "succeeded".
 
-   Run it after the file upload has loaded the table, as an update-HLL step:
+   It runs BETWEEN the file upload and the HLL load — it cleans the uploaded
+   table, so everything it does has to happen before the rows are read into HLL:
 
-       DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP('11058', 90, 6)
+       upload file → TM_VCD_VCCVMDISTRIBUTION
+       SP_VCD_VCCVM_PREP(11058, 90, 6)          ← this
+       VW_VCD_VCCVM_HLL_LOAD → TM_HLL_HISTORYLEADSLOADED
 
-   The first argument is QUOTED. It is a VARCHAR so that the history check can
-   take a list, and Snowflake resolves a procedure on its argument types — an
-   unquoted 11058 is a NUMBER and can be rejected outright with "invalid
-   argument types", which is the same wall you hit on SP_ONAIR_U5_BALANCED_POOL.
+   In app terms that is the SOURCE PROCEDURE, not an update-HLL procedure. See
+   section 8 — and note that an earlier version of this file said update-HLL,
+   which would have run it after the load, when the ESTATUS labels, the leading
+   zeros and the alternate numbers can no longer reach the HLL rows.
 
    -----------------------------------------------------------------------------
    FIVE THINGS I CHANGED, AND WHY
@@ -119,9 +122,14 @@
 
    Parameters, so the numbers are not buried eleven statements deep:
 
-     HISTORY_CAMPAIGNS   comma-separated campaign ids for the history check.
-                         '11058' for one; '11058,11059' for several. Your script
-                         had "in (11058)", which reads as a list waiting to grow.
+     HISTORY_CAMPAIGN    the campaign id for the history check. Your script had
+                         "in (11058)", which reads as a list waiting to grow —
+                         but it has to be a NUMBER, not a VARCHAR list. The app's
+                         config field deliberately allows only letters, digits,
+                         commas and spaces inside a procedure's argument list, so
+                         a quoted '11058,11059' cannot be typed into Settings at
+                         all. A second campaign means a signature change here,
+                         which is the honest place for it.
      HISTORY_DAYS        the 90 in "loaded in the last 90 days".
      COMMITMENT_MONTHS   the 6 in "commitment ends more than six months out".
 
@@ -131,7 +139,7 @@
 
 CREATE OR REPLACE PROCEDURE
     DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(
-        HISTORY_CAMPAIGNS VARCHAR,
+        HISTORY_CAMPAIGN  NUMBER(38,0),
         HISTORY_DAYS      NUMBER(38,0),
         COMMITMENT_MONTHS NUMBER(38,0)
     )
@@ -173,10 +181,7 @@ BEGIN
        SET ESTATUS = 'LEAD IN HISTORY 90 DAYS'
       FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED b
      WHERE RIGHT(a.MSISDN, 9) = RIGHT(b.CONTACTNUMBER1, 9)
-       AND b.CAMPAIGNID IN (
-               SELECT TRY_TO_NUMBER(TRIM(VALUE::VARCHAR))
-                 FROM TABLE(FLATTEN(INPUT => SPLIT(:HISTORY_CAMPAIGNS, ',')))
-           )
+       AND b.CAMPAIGNID = :HISTORY_CAMPAIGN
        AND b.CREATEDONDATE > DATEADD('DAY', -1 * :HISTORY_DAYS, CURRENT_DATE());
     n_history := SQLROWCOUNT;
 
@@ -363,7 +368,7 @@ GRANT USAGE ON SCHEMA DATAWAREHOUSE.DISTRIBUTION_AUTOMATION
   TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT USAGE ON PROCEDURE
-  DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(VARCHAR, NUMBER, NUMBER)
+  DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(NUMBER, NUMBER, NUMBER)
   TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- Verify from the app's own session rather than a worksheet — a worksheet tells
@@ -468,17 +473,22 @@ SELECT MAX(c) AS MAX_ROWS_PER_ID,
 /* -----------------------------------------------------------------------------
    SECTION 8 — wire it into the app
 
-   Settings → Campaign automation → the VC CVM config:
+   This is the SOURCE PROCEDURE. It cleans the uploaded table, so it must run
+   before the HLL load, not after it. See sp-vcd-vccvm-hll-load.sql in this
+   folder for the view and the full config, which is:
 
-     Lead source            File
-     Upload target table    DATAWAREHOUSE.DISTRIBUTION.TM_VCD_VCCVMDISTRIBUTION
-     Update-HLL procedures   DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP('11058', 90, 6)
+     Lead source          File
+     Upload target table  DATAWAREHOUSE.DISTRIBUTION.TM_VCD_VCCVMDISTRIBUTION
+     Source type          Stored procedure → HLL
+     Procedure            DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(11058, 90, 6)
+     Load from            DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.VW_VCD_VCCVM_HLL_LOAD
+
+   Unquoted arguments, and that is not a style choice: the config field accepts
+   only letters, digits, commas and spaces between the brackets, so a quoted
+   argument is rejected before it reaches Snowflake.
 
    It then appears in Manual → step 3 as its own tab, runnable on its own, and
-   in the automated run in the same position.
+   in the same position in the automated run.
 
-   Change the numbers in the config, not in this file. Several campaigns in the
-   history check go in as one quoted list:
-
-     SP_VCD_VCCVM_PREP('11058,11059', 90, 6)
+   Change the numbers in the config, not in this file.
 -------------------------------------------------------------------------------- */
