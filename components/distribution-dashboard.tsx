@@ -933,20 +933,16 @@ function UpdateHllSection({ campaignId }: { campaignId: string }) {
     let cancelled = false
     const load = async () => {
       try {
-        const [procsRes, cfgRes] = await Promise.all([
+        const [procsRes, assigned] = await Promise.all([
           fetch("/api/hll-procedures", { cache: "no-store" }),
-          fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" }),
+          prefillFromConfig(campaignId, "UPDATE_HLL_PROCEDURE"),
         ])
         if (cancelled) return
         if (procsRes.ok) {
           const d = await procsRes.json()
           setProcs((d.rows as HllProc[]) ?? [])
         }
-        if (cfgRes.ok) {
-          const d = await cfgRes.json()
-          const p = d?.config?.UPDATE_HLL_PROCEDURE
-          if (typeof p === "string") setAssignedProc(p.trim())
-        }
+        if (assigned) setAssignedProc(assigned)
       } catch {
         // best-effort
       }
@@ -1040,6 +1036,58 @@ function UpdateHllSection({ campaignId }: { campaignId: string }) {
 // The file upload + column-mapping flow (select → preview → create → map →
 // load), extracted so it can be reused both in the manual FileSourcePanel and
 // embedded directly in the campaign Settings (Step 1 · Upload file to a table).
+/**
+ * Read one field off a campaign's saved automation config, for prefilling the
+ * Manual page.
+ *
+ * There are two config tables. Settings writes the MULTI-config table
+ * (/api/campaign-configs — a campaign can have several named automations); the
+ * legacy single-config table (/api/campaign-config/:id) predates it and is only
+ * still populated for campaigns set up before the change. Reading only the
+ * legacy one — which every prefill here used to do — means anything configured
+ * through the current Settings screen looks unset, and the Manual page asks
+ * again for a value that is already saved.
+ *
+ * Multi-config wins. Among several, an active config with the field set is
+ * preferred over an inactive one, since that is the automation that actually
+ * runs. Returns null rather than throwing: a prefill that fails must leave the
+ * field blank and editable, not break the page.
+ */
+async function prefillFromConfig(campaignId: string, field: string): Promise<string | null> {
+  const pick = (rows: Record<string, unknown>[]): string | null => {
+    const withValue = rows.filter((r) => {
+      const v = r[field]
+      return typeof v === "string" && v.trim() !== ""
+    })
+    if (withValue.length === 0) return null
+    const active = withValue.find((r) => r.IS_ACTIVE !== false)
+    return String((active ?? withValue[0])[field]).trim()
+  }
+  try {
+    const res = await fetch(`/api/campaign-configs?campaignId=${encodeURIComponent(campaignId)}`, {
+      cache: "no-store",
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const hit = pick((data?.configs as Record<string, unknown>[]) ?? [])
+      if (hit) return hit
+    }
+  } catch {
+    // fall through to the legacy table
+  }
+  try {
+    const res = await fetch(`/api/campaign-config/${encodeURIComponent(campaignId)}`, {
+      cache: "no-store",
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    const v = data?.config?.[field]
+    return typeof v === "string" && v.trim() ? v.trim() : null
+  } catch {
+    return null
+  }
+}
+
 function FileUploadMapper({
   campaignId,
   targetTable: controlledTable,
@@ -1093,19 +1141,10 @@ function FileUploadMapper({
     if (!campaignId) return
     let cancelled = false
     const load = async () => {
-      try {
-        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
-        if (!res.ok) return
-        const data = await res.json()
-        if (cancelled) return
-        const configured = data?.config?.UPLOAD_TARGET_TABLE
-        if (typeof configured === "string" && configured.trim()) {
-          setInternalTable(configured.trim())
-          setTargetFromConfig(true)
-        }
-      } catch {
-        // best-effort prefill — ignore network/config errors
-      }
+      const configured = await prefillFromConfig(campaignId, "UPLOAD_TARGET_TABLE")
+      if (cancelled || !configured) return
+      setInternalTable(configured)
+      setTargetFromConfig(true)
     }
     load()
     return () => {
@@ -1391,12 +1430,13 @@ function FileUploadMapper({
               setTargetTable(e.target.value)
               setTargetFromConfig(false)
             }}
-            placeholder="DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_LEAD_STAGE"
+            placeholder="e.g. DATAWAREHOUSE.SCHEMA.TABLE"
             className="w-full max-w-xl rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
           />
           {targetFromConfig && !targetError && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Pre-filled from this campaign&apos;s settings. Edit to override.
+            <p className="mt-2 text-xs text-emerald-300/80">
+              From this campaign&apos;s saved automation — edit only to override it for this
+              upload.
             </p>
           )}
           {targetError && (
@@ -1682,16 +1722,8 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
     if (!campaignId) return
     let cancelled = false
     const load = async () => {
-      try {
-        const res = await fetch(`/api/campaign-config/${campaignId}`, { cache: "no-store" })
-        if (!res.ok) return
-        const data = await res.json()
-        if (cancelled) return
-        const proc = data?.config?.LOAD_HISTORY_PROCEDURE
-        if (typeof proc === "string" && proc.trim()) setHistoryProc(proc.trim())
-      } catch {
-        // best-effort prefill — ignore network/config errors
-      }
+      const proc = await prefillFromConfig(campaignId, "LOAD_HISTORY_PROCEDURE")
+      if (!cancelled && proc) setHistoryProc(proc)
     }
     load()
     return () => {
