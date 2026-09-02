@@ -525,7 +525,7 @@ function ManualContent() {
             </h3>
           </div>
 
-          {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} />}
+          {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} parentStep={3} />}
           {source === "sftp" && <SftpSourcePanel />}
           {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} campaignId={selectedCampaign.id} />}
         </div>
@@ -555,7 +555,13 @@ function ManualContent() {
 
       {selectedCampaign && (
         <div className="rounded-xl border border-border bg-card p-6">
-          <EmailExportStep campaignId={String(selectedCampaign.id)} step={5} />
+          {/* "Download data" is step 4 for a snowflake source only, so on a file
+              source this has to be 4 — hard-coding 5 left a visible gap where
+              step 4 should have been. */}
+          <EmailExportStep
+            campaignId={String(selectedCampaign.id)}
+            step={source === "snowflake" ? 5 : 4}
+          />
         </div>
       )}
     </div>
@@ -1737,7 +1743,16 @@ function FileUploadMapper({
 
 // The manual file pipeline: the upload+mapping flow (FileUploadMapper) plus the
 // legacy load-history / verify / update-HLL steps, switchable via a tab bar.
-function FileSourcePanel({ campaignId }: { campaignId: string }) {
+function FileSourcePanel({
+  campaignId,
+  parentStep,
+}: {
+  campaignId: string
+  // The outer step this panel sits inside. Its tabs are numbered under it —
+  // "3.1", "3.2" — because bare 1-4 read as a continuation of the outer
+  // sequence, which then appears to jump straight from 4 to the next card.
+  parentStep: number
+}) {
   const [section, setSection] = useState<"upload" | "history" | "verify" | "update">("upload")
   const [historyProc, setHistoryProc] = useState("")
 
@@ -1756,10 +1771,10 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
   }, [campaignId])
 
   const steps: { id: "upload" | "history" | "verify" | "update"; label: string }[] = [
-    { id: "upload", label: "1 · Upload to stage" },
-    { id: "history", label: "2 · Load into history" },
-    { id: "verify", label: "3 · Verify counts" },
-    { id: "update", label: "4 · Update HLL" },
+    { id: "upload", label: `${parentStep}.1 · Upload to stage` },
+    { id: "history", label: `${parentStep}.2 · Load into history` },
+    { id: "verify", label: `${parentStep}.3 · Verify counts` },
+    { id: "update", label: `${parentStep}.4 · Update HLL` },
   ]
 
   return (
@@ -1778,7 +1793,7 @@ function FileSourcePanel({ campaignId }: { campaignId: string }) {
         ))}
       </div>
       <p className="-mt-2 text-xs text-muted-foreground">
-        Steps are independent — if the stage table is already loaded, skip straight to step 2 or 3.
+        Independent of each other — if the stage table is already loaded, skip straight to {parentStep}.2 or {parentStep}.3.
       </p>
 
       {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
