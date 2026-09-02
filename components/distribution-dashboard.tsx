@@ -537,44 +537,61 @@ function ManualContent() {
         </div>
       )}
 
-      {/* Step 4 — download the distributed data (snowflake distribution only) */}
+      {/* Steps 4 and 5 — extract, then email. Snowflake only: on a file source
+          both live inside the panel above as tabs, next to the other tools, so
+          repeating them here would be the same two buttons twice. */}
       {selectedCampaign && source === "snowflake" && configId != null && (
         <div className="rounded-xl border border-border bg-card p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-              4
-            </span>
-            <h3 className="font-medium text-foreground">Download data</h3>
-          </div>
-          <p className="mb-4 text-sm text-muted-foreground">
-            After the sync, download today&apos;s distributed leads for campaign{" "}
-            <span className="font-medium text-foreground">{selectedCampaign.id}</span> in the CXM format
-            (CSV, UTF-8, no BOM).
-          </p>
-          <Button variant="outline" asChild>
-            <a href={`/api/distribution/export?campaignId=${selectedCampaign.id}`}>
-              <Download className="mr-2 h-4 w-4" /> Download data (CSV)
-            </a>
-          </Button>
+          <ExportDownloadStep campaignId={String(selectedCampaign.id)} step={4} />
         </div>
       )}
 
-      {selectedCampaign && (
+      {selectedCampaign && source === "snowflake" && (
         <div className="rounded-xl border border-border bg-card p-6">
-          {/* "Download data" is step 4 for a snowflake source only, so on a file
-              source this has to be 4 — hard-coding 5 left a visible gap where
-              step 4 should have been. */}
-          <EmailExportStep
-            campaignId={String(selectedCampaign.id)}
-            step={source === "snowflake" ? 5 : 4}
-          />
+          <EmailExportStep campaignId={String(selectedCampaign.id)} step={5} />
         </div>
       )}
     </div>
   )
 }
 
-function EmailExportStep({ campaignId, step }: { campaignId: string; step: number }) {
+/**
+ * The heading of a step card. Numbered when it is one of the outer numbered
+ * steps; bare when it sits inside a tab, where the tab label already carries
+ * the number (or says "Tools ·" and deliberately has none).
+ */
+function StepHeading({ step, title }: { step?: number; title: string }) {
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      {step != null && (
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+          {step}
+        </span>
+      )}
+      <h3 className="font-medium text-foreground">{title}</h3>
+    </div>
+  )
+}
+
+function ExportDownloadStep({ campaignId, step }: { campaignId: string; step?: number }) {
+  return (
+    <div>
+      <StepHeading step={step} title="Extract data" />
+      <p className="mb-4 text-sm text-muted-foreground">
+        Download today&apos;s distributed leads for campaign{" "}
+        <span className="font-medium text-foreground">{campaignId}</span> in the CXM format (CSV,
+        UTF-8, no BOM).
+      </p>
+      <Button variant="outline" asChild>
+        <a href={`/api/distribution/export?campaignId=${encodeURIComponent(campaignId)}`}>
+          <Download className="mr-2 h-4 w-4" /> Download data (CSV)
+        </a>
+      </Button>
+    </div>
+  )
+}
+
+function EmailExportStep({ campaignId, step }: { campaignId: string; step?: number }) {
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -619,12 +636,7 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step: numbe
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-          {step}
-        </span>
-        <h3 className="font-medium text-foreground">Email data</h3>
-      </div>
+      <StepHeading step={step} title="Email data" />
       <p className="mb-4 text-sm text-muted-foreground">
         Send the same file to{" "}
         <span className="font-medium text-foreground">DATA Operations and Dialler</span>. The
@@ -1884,8 +1896,12 @@ function FileSourcePanel({
       label: `${parentStep}.${i + 2} · ${st.label.replace(/^Load into HLL — /, "")}`,
     })),
     { id: "verify", label: "Checks · Verify counts" },
-    // Not a step: runs a procedure of your choosing, whatever the config says.
+    // Not steps: they act on whatever is already distributed, run as often as
+    // you like, and are not part of the configured sequence — so they sit with
+    // the other tools rather than taking a number of their own.
     { id: "adhoc-update", label: "Tools · Run an update-HLL procedure" },
+    { id: "extract", label: "Tools · Extract data" },
+    { id: "email", label: "Tools · Email data" },
   ]
 
   return (
@@ -1918,6 +1934,8 @@ function FileSourcePanel({
       {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
       {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
       {section === "adhoc-update" && <UpdateHllSection campaignId={campaignId} />}
+      {section === "extract" && <ExportDownloadStep campaignId={campaignId} />}
+      {section === "email" && <EmailExportStep campaignId={campaignId} />}
 
       {/* Keep the purpose-built panels for the steps that have one. */}
       {section === "step:load_history" && (
@@ -8626,7 +8644,9 @@ function CampaignSettingsPanel() {
 
               {campaignId && (
                 <div className="mt-3 rounded-md border border-border bg-background/40 p-3">
-                  <EmailExportStep campaignId={campaignId} step={5} />
+                  {/* No number: the list above is this config's steps, of which
+                      there may be any number, so a fixed "5" named nothing. */}
+                  <EmailExportStep campaignId={campaignId} />
                 </div>
               )}
 
