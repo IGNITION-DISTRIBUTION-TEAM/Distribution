@@ -525,7 +525,13 @@ function ManualContent() {
             </h3>
           </div>
 
-          {source === "file" && <FileSourcePanel campaignId={selectedCampaign.id} parentStep={3} />}
+          {source === "file" && (
+            <FileSourcePanel
+              campaignId={selectedCampaign.id}
+              configId={configId}
+              parentStep={3}
+            />
+          )}
           {source === "sftp" && <SftpSourcePanel />}
           {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} campaignId={selectedCampaign.id} />}
         </div>
@@ -1741,20 +1747,117 @@ function FileUploadMapper({
   )
 }
 
-// The manual file pipeline: the upload+mapping flow (FileUploadMapper) plus the
-// legacy load-history / verify / update-HLL steps, switchable via a tab bar.
+/**
+ * Run one configured step from the Manual page.
+ *
+ * Deliberately the same submit-and-poll path as the Settings step list, so a
+ * step behaves identically wherever it is triggered from — including reporting
+ * the statement it submitted when it fails.
+ */
+function ManualStepRunner({
+  configId,
+  stepKey,
+  label,
+}: {
+  configId: number
+  stepKey: string
+  label: string
+}) {
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  const run = async () => {
+    setRunning(true)
+    setResult(null)
+    const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, stepKey)
+    setResult({ ok: res.ok, message: res.ok ? "Done." : res.error || "Step failed" })
+    setRunning(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h4 className="text-sm font-medium text-foreground">{label}</h4>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Runs against the campaign&apos;s <span className="font-medium text-foreground">saved</span>{" "}
+          config — the same statement the automation would run for this step.
+        </p>
+      </div>
+      <div>
+        <Button onClick={run} disabled={running}>
+          {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+          {running ? "Running..." : "Run this step"}
+        </Button>
+      </div>
+      {result && (
+        <div
+          className={cn(
+            "whitespace-pre-wrap rounded-md border p-3 text-sm",
+            result.ok
+              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+              : "border-rose-500/30 bg-rose-500/5 text-rose-300"
+          )}
+        >
+          {result.message}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The manual file pipeline.
+ *
+ * The tabs after the upload come from the campaign's SAVED CONFIG, via the same
+ * plan endpoint the automation runs — not from a fixed list. They used to be
+ * hard-coded as upload / load-into-history / verify / update-HLL, which is the
+ * older path and no longer what Settings describes: Settings' step 2 is "Load
+ * into HLL" (a view mapping or a procedure), it can carry several update-HLL
+ * procedures and a sync, and it has no notion of "load into history" unless one
+ * is configured. So the two screens named the same pipeline differently and
+ * listed different steps.
+ *
+ * Where a planned step has a purpose-built panel it keeps it; the rest get a
+ * generic runner, which is the same submit-and-poll the Settings step list uses.
+ * "Checks" is separated out because verifying counts is not a pipeline step —
+ * it runs nothing and can be done at any point.
+ */
 function FileSourcePanel({
   campaignId,
+  configId,
   parentStep,
 }: {
   campaignId: string
+  // Needed to read the plan and to run an individual step. Null before a config
+  // is selected, in which case only the upload and the checks are offered.
+  configId: number | null
   // The outer step this panel sits inside. Its tabs are numbered under it —
   // "3.1", "3.2" — because bare 1-4 read as a continuation of the outer
   // sequence, which then appears to jump straight from 4 to the next card.
   parentStep: number
 }) {
-  const [section, setSection] = useState<"upload" | "history" | "verify" | "update">("upload")
+  const [section, setSection] = useState<string>("upload")
   const [historyProc, setHistoryProc] = useState("")
+  const [plan, setPlan] = useState<{ key: string; label: string }[]>([])
+  const [planError, setPlanError] = useState<string | null>(null)
+
+  // The configured steps, in the order they run.
+  useEffect(() => {
+    if (configId == null) { setPlan([]); setPlanError(null); return }
+    let cancelled = false
+    fetch(`/api/distribution/configs/${configId}/run/plan`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return
+        if (d?.error) { setPlan([]); setPlanError(String(d.error)); return }
+        setPlan((d.steps as { key: string; label: string }[]) ?? [])
+        setPlanError(null)
+      })
+      .catch(() => {
+        if (!cancelled) setPlanError("Could not read this campaign's configured steps.")
+      })
+    return () => { cancelled = true }
+  }, [configId])
 
   // Best-effort prefill of the load-history procedure from saved config.
   useEffect(() => {
@@ -1770,11 +1873,19 @@ function FileSourcePanel({
     }
   }, [campaignId])
 
-  const steps: { id: "upload" | "history" | "verify" | "update"; label: string }[] = [
+  // Upload first, then one tab per configured step, then the checks. Labels come
+  // straight from the plan, so they read the same here as in Settings.
+  const steps: { id: string; label: string }[] = [
     { id: "upload", label: `${parentStep}.1 · Upload to stage` },
-    { id: "history", label: `${parentStep}.2 · Load into history` },
-    { id: "verify", label: `${parentStep}.3 · Verify counts` },
-    { id: "update", label: `${parentStep}.4 · Update HLL` },
+    ...plan.map((st, i) => ({
+      id: `step:${st.key}`,
+      // The plan prefixes file-source labels with "Load into HLL — "; that is
+      // useful in a flat step list and redundant in a tab.
+      label: `${parentStep}.${i + 2} · ${st.label.replace(/^Load into HLL — /, "")}`,
+    })),
+    { id: "verify", label: "Checks · Verify counts" },
+    // Not a step: runs a procedure of your choosing, whatever the config says.
+    { id: "adhoc-update", label: "Tools · Run an update-HLL procedure" },
   ]
 
   return (
@@ -1793,13 +1904,41 @@ function FileSourcePanel({
         ))}
       </div>
       <p className="-mt-2 text-xs text-muted-foreground">
-        Independent of each other — if the stage table is already loaded, skip straight to {parentStep}.2 or {parentStep}.3.
+        Independent of each other — if the stage table is already loaded, skip straight to a later
+        step. These are this campaign&apos;s configured steps, the same ones{" "}
+        <span className="font-medium text-foreground">Settings</span> lists and the automation runs.
       </p>
 
+      {planError && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          {planError} Only the upload and the checks are available until that is fixed.
+        </div>
+      )}
+
       {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
-      {section === "history" && <LoadHistorySection campaignId={campaignId} proc={historyProc} />}
       {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
-      {section === "update" && <UpdateHllSection campaignId={campaignId} />}
+      {section === "adhoc-update" && <UpdateHllSection campaignId={campaignId} />}
+
+      {/* Keep the purpose-built panels for the steps that have one. */}
+      {section === "step:load_history" && (
+        <LoadHistorySection campaignId={campaignId} proc={historyProc} />
+      )}
+
+      {/* Everything else runs through the same submit-and-poll as Settings.
+          Update-HLL steps included: a config can carry several, and the picker
+          panel below has no way to know which one a given tab stands for — it
+          would run whatever was selected in it, not the step named on the tab. */}
+      {section.startsWith("step:") &&
+        section !== "step:load_history" &&
+        configId != null && (
+          <ManualStepRunner
+            configId={configId}
+            stepKey={section.slice("step:".length)}
+            label={
+              plan.find((st) => `step:${st.key}` === section)?.label ?? section.slice(5)
+            }
+          />
+        )}
     </div>
   )
 }
