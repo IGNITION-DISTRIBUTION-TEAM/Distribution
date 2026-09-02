@@ -101,6 +101,7 @@ export type CampaignConfigInput = {
   // view read directly into HLL (with a column mapping).
   sourceKind?: string
   sourceObject?: string
+  sourceLoadFrom?: string
   sourceMappingJson?: string | null
   leadExpiryDays?: number
   batchNameTemplate?: string
@@ -174,6 +175,11 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
   if (sourceObject && !PROC_IDENT.test(sourceObject)) {
     return { error: 'Procedure / view must be "DATABASE.SCHEMA.NAME" with optional (args)' + identProblem(sourceObject) }
   }
+  // What the mapped INSERT reads, when it is not the upload target.
+  const sourceLoadFrom = normIdent(body.sourceLoadFrom)
+  if (sourceLoadFrom && !QUALIFIED_IDENT.test(sourceLoadFrom)) {
+    return { error: 'Load from must be "DATABASE.SCHEMA.NAME" (A-Z, 0-9, _ only)' + identProblem(sourceLoadFrom) }
+  }
   const sourceMappingJson = validateSourceMapping(body.sourceMapping)
   const leadExpiryDays = normLeadExpiryDays(body.leadExpiryDays)
 
@@ -192,6 +198,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     leadSource: normLeadSource(body.leadSource),
     sourceKind,
     sourceObject,
+    sourceLoadFrom,
     sourceMappingJson,
     leadExpiryDays,
     batchNameTemplate,

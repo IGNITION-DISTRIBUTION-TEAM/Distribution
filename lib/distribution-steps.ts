@@ -38,6 +38,8 @@ export const CONFIGS_COLUMNS: [string, string][] = [
   ["SFTP_AUTH_TYPE", "VARCHAR"], ["UPLOAD_TARGET_TABLE", "VARCHAR"],
   ["LOAD_HISTORY_PROCEDURE", "VARCHAR"], ["UPDATE_HLL_PROCEDURE", "VARCHAR"], ["SYNC_PROCEDURE", "VARCHAR"],
   ["SOURCE_KIND", "VARCHAR"], ["SOURCE_OBJECT", "VARCHAR"], ["SOURCE_MAPPING_JSON", "VARCHAR"],
+  // Optional: what the mapped INSERT reads. Defaults to the upload target.
+  ["SOURCE_LOAD_FROM", "VARCHAR"],
   ["UPDATE_HLL_PROCEDURES", "VARCHAR"],
   // Structured sync (SP_SYNC_TO_SQLSERVER_LARGE): view is interchangeable.
   ["SYNC_SOURCE_VIEW", "VARCHAR"], ["SYNC_TARGET_TABLE", "VARCHAR"], ["SYNC_COLUMNS", "VARCHAR"], ["SYNC_BATCH_SIZE", "NUMBER"],
@@ -211,26 +213,19 @@ export function planSteps(config: RunConfigRow): StepDef[] {
   const steps: StepDef[] = []
   const sk = str(config, "SOURCE_KIND").toLowerCase()
   const fileSource = str(config, "LEAD_SOURCE").toLowerCase() === "file"
-  /**
-   * For a file source the upload has already filled the staging table, so a
-   * procedure at step 2 IS the load: it reads that table into HLL itself. There
-   * is deliberately no mapped INSERT afterwards — that would load the same rows
-   * a second time.
-   *
-   * For every other lead source a procedure FILLS the staging table and the
-   * INSERT still has to follow it.
-   */
-  const procLoadsHll = fileSource && sk === "proc"
+  // A procedure always runs BEFORE the load, never instead of it: it prepares
+  // what the mapped INSERT then reads. Same order for every lead source; only
+  // the labels differ, since on a file source this is step 2 rather than step 1.
   if (sk === "proc") {
     steps.push({
       key: "source_proc",
-      label: procLoadsHll ? "Load into HLL — run procedure" : "Initial source — run procedure",
+      label: fileSource ? "Load into HLL — run procedure" : "Initial source — run procedure",
     })
   }
-  if ((sk === "proc" && !procLoadsHll) || sk === "view") {
+  if (sk === "proc" || sk === "view") {
     steps.push({
       key: "source_load",
-      label: fileSource ? "Load into HLL" : "Initial source — load into HLL",
+      label: fileSource ? "Load into HLL — map into HLL" : "Initial source — load into HLL",
     })
   }
   if (str(config, "LOAD_HISTORY_PROCEDURE")) steps.push({ key: "load_history", label: "Load into history" })
@@ -265,9 +260,14 @@ export async function buildStepSql(
     const kind = str(config, "SOURCE_KIND").toLowerCase()
     const object = str(config, "SOURCE_OBJECT")
     const stage = str(config, "UPLOAD_TARGET_TABLE")
-    const readFrom = kind === "proc" ? stage : object
+    // "Load from" wins when set. On a file source the upload target is where the
+    // FILE lands, so a procedure that writes its output somewhere else — a view
+    // over the staging table, or a second table — has nowhere else to say so.
+    const override = str(config, "SOURCE_LOAD_FROM")
+    const readFrom = override || (kind === "proc" ? stage : object)
     if (!RUN_QUALIFIED.test(readFrom)) {
-      throw new Error(`${kind === "proc" ? "Upload target" : "View"} must be DATABASE.SCHEMA.NAME: ${readFrom || "(empty)"}`)
+      const what = override ? "Load from" : kind === "proc" ? "Upload target" : "View"
+      throw new Error(`${what} must be DATABASE.SCHEMA.NAME: ${readFrom || "(empty)"}`)
     }
     let mapping: Record<string, string> = {}
     try { mapping = JSON.parse(str(config, "SOURCE_MAPPING_JSON") || "{}") } catch { mapping = {} }

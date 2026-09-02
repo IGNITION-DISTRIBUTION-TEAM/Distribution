@@ -7203,6 +7203,7 @@ type CampaignConfig = {
   SYNC_BATCH_SIZE?: number | string | null
   SOURCE_KIND?: string | null
   SOURCE_OBJECT?: string | null
+  SOURCE_LOAD_FROM?: string | null
   SOURCE_MAPPING_JSON?: string | null
   LEAD_EXPIRY_DAYS?: number | string | null
   BATCH_NAME_TEMPLATE?: string | null
@@ -7258,6 +7259,9 @@ function CampaignSettingsPanel() {
   // Step 1 — initial source
   const [sourceKind, setSourceKind] = useState<"none" | "proc" | "view">("none")
   const [sourceObject, setSourceObject] = useState("")
+  // Optional: what the mapped INSERT reads, when the procedure writes somewhere
+  // other than the upload target. Blank means "the upload target".
+  const [sourceLoadFrom, setSourceLoadFrom] = useState("")
   const [sourceMapping, setSourceMapping] = useState<Record<string, string>>({})
   // Lead expiry: LEADEXPIRY = today + this many days (default 45).
   const [leadExpiryDays, setLeadExpiryDays] = useState("45")
@@ -7327,8 +7331,9 @@ function CampaignSettingsPanel() {
 
   const loadSourceColumns = async () => {
     // Proc source maps FROM the stage/upload target table; view maps FROM the view.
-    const readFrom = sourceKind === "proc" ? targetTable.trim() : sourceObject.trim()
-    if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target (table or view) below first." : "Enter the view name first."); return }
+    const readFrom =
+      sourceLoadFrom.trim() || (sourceKind === "proc" ? targetTable.trim() : sourceObject.trim())
+    if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target (table or view) below first, or a Load from object." : "Enter the view name first."); return }
     setColsLoading(true); setColsMsg(null)
     try {
       const [h, v] = await Promise.all([
@@ -7449,6 +7454,7 @@ function CampaignSettingsPanel() {
     setSyncSourceView(""); setSyncTargetTable(""); setSyncColumns(""); setSyncBatch("10000")
     setSourceKind("none")
     setSourceObject("")
+    setSourceLoadFrom("")
     setSourceMapping({})
     setLeadExpiryDays("45")
     setBatchTemplate("BATCH_ONAIR_ULTRA5{date}")
@@ -7485,6 +7491,7 @@ function CampaignSettingsPanel() {
     setSyncBatch(c.SYNC_BATCH_SIZE != null ? String(c.SYNC_BATCH_SIZE) : "10000")
     setSourceKind((c.SOURCE_KIND as "none" | "proc" | "view") || "none")
     setSourceObject(c.SOURCE_OBJECT ?? "")
+    setSourceLoadFrom(c.SOURCE_LOAD_FROM ?? "")
     try {
       const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
       for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]) delete parsedMap[a]
@@ -7561,7 +7568,7 @@ function CampaignSettingsPanel() {
           uploadTargetTable: targetTable, loadHistoryProcedure: "",
           updateHllProcedures: updateHllProcs, syncProcedure,
           syncSourceView, syncTargetTable, syncColumns, syncBatchSize: syncBatch,
-          sourceKind, sourceObject, sourceMapping,
+          sourceKind, sourceObject, sourceLoadFrom, sourceMapping,
           leadExpiryDays: Number(leadExpiryDays) || 45, batchNameTemplate: batchTemplate, isActive,
         }),
       })
@@ -7951,9 +7958,9 @@ function CampaignSettingsPanel() {
               </h4>
               <p className="mb-3 text-xs text-muted-foreground">
                 {leadSource === "file" ? (
-                  <>How the staged rows reach the HLL table. A <b>view or table</b> is read in via a column
-                  mapping; a <b>procedure</b> does the load itself, so no mapping is needed and no
-                  INSERT follows it.</>
+                  <>How the staged rows reach the HLL table. A <b>view or table</b> is read straight in
+                  via a column mapping. A <b>procedure</b> runs first — to shape or enrich the staged
+                  rows — and the mapping then reads its output into HLL.</>
                 ) : (
                   <>What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
                   target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
@@ -7989,6 +7996,23 @@ function CampaignSettingsPanel() {
                     />
                   </div>
                 )}
+                {sourceKind === "proc" && (
+                  <div>
+                    <Label className="mb-1.5 block text-xs text-muted-foreground">
+                      Load from — optional (DB.SCHEMA.NAME)
+                    </Label>
+                    <Input
+                      value={sourceLoadFrom}
+                      onChange={(e) => setSourceLoadFrom(e.target.value)}
+                      placeholder={targetTable.trim() || "defaults to the Upload target"}
+                      className="font-mono text-sm"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      What the mapping reads after the procedure has run. Leave blank to read the
+                      Upload target.
+                    </p>
+                  </div>
+                )}
               </div>
               {sourceKind === "proc" && (
                 <>
@@ -8000,22 +8024,19 @@ function CampaignSettingsPanel() {
                   </p>
                   {leadSource === "file" ? (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      The upload has already filled the staging table, so this procedure is the load:
-                      it reads that table into HLL itself. No column mapping, and{" "}
-                      <span className="font-medium text-foreground">no INSERT runs after it</span> —
-                      one would write every row a second time. The procedure has to set{" "}
-                      <span className="font-mono">CAMPAIGNID</span>,{" "}
-                      <span className="font-mono">BATCHNAME</span>,{" "}
-                      <span className="font-mono">CREATEDONDATE</span> and{" "}
-                      <span className="font-mono">LEADEXPIRY</span> itself; the config&apos;s batch
-                      name and expiry settings do not apply on this path.
+                      Two steps, in this order: the procedure runs against the staged rows, then the
+                      column mapping reads them into HLL. By default the mapping reads the{" "}
+                      <span className="font-mono">Upload target</span> — the same staging table the
+                      file landed in — so a procedure that updates it in place needs nothing else.
+                      Set <span className="font-medium">Load from</span> if the procedure writes its
+                      output to a different table or view.
                     </p>
                   ) : (
                     <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
                   )}
                 </>
               )}
-              {sourceKind !== "none" && !(leadSource === "file" && sourceKind === "proc") && (
+              {sourceKind !== "none" && (
                 <div className="mt-3">
                   <div className="flex items-center gap-3">
                     <Button type="button" variant="outline" size="sm" onClick={loadSourceColumns} disabled={colsLoading}>
@@ -8024,7 +8045,7 @@ function CampaignSettingsPanel() {
                     {/* A procedure source maps FROM the upload target, which sits two
                         sections further down — say so here rather than after a click
                         that could only fail. */}
-                    {sourceKind === "proc" && !targetTable.trim() && (
+                    {sourceKind === "proc" && !targetTable.trim() && !sourceLoadFrom.trim() && (
                       <span className="text-xs text-amber-400">
                         Set <span className="font-medium">Upload target</span> first — under
                         &ldquo;Destination &amp; sync&rdquo; below. The columns come from there, not from the
