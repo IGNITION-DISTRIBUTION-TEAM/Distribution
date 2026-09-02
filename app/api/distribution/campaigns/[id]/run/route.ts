@@ -26,6 +26,7 @@ export const maxDuration = 300
 type StepResult = { step: string; status: "success" | "error" | "skipped"; message: string }
 
 type RunConfig = {
+  LEAD_SOURCE: string | null
   SOURCE_KIND: string | null
   SOURCE_OBJECT: string | null
   SOURCE_MAPPING_JSON: string | null
@@ -180,6 +181,7 @@ async function* runStepsGen(campaignId: number, config: RunConfig): AsyncGenerat
 async function runInitialSource(
   kind: string,
   config: {
+    LEAD_SOURCE?: string | null
     SOURCE_OBJECT: string | null
     SOURCE_MAPPING_JSON: string | null
     UPLOAD_TARGET_TABLE: string | null
@@ -191,13 +193,14 @@ async function runInitialSource(
   const step = "Initial source"
   const object = (config.SOURCE_OBJECT ?? "").trim()
   const stageTable = (config.UPLOAD_TARGET_TABLE ?? "").trim()
+  const procLoadsHll = (config.LEAD_SOURCE ?? "").toLowerCase() === "file" && kind === "proc"
 
   if (!object || !RUN_PROC_IDENT.test(object)) {
     return { step, status: "error", message: `Source object is not valid: ${object || "(empty)"}` }
   }
   // What we SELECT from: the proc's upload/stage table, or the view itself.
   const readFrom = kind === "proc" ? stageTable : object
-  if (kind === "proc" && (!stageTable || !RUN_QUALIFIED.test(stageTable))) {
+  if (kind === "proc" && !procLoadsHll && (!stageTable || !RUN_QUALIFIED.test(stageTable))) {
     return { step, status: "error", message: `Upload target (for the proc's output, a table or view) must be DATABASE.SCHEMA.NAME: ${stageTable || "(empty)"}` }
   }
   if (kind === "view" && !RUN_QUALIFIED.test(object)) {
@@ -234,6 +237,12 @@ async function runInitialSource(
     if (kind === "proc") {
       const { sql, database, schema } = buildCall(object)
       await executeSnowflakeQuery(sql, { database, schema })
+      // On a file source the procedure loads HLL itself — the upload already
+      // filled the staging table — so stop here. Falling through to the INSERT
+      // would write every row twice.
+      if (procLoadsHll) {
+        return { step, status: "success", message: `Ran ${object} (procedure loaded HLL)` }
+      }
     }
     // 2. Append mapped rows into HLL; CAMPAIGNID/CREATEDONDATE/LEADEXPIRY are
     //    auto-filled (campaign id, today, today + expiry days).

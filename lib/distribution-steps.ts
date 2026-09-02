@@ -210,8 +210,29 @@ function procShortName(ref: string): string {
 export function planSteps(config: RunConfigRow): StepDef[] {
   const steps: StepDef[] = []
   const sk = str(config, "SOURCE_KIND").toLowerCase()
-  if (sk === "proc") steps.push({ key: "source_proc", label: "Initial source — run procedure" })
-  if (sk === "proc" || sk === "view") steps.push({ key: "source_load", label: "Initial source — load into HLL" })
+  const fileSource = str(config, "LEAD_SOURCE").toLowerCase() === "file"
+  /**
+   * For a file source the upload has already filled the staging table, so a
+   * procedure at step 2 IS the load: it reads that table into HLL itself. There
+   * is deliberately no mapped INSERT afterwards — that would load the same rows
+   * a second time.
+   *
+   * For every other lead source a procedure FILLS the staging table and the
+   * INSERT still has to follow it.
+   */
+  const procLoadsHll = fileSource && sk === "proc"
+  if (sk === "proc") {
+    steps.push({
+      key: "source_proc",
+      label: procLoadsHll ? "Load into HLL — run procedure" : "Initial source — run procedure",
+    })
+  }
+  if ((sk === "proc" && !procLoadsHll) || sk === "view") {
+    steps.push({
+      key: "source_load",
+      label: fileSource ? "Load into HLL" : "Initial source — load into HLL",
+    })
+  }
   if (str(config, "LOAD_HISTORY_PROCEDURE")) steps.push({ key: "load_history", label: "Load into history" })
   const uh = getUpdateHllProcs(config)
   uh.forEach((p, i) => steps.push({ key: `update_hll:${i}`, label: uh.length > 1 ? `Update HLL — ${procShortName(p)}` : "Update HLL" }))

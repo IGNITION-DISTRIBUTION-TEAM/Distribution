@@ -7951,8 +7951,9 @@ function CampaignSettingsPanel() {
               </h4>
               <p className="mb-3 text-xs text-muted-foreground">
                 {leadSource === "file" ? (
-                  <>Read the staging table (or a <b>view</b> over it) into the HLL table via a column mapping —
-                  the &ldquo;load into HLL&rdquo; step of the run.</>
+                  <>How the staged rows reach the HLL table. A <b>view or table</b> is read in via a column
+                  mapping; a <b>procedure</b> does the load itself, so no mapping is needed and no
+                  INSERT follows it.</>
                 ) : (
                   <>What generates this campaign&apos;s leads at the start of a distribution. A <b>procedure</b> fills the upload
                   target table below (then &ldquo;Load into history&rdquo; moves it to HLL); a <b>view</b> is read straight
@@ -7966,7 +7967,11 @@ function CampaignSettingsPanel() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">— None —</SelectItem>
-                      {leadSource !== "file" && <SelectItem value="proc">Stored procedure → stage table</SelectItem>}
+                      <SelectItem value="proc">
+                        {leadSource === "file"
+                          ? "Stored procedure → HLL"
+                          : "Stored procedure → stage table"}
+                      </SelectItem>
                       <SelectItem value="view">{leadSource === "file" ? "View or table → HLL" : "View → HLL (direct)"}</SelectItem>
                     </SelectContent>
                   </Select>
@@ -7993,10 +7998,24 @@ function CampaignSettingsPanel() {
                     written <span className="font-mono">…NAME(1)</span> — without the argument it reports the
                     procedure as unknown rather than as wrongly called.
                   </p>
-                  <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
+                  {leadSource === "file" ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      The upload has already filled the staging table, so this procedure is the load:
+                      it reads that table into HLL itself. No column mapping, and{" "}
+                      <span className="font-medium text-foreground">no INSERT runs after it</span> —
+                      one would write every row a second time. The procedure has to set{" "}
+                      <span className="font-mono">CAMPAIGNID</span>,{" "}
+                      <span className="font-mono">BATCHNAME</span>,{" "}
+                      <span className="font-mono">CREATEDONDATE</span> and{" "}
+                      <span className="font-mono">LEADEXPIRY</span> itself; the config&apos;s batch
+                      name and expiry settings do not apply on this path.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-muted-foreground">The procedure must populate the <span className="font-mono">Upload target</span> (a table or view) set below. Then map its columns into HLL here (or leave it to a &ldquo;Load into history&rdquo; procedure).</p>
+                  )}
                 </>
               )}
-              {sourceKind !== "none" && (
+              {sourceKind !== "none" && !(leadSource === "file" && sourceKind === "proc") && (
                 <div className="mt-3">
                   <div className="flex items-center gap-3">
                     <Button type="button" variant="outline" size="sm" onClick={loadSourceColumns} disabled={colsLoading}>
