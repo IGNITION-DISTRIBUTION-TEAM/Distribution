@@ -42,13 +42,67 @@ export async function POST(request: Request) {
        ORDER BY ORDINAL_POSITION`,
       { database, schema }
     )
-    if (columns.length === 0) {
+    if (columns.length > 0) {
+      return NextResponse.json({ table: `${database}.${schema}.${name}`, columns })
+    }
+
+    // INFORMATION_SCHEMA lists only what the role has privileges on, so an empty
+    // result means "absent OR invisible" — and the caller uses this to decide
+    // whether to offer creating the table. Getting that wrong sends someone into
+    // a create flow for a table that already exists. SHOW COLUMNS separates the
+    // two: it returns the columns when the role can reach the object, and errors
+    // explicitly when it cannot.
+    try {
+      const shown = await executeSnowflakeQuery<Record<string, unknown>>(
+        `SHOW COLUMNS IN ${database}.${schema}.${name}`,
+        { database, schema }
+      )
+      const pick = (row: Record<string, unknown>, key: string): string => {
+        const hit = Object.keys(row).find((k) => k.toLowerCase() === key.toLowerCase())
+        const v = hit ? row[hit] : undefined
+        return v == null ? "" : String(v)
+      }
+      const mapped = shown
+        .map((r) => {
+          let type = pick(r, "data_type")
+          try {
+            const parsed = JSON.parse(type)
+            if (parsed && typeof parsed.type === "string") type = parsed.type
+          } catch { /* data_type wasn't JSON — keep the raw string */ }
+          return {
+            COLUMN_NAME: pick(r, "column_name"),
+            DATA_TYPE: type,
+            IS_NULLABLE: (pick(r, "null?") === "true" ? "YES" : "NO") as "YES" | "NO",
+            COLUMN_DEFAULT: null,
+          }
+        })
+        .filter((c) => c.COLUMN_NAME)
+      if (mapped.length > 0) {
+        return NextResponse.json({ table: `${database}.${schema}.${name}`, columns: mapped })
+      }
+    } catch (showError) {
+      const m = showError instanceof Error ? showError.message : String(showError)
+      // Snowflake reports absent and unauthorised identically here, so say both
+      // rather than asserting the table does not exist.
       return NextResponse.json(
-        { error: `Table ${database}.${schema}.${name} not found or not visible to the role` },
+        {
+          error:
+            `${database}.${schema}.${name} could not be read. Snowflake reports a missing object ` +
+            `and a missing privilege the same way, so it either does not exist or this app's role ` +
+            `has no access to it. Detail: ${m}`,
+          reason: "unreadable",
+        },
         { status: 404 }
       )
     }
-    return NextResponse.json({ table: `${database}.${schema}.${name}`, columns })
+
+    return NextResponse.json(
+      {
+        error: `Table ${database}.${schema}.${name} not found or not visible to the role`,
+        reason: "unreadable",
+      },
+      { status: 404 }
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ error: message }, { status: 500 })

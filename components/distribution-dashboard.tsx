@@ -1120,6 +1120,9 @@ function FileUploadMapper({
   const [targetError, setTargetError] = useState<string | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
   const [targetFromConfig, setTargetFromConfig] = useState(false)
+  // Only true after a read of the target table failed, so the create flow is an
+  // explicit second choice rather than the default route.
+  const [canOfferCreate, setCanOfferCreate] = useState(false)
 
   // Create-table state
   const [createSpec, setCreateSpec] = useState<CreateColSpec[]>([])
@@ -1190,7 +1193,10 @@ function FileUploadMapper({
       })
       const data = await parseJsonResponse(res)
       if (res.status === 404) {
-        // Table doesn't exist — switch to create flow with sensible defaults.
+        // The table could not be read. Prepare a create spec but do NOT jump
+        // into the create flow: in the normal case the table already exists and
+        // this is a name mistake or a missing grant, so creating it is the wrong
+        // answer and offering it as the only path invites someone to take it.
         const seen = new Set<string>()
         const initial = preview.headers.map((h) => {
           let name = sanitizeColumnName(h)
@@ -1203,7 +1209,11 @@ function FileUploadMapper({
         })
         setCreateSpec(initial)
         setCreateError(null)
-        setStage("create")
+        setTargetError(
+          data.error ||
+            `Could not read ${targetTable.trim()}. Check the name, and that this app's Snowflake role has access to it.`
+        )
+        setCanOfferCreate(true)
         return
       }
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
@@ -1212,6 +1222,7 @@ function FileUploadMapper({
       const initial: Record<string, string> = {}
       for (const h of preview.headers) initial[h] = autoMatchColumn(h, cols)
       setMapping(initial)
+      setCanOfferCreate(false)
       setStage("map")
     } catch (err) {
       setTargetError(err instanceof Error ? err.message : String(err))
@@ -1429,6 +1440,8 @@ function FileUploadMapper({
             onChange={(e) => {
               setTargetTable(e.target.value)
               setTargetFromConfig(false)
+              setCanOfferCreate(false)
+              setTargetError(null)
             }}
             placeholder="e.g. DATAWAREHOUSE.SCHEMA.TABLE"
             className="w-full max-w-xl rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
@@ -1455,7 +1468,18 @@ function FileUploadMapper({
             {targetLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Next: map columns
           </Button>
+          {canOfferCreate && (
+            <Button variant="outline" onClick={() => setStage("create")}>
+              Create it instead
+            </Button>
+          )}
         </div>
+        {canOfferCreate && (
+          <p className="text-xs text-muted-foreground">
+            The load truncates and refills an existing table, so it does not need creating unless
+            this really is a new one.
+          </p>
+        )}
       </div>
     )
   }
