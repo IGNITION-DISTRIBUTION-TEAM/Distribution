@@ -8,7 +8,17 @@
    first; if it returns a message, it will very likely name the reason and the
    rest of this file is unnecessary.
 
-   Failing that, there are four candidates, in order of likelihood.
+   THE CONFIGURED CALL, from Settings, is
+
+       DATAWAREHOUSE.LEADS_DISTRIBUTION.SP_AUTORANK_V2(11058, 8)
+
+   so the arguments ARE being passed and the campaign id is right. An earlier
+   version of this file guessed the app was calling it bare, from its
+   predecessor SP_AUTORANK(11381, 5) in the Spot Connect script; that guess was
+   wrong and the candidate is struck. Note the schema too — LEADS_DISTRIBUTION,
+   not DISTRIBUTION_DATA_APPLICATION where the other two update procedures live.
+
+   That leaves three candidates, in order of likelihood.
 
    1. ONLY STEP 4 WAS RUN.
       The screenshot shows steps 1, 2 and 3 with no status and step 4 ticked.
@@ -23,23 +33,17 @@
       and succeed. Section 1 settles this in one query, and the fix is to press
       "Run all 4 in order" rather than step 4 on its own.
 
-   2. IT NEEDS ARGUMENTS AND IS RANKING SOMETHING ELSE.
-      Its predecessor takes two: Spot Connect calls
-      SP_AUTORANK(11381, 5) — campaign id and a second number. Your config
-      calls SP_AUTORANK_V2 with no brackets, so the app sends
-      SP_AUTORANK_V2(). That resolved and ran, so a zero-argument version
-      exists — but a zero-argument ranking has to decide for itself which rows
-      to rank, and 11058 may simply not be among them. Section 2 lists the
-      signatures that exist.
-
-   3. IT DOES NOT WRITE UDM30.
+   2. IT DOES NOT WRITE UDM30.
       UDM30 is where you expect the rank. Section 3 asks the table which
-      columns actually changed, rather than trusting either of us.
+      columns actually changed, rather than trusting either of us. Section 2's
+      GET_DDL answers it outright.
 
-   4. IT RANKS A DIFFERENT DAY OR A DIFFERENT CAMPAIGN.
-      Section 4 looks for ranks anywhere in the table, so a procedure that
-      worked on the wrong scope shows up as ranks in the wrong place rather
-      than as nothing at all.
+   3. IT RANKS A DIFFERENT DAY, OR THE SECOND ARGUMENT MEANS SOMETHING ELSE.
+      Spot Connect passes 5 where you pass 8. If that is a bucket count, fine;
+      if it is a day window, a batch size or a score band, 8 may exclude
+      everything. Only the body says. Section 4 looks for ranks anywhere in the
+      table, so a procedure that worked on the wrong scope shows up as ranks in
+      the wrong place rather than as nothing at all.
 ============================================================================= */
 
 
@@ -68,29 +72,29 @@ SELECT COUNT(*)                                              AS LEADS_TODAY,
 
 
 /* -----------------------------------------------------------------------------
-   SECTION 2 — what signatures exist, and what does the procedure do?
+   SECTION 2 — READ THE BODY. This is the one that actually answers it.
 
-   Run as ACCOUNTADMIN. GET_DDL prints the body, which answers every remaining
-   question at once: which column it writes, what it filters on, and whether it
-   needs a campaign id.
+   GET_DDL prints the procedure. It settles every remaining question at once:
+   which column it writes, what it orders on, what the second argument means,
+   and whether it filters on a date. Run as ACCOUNTADMIN.
 -------------------------------------------------------------------------------- */
 
+SELECT GET_DDL('PROCEDURE',
+  'DATAWAREHOUSE.LEADS_DISTRIBUTION.SP_AUTORANK_V2(NUMBER, NUMBER)') AS BODY;
+
+-- If that errors on the signature, take the exact types from here first.
 SHOW PROCEDURES LIKE 'SP_AUTORANK%' IN ACCOUNT;
 
-SELECT PROCEDURE_NAME, ARGUMENT_SIGNATURE, PROCEDURE_OWNER
+SELECT PROCEDURE_CATALOG, PROCEDURE_SCHEMA, PROCEDURE_NAME,
+       ARGUMENT_SIGNATURE, PROCEDURE_OWNER
   FROM DATAWAREHOUSE.INFORMATION_SCHEMA.PROCEDURES
  WHERE PROCEDURE_NAME LIKE 'SP_AUTORANK%';
 
--- Substitute the exact signature the query above reports.
-SELECT GET_DDL('PROCEDURE',
-  'DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_AUTORANK_V2()') AS BODY;
-
-/* If it turns out to take a campaign id, put the arguments in the config:
-     Settings → Update-HLL procedures →
-       DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.SP_AUTORANK_V2(11058)
-   Unquoted, and numbers only — the field rejects quotes. Note that a
-   zero-argument call DID resolve, so if both signatures exist you have two
-   procedures under one name and the app has been calling the wrong one. */
+/* WATCH FOR TWO PROCEDURES UNDER ONE NAME. If SHOW returns both a
+   (NUMBER, NUMBER) and some other signature, the app calls whichever matches
+   the brackets in the config — and an older copy left behind from a previous
+   version is a very quiet way to run last month's logic. Drop what you are not
+   using. */
 
 
 /* -----------------------------------------------------------------------------
