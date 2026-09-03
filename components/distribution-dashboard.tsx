@@ -915,6 +915,7 @@ function LabelBreakdown({
   setWord,
   footnote,
   missingNote,
+  emptyNote,
 }: {
   title: string
   rows: LabelCount[] | null | undefined
@@ -928,6 +929,9 @@ function LabelBreakdown({
   footnote: string
   /** Said when every row is unset — the useful case for a rank. */
   missingNote?: string
+  /** Said when there are no rows at all. A filtered breakdown needs its own
+   *  wording: no rows means nothing matched the filter, not nothing loaded. */
+  emptyNote?: string
 }) {
   // Every reason this can be empty gets said out loud. Rendering nothing was
   // the original behaviour and it is indistinguishable from the feature being
@@ -948,9 +952,10 @@ function LabelBreakdown({
   if (rows === null) return note("Could not read the breakdown.")
   if (rows.length === 0) {
     return note(
-      total > 0
-        ? "No rows grouped, though the HLL count above is not zero — worth a look."
-        : "Nothing loaded today, so there is nothing to break down."
+      emptyNote ??
+        (total > 0
+          ? "No rows grouped, though the HLL count above is not zero — worth a look."
+          : "Nothing loaded today, so there is nothing to break down.")
     )
   }
   const unset = rows.filter((r) => r.label == null).reduce((a, r) => a + r.leads, 0)
@@ -1099,15 +1104,20 @@ function VerifyCountsSection({
             footnote="Labelled leads are in this batch, not excluded from it — the load carries ESTATUS through rather than filtering on it. Whether that is right depends on what reads ESTATUS downstream."
           />
           <LabelBreakdown
-            title="By rank (UDM30)"
+            title="By rank (UDM30) — eligible leads only"
             rows={result.byRank}
-            total={result.hllCount}
+            // The eligible count, not the batch total: this breakdown covers
+            // only ESTATUS IS NULL rows, so a share of 23,000 would not add up
+            // to 100% and every row would read as smaller than it is. The sum
+            // of its own rows IS the eligible count, so no extra query.
+            total={(result.byRank ?? []).reduce((a, r) => a + r.leads, 0)}
             error={result.byRankError}
             unsetLabel="(no rank)"
             setWord="ranked"
             unsetWord="unranked"
-            missingNote="Nothing is ranked yet. UDM30 is written by the last update-HLL procedure, so this stays empty until that step has run."
-            footnote="Ordered by rank, not by size, so it reads as a ladder. A rank that is not a number sorts last."
+            missingNote="No eligible lead is ranked yet. UDM30 is written by the last update-HLL procedure, so this stays empty until that step has run."
+            emptyNote="No eligible leads today — every lead in this batch carries an ESTATUS label, so there is nothing to rank."
+            footnote="Eligible leads only (ESTATUS IS NULL), because a rank sets dialling order and a labelled lead is one something upstream objected to. Shares are of the eligible count, not the batch. Ordered by rank rather than by size; a rank that is not a number sorts last."
           />
         </>
       )}

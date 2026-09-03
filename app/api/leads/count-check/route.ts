@@ -34,9 +34,18 @@ export type LabelCount = {
  * ordered numerically. TRY_TO_NUMBER takes VARCHAR only, hence the cast; a rank
  * that is not numeric sorts last by its text rather than breaking the query.
  */
-const GROUPABLE: Record<string, { column: string; orderBy: string }> = {
+const GROUPABLE: Record<string, { column: string; orderBy: string; where?: string }> = {
   estatus: { column: "ESTATUS", orderBy: "LEADS DESC" },
-  rank: { column: "UDM30", orderBy: "TRY_TO_NUMBER(UDM30::VARCHAR) NULLS LAST, UDM30" },
+  // Eligible leads only. A rank decides dialling order, and a labelled lead is
+  // one something upstream objected to — its position in the queue is not the
+  // question. It also matches how the rank is produced: SP_VCD_VCCVM_POST_LOAD
+  // only scores rows where ESTATUS IS NULL, so labelled leads would show up as
+  // unranked for a reason that has nothing to do with the ranking step.
+  rank: {
+    column: "UDM30",
+    where: "ESTATUS IS NULL",
+    orderBy: "TRY_TO_NUMBER(UDM30::VARCHAR) NULLS LAST, UDM30",
+  },
 }
 
 /**
@@ -51,13 +60,14 @@ async function readGrouped(
   campaignId: number,
   which: keyof typeof GROUPABLE
 ): Promise<{ rows: LabelCount[] | null; error: string | null }> {
-  const { column, orderBy } = GROUPABLE[which]
+  const { column, orderBy, where } = GROUPABLE[which]
   try {
     const rows = await executeSnowflakeQuery<{ LABEL: string | null; LEADS: number | string }>(
       `SELECT ${column} AS LABEL, COUNT(1) AS LEADS
          FROM ${HLL_TABLE}
         WHERE CAMPAIGNID = ${campaignId}
           AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()
+          ${where ? `AND ${where}` : ""}
         GROUP BY ${column}
         ORDER BY ${orderBy}`,
       HLL_SF_OPTS
@@ -152,7 +162,8 @@ export async function POST(request: Request) {
       readGrouped(id, "estatus"),
       // UDM30 is the rank, written by the LAST update-HLL procedure. Straight
       // after a load it is legitimately all NULL, and the count of unranked
-      // leads is how you see whether the ranking has run at all.
+      // leads is how you see whether the ranking has run at all. Scoped to
+      // ESTATUS IS NULL — see GROUPABLE.
       readGrouped(id, "rank"),
     ])
 
