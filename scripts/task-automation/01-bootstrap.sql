@@ -46,9 +46,10 @@
    existed. The app gets USAGE here and SELECT on one secure view, nothing else.
 -------------------------------------------------------------------------------- */
 
+/* The app reads VW_SFTP_ENDPOINTS_APP only. It must never hold a privilege on
+   SFTP_ENDPOINTS itself — see the note in 00-grants.sql section 4b. */
 CREATE SCHEMA IF NOT EXISTS SPOT_DW.SFTP_ADMIN
-  COMMENT = 'SFTP endpoint registry. The app reads VW_SFTP_ENDPOINTS_APP only; '
-            'it must never hold a privilege on SFTP_ENDPOINTS itself.';
+  COMMENT = 'SFTP endpoint registry. App-readable through the secure view only.';
 
 
 /* -----------------------------------------------------------------------------
@@ -75,11 +76,14 @@ CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS (
     SECRET_PASSPHRASE_NAME  VARCHAR(64)            DEFAULT 'passphrase'
                             COMMENT 'Binding name for the passphrase, or NULL if the key has none',
 
+    /* ROOT_FLOOR is the hard boundary: set here, never editable from the app.
+       ALLOWED_ROOT is where browsing starts and MAY be narrowed within the
+       floor, but never widened past it. Both rules are enforced in
+       SP_SFTP_INSPECT and SP_SFTP_ENDPOINT_UPDATE, not by constraints. */
     ROOT_FLOOR              VARCHAR(512)  NOT NULL
-                            COMMENT 'The hard boundary. Set here, never editable from the app. '
-                                    'ALLOWED_ROOT may be narrowed within it but never widened past it.',
+                            COMMENT 'Hard boundary. Not app-editable.',
     ALLOWED_ROOT            VARCHAR(512)  NOT NULL
-                            COMMENT 'Where browsing starts. App-editable, but must sit at or below ROOT_FLOOR. Must not be /',
+                            COMMENT 'Browse start. App may narrow within ROOT_FLOOR. Never /.',
 
     MAX_ENTRIES             NUMBER(10,0)  NOT NULL DEFAULT 500,
     MAX_PEEK_LINES          NUMBER(10,0)  NOT NULL DEFAULT 50,
@@ -117,8 +121,7 @@ CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS (
 
 CREATE OR REPLACE SECURE VIEW SPOT_DW.SFTP_ADMIN.VW_SFTP_ENDPOINTS_APP
 COPY GRANTS
-COMMENT = 'Endpoint list for the Task Automation UI. Deliberately excludes HOST, '
-          'SFTP_USER and HOST_KEY_B64 — the app has no business reading those.'
+COMMENT = 'Endpoint list for the Task Automation UI. Excludes HOST, SFTP_USER and HOST_KEY_B64.'
 AS
 SELECT ENDPOINT_NAME,
        LABEL,
@@ -170,9 +173,7 @@ SELECT
     'passphrase',
     '/spot_money',   -- ROOT_FLOOR: the hard boundary, not app-editable
     '/spot_money',   -- ALLOWED_ROOT: starting point, app may narrow within the floor
-    'Host key captured via ssh-keyscan 2026-08-11. Verify with Spot before '
-    'treating the feed as trusted. Root confined to /spot_money: everything in '
-    'the standards doc and the working script sits under it.'
+    'Host key captured via ssh-keyscan 2026-08-11. Verify with Spot before treating the feed as trusted. Root confined to /spot_money: everything in the standards doc and the working script sits under it.'
 WHERE NOT EXISTS (
     SELECT 1 FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS WHERE ENDPOINT_NAME = 'SPOT'
 );
@@ -533,14 +534,15 @@ CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINT_AUDIT (
     OLD_VALUE       VARCHAR(1000),
     NEW_VALUE       VARCHAR(1000),
     CHANGED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    /* SNOWFLAKE_USER is the session user, and inside EXECUTE AS OWNER that is
+       the service account rather than the person — hence ACTOR_ASSERTED beside
+       it, which is whatever the app said. It is named "asserted" on purpose:
+       Snowflake cannot corroborate it, and an audit column that looks
+       authenticated but is not is worse than one that admits what it is. */
     SNOWFLAKE_USER  VARCHAR(255)  DEFAULT CURRENT_USER()
-                    COMMENT 'The session user. Inside EXECUTE AS OWNER this is the '
-                            'service account, NOT the person — hence the next column.',
+                    COMMENT 'Session user. Under EXECUTE AS OWNER this is the service account.',
     ACTOR_ASSERTED  VARCHAR(255)
-                    COMMENT 'Who the APP says did it. App-asserted and named that way '
-                            'on purpose: Snowflake cannot corroborate it, and an audit '
-                            'column that looks authenticated but is not is worse than '
-                            'one that admits what it is.'
+                    COMMENT 'Actor claimed by the app. Not verified by Snowflake.'
 );
 
 CREATE OR REPLACE PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
