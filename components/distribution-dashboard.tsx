@@ -266,7 +266,10 @@ function withRanSql(message: string, sql: string): string {
 
 // Run a single step (submit async + poll to completion). Used by the per-step
 // "Run" buttons in Settings.
-async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; error?: string }> {
+async function runOneStepAt(
+  base: string,
+  key: string
+): Promise<{ ok: boolean; error?: string; result?: string }> {
   const subRes = await fetch(`${base}/step`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -283,10 +286,16 @@ async function runOneStepAt(base: string, key: string): Promise<{ ok: boolean; e
       `${base}/step?handle=${encodeURIComponent(handle)}&key=${encodeURIComponent(key)}`,
       { cache: "no-store" }
     )
-    const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as { status?: string; error?: string }
+    const ps = (await pr.json().catch(() => ({ status: "error", error: "poll failed" }))) as {
+      status?: string
+      error?: string
+      result?: string
+    }
     if (ps.status === "running") continue
     if (ps.status === "error") return { ok: false, error: withRanSql(ps.error || "Step failed", ranSql) }
-    return { ok: true }
+    // What the statement returned — a procedure's own report, or the rows a DML
+    // touched. "Done." says only that Snowflake did not object.
+    return { ok: true, result: ps.result }
   }
 }
 
@@ -1969,7 +1978,10 @@ function ManualStepRunner({
     setRunning(true)
     setResult(null)
     const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, stepKey)
-    setResult({ ok: res.ok, message: res.ok ? "Done." : res.error || "Step failed" })
+    setResult({
+      ok: res.ok,
+      message: res.ok ? res.result || "Done — the statement returned nothing." : res.error || "Step failed",
+    })
     setRunning(false)
   }
 
@@ -2045,7 +2057,13 @@ function UpdateHllGroupRunner({
     setMessages((m) => ({ ...m, [key]: "" }))
     const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
     setState((s) => ({ ...s, [key]: res.ok ? "ok" : "error" }))
-    setMessages((m) => ({ ...m, [key]: res.ok ? "Done." : res.error || "Step failed" }))
+    setMessages((m) => ({
+      ...m,
+      // The procedure's own words when it has any. A procedure that succeeds
+      // while changing nothing reads identically to one that worked, unless it
+      // gets to say so.
+      [key]: res.ok ? res.result || "Done — the statement returned nothing." : res.error || "Step failed",
+    }))
     return res.ok
   }
 

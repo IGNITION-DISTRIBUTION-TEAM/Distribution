@@ -365,15 +365,57 @@ export async function submitSnowflakeStatementAsync(
  * Polls the status of an async statement. Returns "running" while the SQL API
  * responds 202, "done" on 200, or "error" with a message on failure.
  */
+/**
+ * Turn a finished statement's response body into a one-line account of what it
+ * did: "SP_AUTORANK_V2: ranked 0 leads", "number of rows inserted: 23000".
+ *
+ * The body of a completed statement carries its result set. For a CALL that is
+ * the procedure's RETURN value — which is the procedure's own report of what it
+ * changed — and for DML it is the affected-row count. Both were being thrown
+ * away in favour of the word "Done.", so a procedure that succeeded while doing
+ * nothing at all was indistinguishable from one that worked.
+ *
+ * Returns undefined when there is nothing useful, so callers can fall back.
+ */
+function describeStatementResult(body: unknown): string | undefined {
+  const b = body as {
+    resultSetMetaData?: { rowType?: { name?: string }[] }
+    data?: unknown[][]
+  } | null
+  const cols = b?.resultSetMetaData?.rowType ?? []
+  const row = b?.data?.[0]
+  if (!Array.isArray(row)) return undefined
+  const parts: string[] = []
+  for (let i = 0; i < row.length; i++) {
+    const value = row[i]
+    if (value == null) continue
+    const text = String(value).trim()
+    if (!text) continue
+    const name = String(cols[i]?.name ?? "").trim()
+    parts.push(name ? `${name}: ${text}` : text)
+  }
+  if (parts.length === 0) return undefined
+  const out = parts.join(" · ")
+  return out.length > 2000 ? `${out.slice(0, 2000)}…` : out
+}
+
 export async function getSnowflakeStatementStatus(
   handle: string
-): Promise<{ status: "running" | "done" | "error"; error?: string }> {
+): Promise<{ status: "running" | "done" | "error"; error?: string; result?: string }> {
   const config = getSnowflakeConfig()
   const jwt = generateSnowflakeJWT(config)
   const url = `https://${config.account}.snowflakecomputing.com/api/v2/statements/${encodeURIComponent(handle)}`
   const response = await fetch(url, { method: "GET", headers: sfHeaders(jwt) })
   if (response.status === 202) return { status: "running" }
-  if (response.ok) return { status: "done" }
+  if (response.ok) {
+    // Best effort: the statement has already succeeded, so an unreadable body
+    // must not turn that into a failure.
+    try {
+      return { status: "done", result: describeStatementResult(await response.json()) }
+    } catch {
+      return { status: "done" }
+    }
+  }
   const text = await response.text()
   return { status: "error", error: `Snowflake status ${response.status}: ${text}` }
 }
