@@ -151,6 +151,43 @@ GRANT READ ON SECRET <<SECRET_DB>>.<<SECRET_SCHEMA>>.SPOT_SFTP_KEY_PASSPHRASE
 
 
 /* -----------------------------------------------------------------------------
+   SECTION 4b — the endpoint registry, in its OWN schema
+
+   SFTP endpoints live in SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS: host, port, user,
+   the PINNED HOST KEY, the browse root and the caps. The app reads none of it
+   directly. It gets a secure view exposing only the endpoint name, a label, the
+   root and whether it is enabled.
+
+   WHY THE APP MUST NOT WRITE THAT TABLE. A row pairs a host with the key the
+   procedure will trust FOR that host. Host-key pinning only means something if
+   the pin does not come from whoever supplies the host — give the app write
+   access and a bad row points the procedure at an arbitrary server and tells it
+   to trust that server's key, at which point it authenticates with the real
+   private key. That is credential exfiltration, not untidy config.
+
+   WHY IT IS NOT IN SPOT_SFTP. Section 6 below grants the app
+   SELECT/INSERT/UPDATE/DELETE ON FUTURE TABLES IN SCHEMA SPOT_DW.SPOT_SFTP.
+   A registry created in that schema would be handed over by that line the
+   moment it existed, silently. A REVOKE afterwards would not hold either — the
+   next re-run of this file would re-grant it. A separate schema is the only
+   version of this that stays true.
+-------------------------------------------------------------------------------- */
+
+GRANT USAGE ON SCHEMA SPOT_DW.SFTP_ADMIN TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT SELECT ON VIEW SPOT_DW.SFTP_ADMIN.VW_SFTP_ENDPOINTS_APP
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+/* Nothing else in SFTP_ADMIN. No CREATE, no privilege on SFTP_ENDPOINTS, and
+   deliberately no ALL/FUTURE grants of any kind in this schema. If you find
+   yourself adding one, the registry has stopped being a boundary.
+
+   A view is evaluated with its OWNER's rights on the base table, so the app
+   needs no privilege on SFTP_ENDPOINTS to read the view. SECURE additionally
+   hides the view definition from GET_DDL, which costs nothing here. */
+
+
+/* -----------------------------------------------------------------------------
    SECTION 5 — the shared control table
 
    Every sync in the account reports into this one table, which is also what the
