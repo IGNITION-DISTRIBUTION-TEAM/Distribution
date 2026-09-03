@@ -17,6 +17,33 @@ async function countRows(sql: string, opts: { database: string; schema: string }
   return typeof v === "number" ? v : parseInt(String(v ?? "0"), 10) || 0
 }
 
+export type EstatusCount = {
+  /** null for an unlabelled (eligible) lead — not a string, so the UI decides how to say it. */
+  estatus: string | null
+  leads: number
+}
+
+/** Today's rows for this campaign, grouped by ESTATUS, biggest group first. */
+async function readEstatus(campaignId: number): Promise<EstatusCount[]> {
+  const rows = await executeSnowflakeQuery<{ ESTATUS: string | null; LEADS: number | string }>(
+    `SELECT ESTATUS, COUNT(1) AS LEADS
+       FROM ${HLL_TABLE}
+      WHERE CAMPAIGNID = ${campaignId}
+        AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()
+      GROUP BY ESTATUS
+      ORDER BY LEADS DESC`,
+    HLL_SF_OPTS
+  )
+  return rows.map((r) => {
+    const raw = r.ESTATUS
+    // An empty string is not the same as NULL in Snowflake but means the same
+    // thing here, so both collapse to "no label" rather than showing a blank row.
+    const label = raw == null || String(raw).trim() === "" ? null : String(raw)
+    const n = typeof r.LEADS === "number" ? r.LEADS : parseInt(String(r.LEADS ?? "0"), 10) || 0
+    return { estatus: label, leads: n }
+  })
+}
+
 // Compare the stage table row count against the HLL (main) table for this
 // campaign loaded today. Stage table is read from the campaign config.
 export async function POST(request: Request) {
@@ -68,7 +95,7 @@ export async function POST(request: Request) {
   const [stageDb, stageSchema] = stageTable.split(".")
 
   try {
-    const [stageCount, hllCount] = await Promise.all([
+    const [stageCount, hllCount, byEstatus] = await Promise.all([
       countRows(`SELECT COUNT(1) AS CNT FROM ${stageTable}`, {
         database: stageDb,
         schema: stageSchema,
@@ -80,6 +107,12 @@ export async function POST(request: Request) {
            AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()`,
         HLL_SF_OPTS
       ),
+      // The same rows, split by label. Matching totals say the load lost
+      // nothing; this says what is actually IN it — a batch can reconcile
+      // perfectly and still be mostly leads something upstream excluded.
+      // NULL is its own row rather than being folded away: an unlabelled lead
+      // is the eligible case, and it is the number people are looking for.
+      readEstatus(id),
     ])
 
     return NextResponse.json({
@@ -87,6 +120,7 @@ export async function POST(request: Request) {
       stageCount,
       hllCount,
       match: stageCount === hllCount,
+      byEstatus,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

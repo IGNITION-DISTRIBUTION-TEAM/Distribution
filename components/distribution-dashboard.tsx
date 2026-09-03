@@ -873,11 +873,81 @@ function LoadHistorySection({
   )
 }
 
+type EstatusCount = { estatus: string | null; leads: number }
+
 type CountCheckResult = {
   stageTable: string
   stageCount: number
   hllCount: number
   match: boolean
+  // Absent from an older deployment's response, so treated as optional.
+  byEstatus?: EstatusCount[]
+}
+
+/**
+ * Today's loaded leads, by ESTATUS.
+ *
+ * Matching totals prove the load lost nothing. They say nothing at all about
+ * what is IN the batch — and ESTATUS is where every upstream exclusion ends up,
+ * carried into the HLL rather than filtered out of it. A batch can reconcile
+ * perfectly and still be mostly leads that a DMASA check, a history check or a
+ * duplicate check already objected to. So the unlabelled count is broken out
+ * first: it is the one people actually want, and it is not on the tile above.
+ */
+function EstatusBreakdown({ rows, total }: { rows: EstatusCount[]; total: number }) {
+  if (rows.length === 0) return null
+  const eligible = rows.filter((r) => r.estatus == null).reduce((a, r) => a + r.leads, 0)
+  const flagged = total - eligible
+  const pct = (n: number) => (total > 0 ? `${((100 * n) / total).toFixed(1)}%` : "—")
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          By ESTATUS
+        </span>
+        <span className="text-xs text-muted-foreground">
+          <span className="font-medium text-emerald-300">{eligible.toLocaleString()}</span> unlabelled
+          {" · "}
+          <span className="font-medium text-amber-300">{flagged.toLocaleString()}</span> labelled
+        </span>
+      </div>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-xs">
+          <thead className="bg-card">
+            <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2 font-medium">ESTATUS</th>
+              <th className="px-3 py-2 text-right font-medium">Leads</th>
+              <th className="px-3 py-2 text-right font-medium">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.estatus ?? "__none__"} className="border-t border-border">
+                <td className="px-3 py-2">
+                  {r.estatus == null ? (
+                    <span className="text-emerald-300">(no label — eligible)</span>
+                  ) : (
+                    <span className="text-foreground">{r.estatus}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-foreground">
+                  {r.leads.toLocaleString()}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                  {pct(r.leads)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Labelled leads are in this batch, not excluded from it — the load carries ESTATUS through
+        rather than filtering on it. Whether that is right depends on what reads ESTATUS downstream.
+      </p>
+    </div>
+  )
 }
 
 // Step 3 — compare the stage table row count to the HLL count for this campaign today.
@@ -955,6 +1025,10 @@ function VerifyCountsSection({
             </div>
           </div>
         </div>
+      )}
+
+      {result?.byEstatus && (
+        <EstatusBreakdown rows={result.byEstatus} total={result.hllCount} />
       )}
     </div>
   )
