@@ -62,15 +62,57 @@ SELECT PROCEDURE_NAME, ARGUMENT_SIGNATURE, DATA_TYPE AS RETURNS, PROCEDURE_OWNER
 
 
 /* -----------------------------------------------------------------------------
-   SECTION 3 — the grants
+   SECTION 2b — WHAT SECTION 2 ACTUALLY RETURNED, AND THE SECOND FAULT
 
-   Expected signatures, from how each is called:
-     SP_VCD_VCCVM_PREP       3 numbers          (11058, 90, 6)
-     SP_SYNC_FROM_SQLSERVER  4 strings          (source, target, options, mode)
+   Section 2 was run and reported:
 
-   If section 2 shows something different, use what it shows.
+     SP_SYNC_FROM_SQLSERVER  (SQL_SERVER_TABLE VARCHAR, SNOWFLAKE_TARGET VARCHAR,
+                              FILTERS_JSON VARCHAR, ENDPOINT_TYPE VARCHAR)
+     SP_VCD_VCCVM_PREP       (HISTORY_CAMPAIGNS VARCHAR, HISTORY_DAYS NUMBER,
+                              COMMITMENT_MONTHS NUMBER)
+
+   The sync procedure matches what the app sends. SP_VCD_VCCVM_PREP DOES NOT.
+
+   What exists is the FIRST version of sp-vcd-vccvm-prep.sql, whose first
+   parameter was a VARCHAR list of campaign ids — note the plural name,
+   HISTORY_CAMPAIGNS. That parameter was changed to a NUMBER precisely because
+   the config field cannot express a quoted argument, and the procedure was
+   created before that change. So the app sends (11058, 90, 6) — three numbers —
+   at a procedure whose first parameter is a string.
+
+   THERE ARE THEREFORE TWO FAULTS, and the earlier reading of SHOW PROCEDURES
+   found only one. min_num_arguments and max_num_arguments both said 3, which
+   matched, and the ARGUMENT column that would have shown the types was cut off
+   in the results grid.
+
+   Granting alone will not fix this. The signature has to match as well, and
+   section 3 now does both — in the right order, because of the trap below.
+
+   CREATE OR REPLACE DOES NOT REPLACE A DIFFERENT SIGNATURE. Snowflake
+   identifies a procedure by name AND argument types, so creating the
+   (NUMBER, NUMBER, NUMBER) version leaves the (VARCHAR, NUMBER, NUMBER) one
+   sitting there beside it. Two procedures, one name, and a call that matches
+   neither if the config is ever wrong again. Drop the old one explicitly.
 -------------------------------------------------------------------------------- */
 
+
+/* -----------------------------------------------------------------------------
+   SECTION 3 — drop the wrong signature, create the right one, then grant
+
+   Run in this order. The grant must come last: CREATE OR REPLACE PROCEDURE
+   carries no grants, so granting before creating achieves nothing.
+-------------------------------------------------------------------------------- */
+
+-- 3a. The stale VARCHAR-first version. Types only — no parameter names.
+DROP PROCEDURE IF EXISTS
+  DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(VARCHAR, NUMBER, NUMBER);
+
+-- 3b. Re-run section 1 of sp-vcd-vccvm-prep.sql, which declares
+--     HISTORY_CAMPAIGN NUMBER(38,0) and matches the call the app makes.
+--     Confirm afterwards that exactly one signature remains:
+SHOW PROCEDURES LIKE 'SP_VCD_VCCVM_PREP' IN SCHEMA DATAWAREHOUSE.DISTRIBUTION_AUTOMATION;
+
+-- 3c. Then the grants.
 GRANT USAGE ON PROCEDURE
   DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_VCD_VCCVM_PREP(NUMBER, NUMBER, NUMBER)
   TO ROLE SVC_VERCEL_APP_ROLE;
