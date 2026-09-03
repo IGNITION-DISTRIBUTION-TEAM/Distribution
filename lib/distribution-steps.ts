@@ -433,6 +433,13 @@ export async function probeProcedure(message: string, procRef: string): Promise<
     }
   }
 
+  // The role the app actually connects as, so a suggested GRANT can be run as
+  // written. Guessing it is the one thing that makes these grants fail twice:
+  // the statement is right and the role is someone else's.
+  const roleRows = await show(`SELECT CURRENT_ROLE() AS R`)
+  const role = roleRows && roleRows.length > 0 ? showCol(roleRows[0], "R") : ""
+  const roleRef = role || "<the app's role — see /api/distribution/snowflake-identity>"
+
   // 1. Can the app see it where the config says it is?
   const inSchema = await show(`SHOW PROCEDURES LIKE '${name}' IN SCHEMA ${db}.${schema}`, {
     database: db,
@@ -484,15 +491,25 @@ export async function probeProcedure(message: string, procRef: string): Promise<
     return (
       `\n\nCHECKED AS THE APP: it cannot see the schema ${db}.${schema} at all, which hides every ` +
       `object inside it — so granting the procedure on its own will not fix this. Run, as ACCOUNTADMIN:` +
-      `\n  GRANT USAGE ON SCHEMA ${db}.${schema} TO ROLE <the app's role>;` +
-      `\nThe app's role is reported by /api/distribution/snowflake-identity.`
+      `\n  GRANT USAGE ON SCHEMA ${db}.${schema} TO ROLE ${roleRef};`
     )
   }
 
+  // The one case the app genuinely cannot settle on its own: Snowflake hides an
+  // ungranted object exactly as it hides a non-existent one, by design. But the
+  // NEXT step is unambiguous either way, so give both statements rather than
+  // stopping at "it could be one of two things" — and give them with the real
+  // role name, which is the part people get wrong.
   return (
-    `\n\nCHECKED AS THE APP: it can see the schema ${db}.${schema}, but no procedure called ${name} ` +
-    `in it. So either it was never created there, or it exists and the app has no USAGE on the ` +
-    `procedure itself. SHOW PROCEDURES LIKE '${name}' IN ACCOUNT run as ACCOUNTADMIN separates those: ` +
-    `a row there and nothing here means the grant is missing.`
+    `\n\nCHECKED AS THE APP (running as ${role || "an unknown role"}): it can see the schema ` +
+    `${db}.${schema}, but no procedure called ${name} in it. Snowflake hides an ungranted procedure ` +
+    `exactly as it hides one that does not exist, so this is the one thing the app cannot settle for ` +
+    `itself. As ACCOUNTADMIN:` +
+    `\n  SHOW PROCEDURES LIKE '${name}' IN ACCOUNT;` +
+    `\nA row means it exists and the grant is what is missing — take the types from its ARGUMENTS ` +
+    `column and run:` +
+    `\n  GRANT USAGE ON PROCEDURE ${ref}(<those types>) TO ROLE ${roleRef};` +
+    `\nNo row means it was never created. Note that CREATE OR REPLACE PROCEDURE drops its grants and ` +
+    `has no COPY GRANTS clause, so that GRANT has to be re-run after every replace.`
   )
 }
