@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
-import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
+import { readCampaignSetting } from "@/lib/config-lookup"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -12,7 +12,7 @@ const QUALIFIED = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // The proc name is read from the campaign config rather than the request body,
 // so a caller can't ask us to CALL an arbitrary procedure.
 export async function POST(request: Request) {
-  let body: { campaignId?: unknown }
+  let body: { campaignId?: unknown; configId?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -23,23 +23,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "campaignId must be a positive integer" }, { status: 400 })
   }
   const id = Number(body.campaignId)
+  const configId =
+    body.configId != null && /^[0-9]+$/.test(String(body.configId)) ? Number(body.configId) : null
 
   let proc: string | null
+  let configSource = ""
   try {
-    const rows = await executeSnowflakeQuery<{ LOAD_HISTORY_PROCEDURE: string | null }>(
-      `SELECT LOAD_HISTORY_PROCEDURE FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${id}`,
-      CONFIG_SF_OPTS
-    )
-    proc = rows[0]?.LOAD_HISTORY_PROCEDURE ?? null
+    const found = await readCampaignSetting(id, configId, ["LOAD_HISTORY_PROCEDURE"])
+    proc = found.value
+    configSource = found.source
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/leads/load-history] config read error:", message)
     return NextResponse.json({ error: `Failed to read campaign config: ${message}` }, { status: 500 })
   }
 
-  if (!proc || !proc.trim()) {
+  if (!proc) {
     return NextResponse.json(
-      { error: "No 'Load into history procedure' is configured for this campaign. Set it in Settings." },
+      {
+        error:
+          `No 'Load into history procedure' is configured for campaign ${id}. Set it in ` +
+          `Settings → Campaign automation, on the same config this panel is using — ` +
+          `checked ${configSource}.`,
+      },
       { status: 400 }
     )
   }

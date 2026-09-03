@@ -809,7 +809,15 @@ async function buildFilePreview(file: File): Promise<{ preview: FilePreview; all
 }
 
 // Step 2 — run the campaign's "Load into history" procedure (stage → HLL).
-function LoadHistorySection({ campaignId, proc }: { campaignId: string; proc: string }) {
+function LoadHistorySection({
+  campaignId,
+  proc,
+  configId,
+}: {
+  campaignId: string
+  proc: string
+  configId?: number | null
+}) {
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
 
@@ -820,7 +828,7 @@ function LoadHistorySection({ campaignId, proc }: { campaignId: string; proc: st
       const res = await fetch("/api/leads/load-history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId }),
+        body: JSON.stringify({ campaignId, configId }),
       })
       const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
@@ -873,7 +881,15 @@ type CountCheckResult = {
 }
 
 // Step 3 — compare the stage table row count to the HLL count for this campaign today.
-function VerifyCountsSection({ campaignId }: { campaignId: string }) {
+function VerifyCountsSection({
+  campaignId,
+  configId,
+}: {
+  campaignId: string
+  // Which config's upload target to check. Without it the API has to guess at
+  // the campaign's active config, which is not necessarily the one on screen.
+  configId?: number | null
+}) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<CountCheckResult | null>(null)
 
@@ -884,7 +900,7 @@ function VerifyCountsSection({ campaignId }: { campaignId: string }) {
       const res = await fetch("/api/leads/count-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId }),
+        body: JSON.stringify({ campaignId, configId }),
       })
       const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
@@ -946,7 +962,13 @@ function VerifyCountsSection({ campaignId }: { campaignId: string }) {
 
 // Step 4 — run the campaign's "update HLL" proc, CALL proc(campaignId). The proc
 // is the campaign-assigned one, or an override picked from the master list.
-function UpdateHllSection({ campaignId }: { campaignId: string }) {
+function UpdateHllSection({
+  campaignId,
+  configId,
+}: {
+  campaignId: string
+  configId?: number | null
+}) {
   const [procs, setProcs] = useState<HllProc[]>([])
   const [assignedProc, setAssignedProc] = useState("")
   const [override, setOverride] = useState("")
@@ -986,7 +1008,7 @@ function UpdateHllSection({ campaignId }: { campaignId: string }) {
       const res = await fetch("/api/leads/update-hll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, procOverride: override || undefined }),
+        body: JSON.stringify({ campaignId, configId, procOverride: override || undefined }),
       })
       const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`)
@@ -1932,14 +1954,16 @@ function FileSourcePanel({
       )}
 
       {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
-      {section === "verify" && <VerifyCountsSection campaignId={campaignId} />}
-      {section === "adhoc-update" && <UpdateHllSection campaignId={campaignId} />}
+      {section === "verify" && (
+        <VerifyCountsSection campaignId={campaignId} configId={configId} />
+      )}
+      {section === "adhoc-update" && <UpdateHllSection campaignId={campaignId} configId={configId} />}
       {section === "extract" && <ExportDownloadStep campaignId={campaignId} />}
       {section === "email" && <EmailExportStep campaignId={campaignId} />}
 
       {/* Keep the purpose-built panels for the steps that have one. */}
       {section === "step:load_history" && (
-        <LoadHistorySection campaignId={campaignId} proc={historyProc} />
+        <LoadHistorySection campaignId={campaignId} proc={historyProc} configId={configId} />
       )}
 
       {/* Everything else runs through the same submit-and-poll as Settings.

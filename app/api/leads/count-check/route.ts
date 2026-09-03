@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
-import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
+import { readCampaignSetting } from "@/lib/config-lookup"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -20,7 +20,7 @@ async function countRows(sql: string, opts: { database: string; schema: string }
 // Compare the stage table row count against the HLL (main) table for this
 // campaign loaded today. Stage table is read from the campaign config.
 export async function POST(request: Request) {
-  let body: { campaignId?: unknown }
+  let body: { campaignId?: unknown; configId?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -31,23 +31,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "campaignId must be a positive integer" }, { status: 400 })
   }
   const id = Number(body.campaignId)
+  const configId =
+    body.configId != null && /^[0-9]+$/.test(String(body.configId)) ? Number(body.configId) : null
 
   let stageTable: string | null
+  let configSource: string
   try {
-    const rows = await executeSnowflakeQuery<{ UPLOAD_TARGET_TABLE: string | null }>(
-      `SELECT UPLOAD_TARGET_TABLE FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${id}`,
-      CONFIG_SF_OPTS
-    )
-    stageTable = rows[0]?.UPLOAD_TARGET_TABLE ?? null
+    const found = await readCampaignSetting(id, configId, ["UPLOAD_TARGET_TABLE"])
+    stageTable = found.value
+    configSource = found.source
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/leads/count-check] config read error:", message)
     return NextResponse.json({ error: `Failed to read campaign config: ${message}` }, { status: 500 })
   }
 
-  if (!stageTable || !stageTable.trim()) {
+  if (!stageTable) {
     return NextResponse.json(
-      { error: "No upload target (stage) table is configured for this campaign. Set it in Settings." },
+      {
+        error:
+          `No upload target (stage) table is configured for campaign ${id}` +
+          `${configId != null ? ` in config ${configId}` : ""}. Set it in ` +
+          `Settings → Campaign automation, on the same config this panel is using — ` +
+          `checked ${configSource}.`,
+      },
       { status: 400 }
     )
   }

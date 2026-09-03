@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
-import { TABLE as CONFIG_TABLE, SF_OPTS as CONFIG_SF_OPTS } from "@/app/api/campaign-config/route"
+import { readCampaignSetting, asList } from "@/lib/config-lookup"
 import {
   TABLE as PROC_TABLE,
   SF_OPTS as PROC_SF_OPTS,
@@ -17,7 +17,7 @@ export const maxDuration = 120
 // override passed in the body — but either way it MUST exist in the
 // TSK_HLL_UPDATE_PROCEDURES master list, so we never CALL an arbitrary proc.
 export async function POST(request: Request) {
-  let body: { campaignId?: unknown; procOverride?: unknown }
+  let body: { campaignId?: unknown; procOverride?: unknown; configId?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -28,19 +28,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "campaignId must be a positive integer" }, { status: 400 })
   }
   const id = Number(body.campaignId)
+  const configId =
+    body.configId != null && /^[0-9]+$/.test(String(body.configId)) ? Number(body.configId) : null
 
   // Resolve the proc: explicit override, else the campaign's assigned proc.
   let proc: string | null = null
+  let configSource = ""
   const override = typeof body.procOverride === "string" ? body.procOverride.trim() : ""
   if (override) {
     proc = override
   } else {
     try {
-      const rows = await executeSnowflakeQuery<{ UPDATE_HLL_PROCEDURE: string | null }>(
-        `SELECT UPDATE_HLL_PROCEDURE FROM ${CONFIG_TABLE} WHERE CAMPAIGNID = ${id}`,
-        CONFIG_SF_OPTS
-      )
-      proc = rows[0]?.UPDATE_HLL_PROCEDURE ?? null
+      // UPDATE_HLL_PROCEDURES (a JSON list) superseded UPDATE_HLL_PROCEDURE, so
+      // take the first of the list when there is one. With several configured
+      // and no override, "the campaign's procedure" is ambiguous — which is why
+      // the manual tabs pass an explicit override per step rather than relying
+      // on this.
+      const found = await readCampaignSetting(id, configId, [
+        "UPDATE_HLL_PROCEDURES",
+        "UPDATE_HLL_PROCEDURE",
+      ])
+      proc = asList(found.value)[0] ?? null
+      configSource = found.source
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[/api/leads/update-hll] config read error:", message)
@@ -48,9 +57,13 @@ export async function POST(request: Request) {
     }
   }
 
-  if (!proc || !proc.trim()) {
+  if (!proc) {
     return NextResponse.json(
-      { error: "No update-HLL procedure assigned to this campaign, and no override given." },
+      {
+        error:
+          `No update-HLL procedure assigned to campaign ${id}, and no override given.` +
+          (configSource ? ` Checked ${configSource}.` : ""),
+      },
       { status: 400 }
     )
   }
