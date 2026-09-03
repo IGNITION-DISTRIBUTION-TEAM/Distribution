@@ -880,8 +880,10 @@ type CountCheckResult = {
   stageCount: number
   hllCount: number
   match: boolean
-  // Absent from an older deployment's response, so treated as optional.
-  byEstatus?: EstatusCount[]
+  // null when the breakdown query failed; absent entirely from a deployment
+  // that predates it. Those are different situations and the panel says which.
+  byEstatus?: EstatusCount[] | null
+  byEstatusError?: string | null
 }
 
 /**
@@ -894,8 +896,39 @@ type CountCheckResult = {
  * duplicate check already objected to. So the unlabelled count is broken out
  * first: it is the one people actually want, and it is not on the tile above.
  */
-function EstatusBreakdown({ rows, total }: { rows: EstatusCount[]; total: number }) {
-  if (rows.length === 0) return null
+function EstatusBreakdown({
+  rows,
+  total,
+  error,
+}: {
+  rows: EstatusCount[] | null | undefined
+  total: number
+  error?: string | null
+}) {
+  // Every reason this can be empty gets said out loud. Rendering nothing was
+  // the original behaviour and it is indistinguishable from the feature being
+  // missing — which is exactly how it read when the browser was still on a
+  // build that predated the API returning it.
+  const note = (text: string) => (
+    <div className="mt-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">By ESTATUS</p>
+      <p className="mt-1 text-xs text-amber-300">{text}</p>
+    </div>
+  )
+  if (error) return note(`Could not read the breakdown: ${error}`)
+  if (rows === undefined) {
+    return note(
+      "Not available from this deployment — the running build predates the breakdown. It appears after the next deploy; the counts above are unaffected."
+    )
+  }
+  if (rows === null) return note("Could not read the breakdown.")
+  if (rows.length === 0) {
+    return note(
+      total > 0
+        ? "No rows grouped, though the HLL count above is not zero — worth a look."
+        : "Nothing loaded today, so there is nothing to break down."
+    )
+  }
   const eligible = rows.filter((r) => r.estatus == null).reduce((a, r) => a + r.leads, 0)
   const flagged = total - eligible
   const pct = (n: number) => (total > 0 ? `${((100 * n) / total).toFixed(1)}%` : "—")
@@ -1027,8 +1060,12 @@ function VerifyCountsSection({
         </div>
       )}
 
-      {result?.byEstatus && (
-        <EstatusBreakdown rows={result.byEstatus} total={result.hllCount} />
+      {result && (
+        <EstatusBreakdown
+          rows={result.byEstatus}
+          total={result.hllCount}
+          error={result.byEstatusError}
+        />
       )}
     </div>
   )

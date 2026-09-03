@@ -23,25 +23,44 @@ export type EstatusCount = {
   leads: number
 }
 
-/** Today's rows for this campaign, grouped by ESTATUS, biggest group first. */
-async function readEstatus(campaignId: number): Promise<EstatusCount[]> {
-  const rows = await executeSnowflakeQuery<{ ESTATUS: string | null; LEADS: number | string }>(
-    `SELECT ESTATUS, COUNT(1) AS LEADS
-       FROM ${HLL_TABLE}
-      WHERE CAMPAIGNID = ${campaignId}
-        AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()
-      GROUP BY ESTATUS
-      ORDER BY LEADS DESC`,
-    HLL_SF_OPTS
-  )
-  return rows.map((r) => {
-    const raw = r.ESTATUS
-    // An empty string is not the same as NULL in Snowflake but means the same
-    // thing here, so both collapse to "no label" rather than showing a blank row.
-    const label = raw == null || String(raw).trim() === "" ? null : String(raw)
-    const n = typeof r.LEADS === "number" ? r.LEADS : parseInt(String(r.LEADS ?? "0"), 10) || 0
-    return { estatus: label, leads: n }
-  })
+/**
+ * Today's rows for this campaign, grouped by ESTATUS, biggest group first.
+ *
+ * Never throws. The counts either side of it are this endpoint's job and the
+ * breakdown is an addition, so a breakdown that fails must not take the
+ * reconciliation with it — it reports its own failure instead, and the UI says
+ * so rather than quietly showing one fewer panel.
+ */
+async function readEstatus(
+  campaignId: number
+): Promise<{ rows: EstatusCount[] | null; error: string | null }> {
+  try {
+    const rows = await executeSnowflakeQuery<{ ESTATUS: string | null; LEADS: number | string }>(
+      `SELECT ESTATUS, COUNT(1) AS LEADS
+         FROM ${HLL_TABLE}
+        WHERE CAMPAIGNID = ${campaignId}
+          AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()
+        GROUP BY ESTATUS
+        ORDER BY LEADS DESC`,
+      HLL_SF_OPTS
+    )
+    return {
+      rows: rows.map((r) => {
+        const raw = r.ESTATUS
+        // An empty string is not the same as NULL in Snowflake but means the
+        // same thing here, so both collapse to "no label" rather than showing a
+        // blank row.
+        const label = raw == null || String(raw).trim() === "" ? null : String(raw)
+        const n = typeof r.LEADS === "number" ? r.LEADS : parseInt(String(r.LEADS ?? "0"), 10) || 0
+        return { estatus: label, leads: n }
+      }),
+      error: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("[/api/leads/count-check] ESTATUS breakdown failed:", message)
+    return { rows: null, error: message }
+  }
 }
 
 // Compare the stage table row count against the HLL (main) table for this
@@ -120,7 +139,8 @@ export async function POST(request: Request) {
       stageCount,
       hllCount,
       match: stageCount === hllCount,
-      byEstatus,
+      byEstatus: byEstatus.rows,
+      byEstatusError: byEstatus.error,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
