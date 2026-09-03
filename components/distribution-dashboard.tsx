@@ -1950,6 +1950,153 @@ function ManualStepRunner({
   )
 }
 
+type GroupRunState = "pending" | "running" | "ok" | "error" | "skipped"
+
+/**
+ * All of a campaign's update-HLL procedures, in one tab, run in order.
+ *
+ * The plan emits one step per configured procedure, which the automation runs
+ * in sequence. Giving each its own tab made a single stage look like four
+ * stages, numbered as if they were independent, and left the order — which is
+ * the whole point, since one procedure's output is the next one's input —
+ * expressed nowhere on screen.
+ *
+ * So: one tab, the procedures listed in the order they run, and one button.
+ * Sequential and strictly awaited, never Promise.all: they share the same rows
+ * and running them together would race.
+ *
+ * IT STOPS AT THE FIRST FAILURE. Later procedures assume the earlier ones have
+ * been applied — SP_VCD_VCCVM_POST_LOAD sets ESTATUS and the scores that the
+ * ranking then reads — so carrying on past an error would rank a batch that was
+ * never cleaned and report success for it. What did not run is marked skipped
+ * rather than left blank, so the screen distinguishes "not reached" from
+ * "not attempted".
+ *
+ * The per-row Run stays, because retrying one procedure after fixing it beats
+ * re-running all four.
+ */
+function UpdateHllGroupRunner({
+  configId,
+  steps,
+}: {
+  configId: number
+  steps: { key: string; label: string }[]
+}) {
+  const [state, setState] = useState<Record<string, GroupRunState>>({})
+  const [messages, setMessages] = useState<Record<string, string>>({})
+  const [runningAll, setRunningAll] = useState(false)
+
+  const runOne = async (key: string): Promise<boolean> => {
+    setState((s) => ({ ...s, [key]: "running" }))
+    setMessages((m) => ({ ...m, [key]: "" }))
+    const res = await runOneStepAt(`/api/distribution/configs/${configId}/run`, key)
+    setState((s) => ({ ...s, [key]: res.ok ? "ok" : "error" }))
+    setMessages((m) => ({ ...m, [key]: res.ok ? "Done." : res.error || "Step failed" }))
+    return res.ok
+  }
+
+  const runAll = async () => {
+    setRunningAll(true)
+    setState(Object.fromEntries(steps.map((s) => [s.key, "pending" as GroupRunState])))
+    setMessages({})
+    for (let i = 0; i < steps.length; i++) {
+      const ok = await runOne(steps[i].key)
+      if (!ok) {
+        // Everything after a failure is unattempted, and says so.
+        const rest = steps.slice(i + 1)
+        setState((s) => ({
+          ...s,
+          ...Object.fromEntries(rest.map((r) => [r.key, "skipped" as GroupRunState])),
+        }))
+        setMessages((m) => ({
+          ...m,
+          ...Object.fromEntries(
+            rest.map((r) => [r.key, "Not run — an earlier procedure failed."])
+          ),
+        }))
+        break
+      }
+    }
+    setRunningAll(false)
+  }
+
+  const anyRunning = runningAll || Object.values(state).some((v) => v === "running")
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h4 className="text-sm font-medium text-foreground">
+          Update HLL — {steps.length} procedure{steps.length === 1 ? "" : "s"}
+        </h4>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Run in the order below, one at a time, against the campaign&apos;s{" "}
+          <span className="font-medium text-foreground">saved</span> config — the same order and the
+          same statements the automation uses. Stops at the first failure, because each one assumes
+          the ones before it have been applied.
+        </p>
+      </div>
+
+      <div>
+        <Button onClick={runAll} disabled={anyRunning}>
+          {anyRunning ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <PlayCircle className="mr-2 h-4 w-4" />
+          )}
+          {runningAll ? "Running..." : `Run all ${steps.length} in order`}
+        </Button>
+      </div>
+
+      <ol className="flex flex-col gap-2">
+        {steps.map((s, i) => {
+          const st = state[s.key]
+          const msg = messages[s.key]
+          return (
+            <li key={s.key} className="rounded-md border border-border bg-background/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  {st === "running" && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />}
+                  {st === "ok" && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
+                  {st === "error" && <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" />}
+                  <span className="truncate text-sm text-foreground">
+                    {s.label.replace(/^Update HLL — /, "")}
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={anyRunning}
+                  onClick={() => runOne(s.key)}
+                >
+                  Run
+                </Button>
+              </div>
+              {msg && (
+                <p
+                  className={cn(
+                    "mt-2 whitespace-pre-wrap text-xs",
+                    st === "ok"
+                      ? "text-emerald-300"
+                      : st === "error"
+                        ? "text-rose-300"
+                        : "text-muted-foreground"
+                  )}
+                >
+                  {msg}
+                </p>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
 /**
  * The manual file pipeline.
  *
@@ -2018,11 +2165,35 @@ function FileSourcePanel({
     }
   }, [campaignId])
 
+  // The update-HLL procedures are ONE stage, however many are configured.
+  // The plan emits a step each because the automation runs them individually,
+  // but on screen four procedures became 3.4, 3.5, 3.6, 3.7 — four numbered
+  // stages for one, with the order that matters shown nowhere. They collapse
+  // into a single tab that runs them in sequence.
+  const updateHllSteps = plan.filter((st) => st.key.startsWith("update_hll"))
+  const grouped: { key: string; label: string }[] = []
+  let groupInserted = false
+  for (const st of plan) {
+    if (st.key.startsWith("update_hll")) {
+      if (groupInserted) continue
+      groupInserted = true
+      grouped.push({
+        key: "__update_hll_group__",
+        label:
+          updateHllSteps.length > 1
+            ? `Update HLL — ${updateHllSteps.length} procedures`
+            : "Update HLL",
+      })
+      continue
+    }
+    grouped.push(st)
+  }
+
   // Upload first, then one tab per configured step, then the checks. Labels come
   // straight from the plan, so they read the same here as in Settings.
   const steps: { id: string; label: string }[] = [
     { id: "upload", label: `${parentStep}.1 · Upload to stage` },
-    ...plan.map((st, i) => ({
+    ...grouped.map((st, i) => ({
       id: `step:${st.key}`,
       // The plan prefixes file-source labels with "Load into HLL — "; that is
       // useful in a flat step list and redundant in a tab.
@@ -2077,12 +2248,19 @@ function FileSourcePanel({
         <LoadHistorySection campaignId={campaignId} proc={historyProc} configId={configId} />
       )}
 
+      {/* The update-HLL procedures, as one stage run in order. */}
+      {section === "step:__update_hll_group__" && configId != null && (
+        <UpdateHllGroupRunner configId={configId} steps={updateHllSteps} />
+      )}
+
       {/* Everything else runs through the same submit-and-poll as Settings.
-          Update-HLL steps included: a config can carry several, and the picker
-          panel below has no way to know which one a given tab stands for — it
-          would run whatever was selected in it, not the step named on the tab. */}
+          Each of the grouped update-HLL steps still runs through it too, from
+          inside the group above — the picker panel under Tools cannot stand in
+          for them, because it would run whatever is selected in it rather than
+          the procedure the config names for that position. */}
       {section.startsWith("step:") &&
         section !== "step:load_history" &&
+        section !== "step:__update_hll_group__" &&
         configId != null && (
           <ManualStepRunner
             configId={configId}
