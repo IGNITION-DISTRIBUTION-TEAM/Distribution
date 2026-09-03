@@ -75,8 +75,11 @@ CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS (
     SECRET_PASSPHRASE_NAME  VARCHAR(64)            DEFAULT 'passphrase'
                             COMMENT 'Binding name for the passphrase, or NULL if the key has none',
 
+    ROOT_FLOOR              VARCHAR(512)  NOT NULL
+                            COMMENT 'The hard boundary. Set here, never editable from the app. '
+                                    'ALLOWED_ROOT may be narrowed within it but never widened past it.',
     ALLOWED_ROOT            VARCHAR(512)  NOT NULL
-                            COMMENT 'Browse and peek confined to this subtree. Must not be /',
+                            COMMENT 'Where browsing starts. App-editable, but must sit at or below ROOT_FLOOR. Must not be /',
 
     MAX_ENTRIES             NUMBER(10,0)  NOT NULL DEFAULT 500,
     MAX_PEEK_LINES          NUMBER(10,0)  NOT NULL DEFAULT 50,
@@ -87,6 +90,9 @@ CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS (
     NOTES                   VARCHAR(1000),
     CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     CREATED_BY              VARCHAR(255)  DEFAULT CURRENT_USER(),
+    UPDATED_AT              TIMESTAMP_NTZ,
+    UPDATED_BY              VARCHAR(255)
+                            COMMENT 'App-asserted actor from the last SP_SFTP_ENDPOINT_UPDATE call',
 
     CONSTRAINT PK_SFTP_ENDPOINTS PRIMARY KEY (ENDPOINT_NAME)
 );
@@ -116,10 +122,21 @@ COMMENT = 'Endpoint list for the Task Automation UI. Deliberately excludes HOST,
 AS
 SELECT ENDPOINT_NAME,
        LABEL,
+       ROOT_FLOOR,
        ALLOWED_ROOT,
-       ENABLED
-  FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS
- WHERE ENABLED = TRUE;
+       MAX_ENTRIES,
+       MAX_PEEK_LINES,
+       MAX_PEEK_BYTES,
+       ENABLED,
+       NOTES,
+       UPDATED_AT,
+       UPDATED_BY
+  FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS;
+
+/* Note there is NO `WHERE ENABLED = TRUE` here. The settings screen has to be
+   able to see a disabled endpoint in order to re-enable it — an earlier version
+   filtered them out, which would have made "disable" a one-way door through the
+   UI. Callers that only want usable endpoints filter on ENABLED themselves. */
 
 
 /* -----------------------------------------------------------------------------
@@ -139,7 +156,7 @@ INSERT INTO SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS (
     ENDPOINT_NAME, LABEL, HOST, PORT, SFTP_USER,
     HOST_KEY_TYPE, HOST_KEY_B64,
     SECRET_KEY_NAME, SECRET_PASSPHRASE_NAME,
-    ALLOWED_ROOT, NOTES
+    ROOT_FLOOR, ALLOWED_ROOT, NOTES
 )
 SELECT
     'SPOT',
@@ -151,7 +168,8 @@ SELECT
     '<<PASTE_HOST_KEY_B64_HERE>>',
     'pkey',
     'passphrase',
-    '/spot_money',
+    '/spot_money',   -- ROOT_FLOOR: the hard boundary, not app-editable
+    '/spot_money',   -- ALLOWED_ROOT: starting point, app may narrow within the floor
     'Host key captured via ssh-keyscan 2026-08-11. Verify with Spot before '
     'treating the feed as trusted. Root confined to /spot_money: everything in '
     'the standards doc and the working script sits under it.'
@@ -229,7 +247,8 @@ def _endpoint(session, name):
 
     rows = session.sql(
         'SELECT HOST, PORT, SFTP_USER, HOST_KEY_TYPE, HOST_KEY_B64, '
-        '       SECRET_KEY_NAME, SECRET_PASSPHRASE_NAME, ALLOWED_ROOT, '
+        '       SECRET_KEY_NAME, SECRET_PASSPHRASE_NAME, '
+        '       ROOT_FLOOR, ALLOWED_ROOT, '
         '       MAX_ENTRIES, MAX_PEEK_LINES, MAX_PEEK_BYTES, ENABLED '
         '  FROM ' + REGISTRY + ' WHERE UPPER(ENDPOINT_NAME) = ?',
         params=[n],
@@ -249,12 +268,34 @@ def _endpoint(session, name):
     if not r['ENABLED']:
         raise ValueError('Endpoint {!r} is registered but not ENABLED.'.format(n))
 
+    floor = (r['ROOT_FLOOR'] or '').strip()
     root = (r['ALLOWED_ROOT'] or '').strip()
-    if not root or root == '/':
+    if not floor or floor == '/':
         raise ValueError(
-            'Endpoint {!r} has ALLOWED_ROOT = {!r}. A root of / or blank is not '
-            'a boundary; set a real subtree.'.format(n, root)
+            'Endpoint {!r} has ROOT_FLOOR = {!r}. A floor of / or blank is not a '
+            'boundary; set a real subtree.'.format(n, floor)
         )
+    if not root:
+        root = floor
+
+    # THE FLOOR IS ENFORCED HERE, ON READ — not only when the app writes.
+    # ALLOWED_ROOT is app-editable, so checking it only at write time would mean
+    # a direct UPDATE on the table (or a future second writer) could widen the
+    # boundary and nothing downstream would notice. Checked here, ROOT_FLOOR is
+    # the boundary however ALLOWED_ROOT came to hold its value.
+    #
+    # Refused rather than silently clamped to the floor: a wider ALLOWED_ROOT
+    # means someone misconfigured this endpoint, and quietly narrowing it would
+    # hide that while appearing to work.
+    f_norm = re.sub(r'/{2,}', '/', posixpath.normpath(floor))
+    r_norm = re.sub(r'/{2,}', '/', posixpath.normpath(root))
+    if r_norm != f_norm and not r_norm.startswith(f_norm.rstrip('/') + '/'):
+        raise ValueError(
+            'Endpoint {!r} has ALLOWED_ROOT {!r}, which is outside its '
+            'ROOT_FLOOR {!r}. Refusing rather than clamping — fix the row.'
+            .format(n, root, floor)
+        )
+    root = r_norm
     if not (r['HOST_KEY_B64'] or '').strip():
         raise ValueError(
             'Endpoint {!r} has no HOST_KEY_B64. Refusing to connect without '
@@ -268,6 +309,7 @@ def _endpoint(session, name):
         )
 
     r['ALLOWED_ROOT'] = root
+    r['ROOT_FLOOR'] = f_norm
     r['ENDPOINT_NAME'] = n
     return r
 
@@ -434,6 +476,7 @@ def run(session, endpoint, remote_path, action, max_rows):
         ep = _endpoint(session, endpoint)
         result['endpoint'] = ep['ENDPOINT_NAME']
         result['allowed_root'] = ep['ALLOWED_ROOT']
+        result['root_floor'] = ep['ROOT_FLOOR']
 
         path = _safe_path(remote_path, ep['ALLOWED_ROOT'], default_root=(act == 'list'))
         result['path'] = path
@@ -462,7 +505,218 @@ $$;
 
 
 /* -----------------------------------------------------------------------------
-   SECTION 6 — grants
+   SECTION 6 — settings the app IS allowed to change
+
+   Snowflake has no column-level UPDATE privilege: GRANT UPDATE ON TABLE grants
+   it on every column. So the split between "config" and "where the private key
+   gets sent" cannot be expressed with grants at all — it has to be a procedure.
+   This one accepts only the editable fields and touches nothing else, and the
+   app holds USAGE on it and still no privilege on the table.
+
+   EDITABLE            LABEL, NOTES, the three caps, ENABLED, ALLOWED_ROOT
+   NOT EDITABLE, EVER  HOST, PORT, SFTP_USER, HOST_KEY_TYPE, HOST_KEY_B64,
+                       SECRET_KEY_NAME, SECRET_PASSPHRASE_NAME, ROOT_FLOOR
+
+   The second list is the credential-destination set. Change any of it and the
+   key goes somewhere else, which is exactly what the registry exists to
+   prevent. ROOT_FLOOR is in that list because a boundary the app can move is
+   not a boundary.
+
+   NULL means "leave alone" for every parameter, so the app can send a partial
+   update without having to read and echo back the values it is not changing.
+-------------------------------------------------------------------------------- */
+
+CREATE TABLE IF NOT EXISTS SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINT_AUDIT (
+    AUDIT_ID        NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+    ENDPOINT_NAME   VARCHAR(64)   NOT NULL,
+    FIELD           VARCHAR(64)   NOT NULL,
+    OLD_VALUE       VARCHAR(1000),
+    NEW_VALUE       VARCHAR(1000),
+    CHANGED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    SNOWFLAKE_USER  VARCHAR(255)  DEFAULT CURRENT_USER()
+                    COMMENT 'The session user. Inside EXECUTE AS OWNER this is the '
+                            'service account, NOT the person — hence the next column.',
+    ACTOR_ASSERTED  VARCHAR(255)
+                    COMMENT 'Who the APP says did it. App-asserted and named that way '
+                            'on purpose: Snowflake cannot corroborate it, and an audit '
+                            'column that looks authenticated but is not is worse than '
+                            'one that admits what it is.'
+);
+
+CREATE OR REPLACE PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+    ENDPOINT        STRING,
+    ACTOR           STRING,
+    NEW_LABEL       STRING,
+    NEW_ALLOWED_ROOT STRING,
+    NEW_MAX_ENTRIES NUMBER,
+    NEW_MAX_LINES   NUMBER,
+    NEW_MAX_BYTES   NUMBER,
+    NEW_ENABLED     BOOLEAN,
+    NEW_NOTES       STRING
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python',)
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$BODY$
+import posixpath
+import re
+import traceback
+
+REGISTRY = 'SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS'
+AUDIT = 'SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINT_AUDIT'
+
+# Bounds on the caps themselves. A cap the app can set to a billion is not a
+# cap; these are the limits on the limits.
+CAP_BOUNDS = {
+    'MAX_ENTRIES':    (1, 5000),
+    'MAX_PEEK_LINES': (1, 500),
+    'MAX_PEEK_BYTES': (1024, 64 * 1024 * 1024),
+}
+
+
+def _norm_path(p):
+    q = re.sub(r'/{2,}', '/', (p or '').strip())
+    if not q:
+        return ''
+    if not q.startswith('/'):
+        q = '/' + q
+    return re.sub(r'/{2,}', '/', posixpath.normpath(q))
+
+
+def _within(child, parent):
+    """Is child at or below parent? Trailing-slash prefix test, so
+    /spot_money_other does not pass a parent of /spot_money."""
+    return child == parent or child.startswith(parent.rstrip('/') + '/')
+
+
+def run(session, endpoint, actor, new_label, new_allowed_root,
+        new_max_entries, new_max_lines, new_max_bytes, new_enabled, new_notes):
+
+    result = {'status': 'FAILED', 'endpoint': None, 'changed': [], 'error_message': None}
+    try:
+        n = (endpoint or '').strip().upper()
+        if not re.match(r'^[A-Z0-9_]+$', n or ''):
+            raise ValueError('Endpoint name {!r} is not a plain identifier.'.format(endpoint))
+        result['endpoint'] = n
+
+        who = (actor or '').strip()[:255] or None
+
+        rows = session.sql(
+            'SELECT LABEL, ROOT_FLOOR, ALLOWED_ROOT, MAX_ENTRIES, MAX_PEEK_LINES, '
+            '       MAX_PEEK_BYTES, ENABLED, NOTES '
+            '  FROM ' + REGISTRY + ' WHERE UPPER(ENDPOINT_NAME) = ?',
+            params=[n],
+        ).collect()
+        if not rows:
+            raise ValueError('No SFTP endpoint registered as {!r}.'.format(n))
+        if len(rows) > 1:
+            raise ValueError(
+                '{} rows registered for {!r}; the primary key is not enforced by '
+                'Snowflake. De-duplicate before editing.'.format(len(rows), n)
+            )
+        cur = rows[0].as_dict()
+
+        updates = []          # (column, sql_placeholder_value)
+        changes = []          # (field, old, new) for the audit
+
+        if new_label is not None and new_label != cur['LABEL']:
+            updates.append(('LABEL', new_label))
+            changes.append(('LABEL', cur['LABEL'], new_label))
+
+        if new_notes is not None and new_notes != cur['NOTES']:
+            updates.append(('NOTES', new_notes))
+            changes.append(('NOTES', cur['NOTES'], new_notes))
+
+        if new_enabled is not None and bool(new_enabled) != bool(cur['ENABLED']):
+            updates.append(('ENABLED', bool(new_enabled)))
+            changes.append(('ENABLED', str(cur['ENABLED']), str(bool(new_enabled))))
+
+        if new_allowed_root is not None:
+            floor = _norm_path(cur['ROOT_FLOOR'])
+            want = _norm_path(new_allowed_root)
+            if not want:
+                raise ValueError('ALLOWED_ROOT cannot be blank.')
+            if want == '/':
+                raise ValueError('ALLOWED_ROOT of / is not a boundary.')
+            if not floor or floor == '/':
+                raise ValueError(
+                    'Endpoint {!r} has no usable ROOT_FLOOR, so no root can be '
+                    'validated against it. Fix the row in Snowflake first.'.format(n)
+                )
+            # NARROWING ONLY. This is the whole point of the floor: the app may
+            # move the starting point around inside the subtree it was given, and
+            # cannot escape it.
+            if not _within(want, floor):
+                raise ValueError(
+                    'Refusing ALLOWED_ROOT {!r}: it is outside this endpoint\'s '
+                    'ROOT_FLOOR {!r}. The floor is set in Snowflake and cannot be '
+                    'widened from the app.'.format(want, floor)
+                )
+            if want != _norm_path(cur['ALLOWED_ROOT']):
+                updates.append(('ALLOWED_ROOT', want))
+                changes.append(('ALLOWED_ROOT', cur['ALLOWED_ROOT'], want))
+
+        for param, col in ((new_max_entries, 'MAX_ENTRIES'),
+                           (new_max_lines, 'MAX_PEEK_LINES'),
+                           (new_max_bytes, 'MAX_PEEK_BYTES')):
+            if param is None:
+                continue
+            lo, hi = CAP_BOUNDS[col]
+            try:
+                v = int(param)
+            except (TypeError, ValueError):
+                raise ValueError('{} must be a whole number, got {!r}.'.format(col, param))
+            if v < lo or v > hi:
+                raise ValueError(
+                    '{} must be between {} and {}, got {}.'.format(col, lo, hi, v)
+                )
+            if v != int(cur[col]):
+                updates.append((col, v))
+                changes.append((col, str(cur[col]), str(v)))
+
+        if not updates:
+            result['status'] = 'NO_CHANGE'
+            return result
+
+        # Column names come from the tuples above and never from the caller, so
+        # interpolating them is safe; every VALUE is bound.
+        set_sql = ', '.join('{} = ?'.format(c) for c, _ in updates)
+        params = [v for _, v in updates] + [who, n]
+        session.sql(
+            'UPDATE ' + REGISTRY + ' SET ' + set_sql +
+            ', UPDATED_AT = CURRENT_TIMESTAMP(), UPDATED_BY = ? '
+            ' WHERE UPPER(ENDPOINT_NAME) = ?',
+            params=params,
+        ).collect()
+
+        for field, old, new in changes:
+            session.sql(
+                'INSERT INTO ' + AUDIT +
+                ' (ENDPOINT_NAME, FIELD, OLD_VALUE, NEW_VALUE, ACTOR_ASSERTED) '
+                ' SELECT ?, ?, ?, ?, ?',
+                params=[n, field,
+                        None if old is None else str(old)[:1000],
+                        None if new is None else str(new)[:1000],
+                        who],
+            ).collect()
+
+        result['changed'] = [c for c, _ in updates]
+        result['status'] = 'SUCCESS'
+        return result
+
+    except Exception as exc:
+        result['error_message'] = '{}: {}'.format(type(exc).__name__, exc)
+        result['traceback'] = traceback.format_exc()
+        return result
+$BODY$;
+
+
+/* -----------------------------------------------------------------------------
+   SECTION 7 — grants
 
    CREATE OR REPLACE PROCEDURE drops its grants and has no COPY GRANTS clause,
    so THIS LINE MUST BE RE-RUN every time section 5 is replaced. Forgetting
@@ -476,9 +730,18 @@ $$;
 GRANT USAGE ON PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT(STRING, STRING, STRING, NUMBER)
   TO ROLE SVC_VERCEL_APP_ROLE;
 
+GRANT USAGE ON PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+    STRING, STRING, STRING, STRING, NUMBER, NUMBER, NUMBER, BOOLEAN, STRING)
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+/* Still NO privilege on SFTP_ENDPOINTS or SFTP_ENDPOINT_AUDIT. Both procedures
+   run as owner; the app can only reach the table through them, which is how the
+   editable/not-editable split is enforced given Snowflake has no column-level
+   UPDATE grant. */
+
 
 /* -----------------------------------------------------------------------------
-   SECTION 7 — smoke test
+   SECTION 8 — smoke test
 
    The procedure NEVER RAISES. It returns a VARIANT with status = 'SUCCESS' or
    'FAILED' plus an error_message, so a CALL that "worked" tells you nothing.
@@ -507,9 +770,62 @@ CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT('NOPE', '/spot_money', 'list', 10);     
 CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT('SPOT', '/spot_money', 'delete', 10);           -- unknown action
 CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT('SPOT', '/spot_money', 'peek', 5);              -- peek on a directory
 
+
+/* ---- SECTION 6 procedure: settings the app may change -----------------------
+   NULL means "leave alone", so a partial update needs no round-trip.
+   Every one of these must come back FAILED except the first two. */
+
+-- Narrowing within the floor. Allowed.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, '/spot_money/spot_arpu_automation',
+  NULL, NULL, NULL, NULL, NULL);
+
+-- Caps and label only, root untouched. Allowed.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', 'Spot SFTP', NULL, 250, 30, NULL, TRUE, NULL);
+
+-- Re-running the same values returns NO_CHANGE, not SUCCESS, and writes no audit row.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', 'Spot SFTP', NULL, 250, 30, NULL, TRUE, NULL);
+
+-- Widening past ROOT_FLOOR. MUST be refused — this is the floor doing its job.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, '/', NULL, NULL, NULL, NULL, NULL);
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, '/etc', NULL, NULL, NULL, NULL, NULL);
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, '/spot_money/../../etc', NULL, NULL, NULL, NULL, NULL);
+-- The prefix trap: /spot_money_other is NOT inside /spot_money.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, '/spot_money_other', NULL, NULL, NULL, NULL, NULL);
+
+-- A cap outside its bounds. Refused: a cap the app can set to anything is not a cap.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, NULL, 999999, NULL, NULL, NULL, NULL);
+
+-- Disable, then re-enable. Both allowed: HOST and HOST_KEY_B64 are immutable
+-- from here, so toggling ENABLED cannot redirect the key anywhere.
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, NULL, NULL, NULL, NULL, FALSE, NULL);
+CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
+  'SPOT', 'you@ignitiongroup.co.za', NULL, NULL, NULL, NULL, NULL, TRUE, NULL);
+
+-- What the app cannot reach at all. There is no parameter for HOST,
+-- SFTP_USER, HOST_KEY_B64, the secret bindings or ROOT_FLOOR — by construction,
+-- not by validation. Confirm the row still holds its original values:
+SELECT ENDPOINT_NAME, HOST, SFTP_USER, LEFT(HOST_KEY_B64, 24) AS PIN_PREFIX,
+       ROOT_FLOOR, ALLOWED_ROOT, MAX_ENTRIES, ENABLED, UPDATED_AT, UPDATED_BY
+  FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS WHERE ENDPOINT_NAME = 'SPOT';
+
+-- The audit trail. SNOWFLAKE_USER is the service account (EXECUTE AS OWNER);
+-- ACTOR_ASSERTED is who the app said it was, and is app-asserted, not proven.
+SELECT * FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINT_AUDIT ORDER BY CHANGED_AT DESC LIMIT 20;
+
 -- The app must NOT be able to read the registry directly. Run as the app role:
 --   SELECT * FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS;         -- expect: refused
---   SELECT * FROM SPOT_DW.SFTP_ADMIN.VW_SFTP_ENDPOINTS_APP;  -- expect: name/label/root/enabled only
+--   SELECT * FROM SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINT_AUDIT;    -- expect: refused
+--   SELECT * FROM SPOT_DW.SFTP_ADMIN.VW_SFTP_ENDPOINTS_APP;  -- expect: settings only,
+--                                                            -- no HOST/SFTP_USER/HOST_KEY_B64
 --
 -- Then confirm the app can see the procedure, which a worksheet cannot tell you:
 --   /api/distribution/snowflake-identity?object=SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT
