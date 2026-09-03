@@ -37,17 +37,50 @@ export function normIdent(raw: unknown): string {
     .trim()
 }
 
+// Characters that leave no mark on screen, so "look at the field" is useless
+// advice and "retype it" is the fix. normIdent already removes the common ones
+// (zero-width, BOM, NBSP, tabs and newlines); these are what survives it —
+// soft hyphen, word joiner, the remaining format and control characters.
+// Written as escapes on purpose: spelled literally these are characters nobody
+// can see in the source either, so a stray edit would be undetectable — and a
+// raw control byte makes git treat the whole file as binary.
+const INVISIBLE_CHAR = new RegExp(
+  "[" +
+    "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F" + // control (not tab/newline — normIdent collapses those)
+    "\\u007F-\\u009F" +                                  // C1 control
+    "\\u00A0\\u00AD" +                                    // no-break space, soft hyphen
+    "\\u034F\\u061C\\u180E" +                            // grapheme joiner, Arabic letter mark, Mongolian vowel separator
+    "\\u2000-\\u200F" +                                  // en/em spaces, zero-width, LTR/RTL marks
+    "\\u2028-\\u202F" +                                  // line/paragraph separators, bidi overrides, narrow NBSP
+    "\\u205F-\\u2064\\u206A-\\u206F" +                  // medium space, word joiner, invisible operators
+    "\\u3000\\uFEFF" +                                    // ideographic space, BOM
+  "]"
+)
+
 /**
  * Say what was actually received, and name the offending character when there
- * is one. "must be DATABASE.SCHEMA.NAME" is the rule, not the diagnosis — and
- * when the culprit is invisible the rule alone is no help at all.
+ * is one. "must be DATABASE.SCHEMA.NAME" is the rule, not the diagnosis.
+ *
+ * The advice has to match the character. An invisible one is genuinely
+ * undiagnosable from the field and retyping is the answer; a quote or a dash is
+ * sitting there in plain sight, and telling someone to retype it sends them
+ * round the loop to the identical error. So the two cases are answered
+ * separately, and the quote case says why a quoted argument cannot work here at
+ * all rather than implying it was mistyped.
  */
 export function identProblem(value: string): string {
   if (!value) return " — the field was empty."
   const bad = Array.from(value).find((c) => !/[A-Za-z0-9_.,() ]/.test(c))
   if (bad) {
     const cp = (bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")
-    return ` — received "${value}", which contains ${JSON.stringify(bad)} (U+${cp}). That character is not visible in the field; retype the value rather than pasting it.`
+    const shown = `${JSON.stringify(bad)} (U+${cp})`
+    if (INVISIBLE_CHAR.test(bad)) {
+      return ` — received "${value}", which contains ${shown}. That character is not visible in the field; retype the value rather than pasting it.`
+    }
+    if (/['"‘’“”`]/.test(bad)) {
+      return ` — received "${value}", which contains ${shown}. Quotes are not accepted here, and removing them is not enough on its own: the argument list is passed to Snowflake verbatim, so an argument has to be a SQL literal that stands alone — a number, or NULL / TRUE / FALSE. A procedure that takes a string needs a numeric parameter instead.`
+    }
+    return ` — received "${value}", which contains ${shown}. Only letters, digits, underscores and dots are allowed, plus an argument list in brackets containing numbers.`
   }
   // A space before the argument list means the name itself is broken — usually a
   // line break in the pasted value, which normIdent turns into a space.
