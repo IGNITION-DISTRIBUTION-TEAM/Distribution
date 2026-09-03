@@ -873,7 +873,7 @@ function LoadHistorySection({
   )
 }
 
-type EstatusCount = { estatus: string | null; leads: number }
+type LabelCount = { label: string | null; leads: number }
 
 type CountCheckResult = {
   stageTable: string
@@ -882,28 +882,52 @@ type CountCheckResult = {
   match: boolean
   // null when the breakdown query failed; absent entirely from a deployment
   // that predates it. Those are different situations and the panel says which.
-  byEstatus?: EstatusCount[] | null
+  byEstatus?: LabelCount[] | null
   byEstatusError?: string | null
+  byRank?: LabelCount[] | null
+  byRankError?: string | null
 }
 
 /**
- * Today's loaded leads, by ESTATUS.
+ * One breakdown of today's loaded leads.
  *
  * Matching totals prove the load lost nothing. They say nothing at all about
- * what is IN the batch — and ESTATUS is where every upstream exclusion ends up,
- * carried into the HLL rather than filtered out of it. A batch can reconcile
- * perfectly and still be mostly leads that a DMASA check, a history check or a
- * duplicate check already objected to. So the unlabelled count is broken out
- * first: it is the one people actually want, and it is not on the tile above.
+ * what is IN the batch, and two columns answer that:
+ *
+ *   ESTATUS  where every upstream exclusion ends up, carried into the HLL
+ *            rather than filtered out of it. A batch can reconcile perfectly
+ *            and still be mostly leads that a DMASA, history or duplicate check
+ *            already objected to.
+ *   UDM30    the rank, written by the last update-HLL procedure. All NULL until
+ *            that has run, which is exactly what the unset count tells you.
+ *
+ * Both are the same shape, so this renders either. The wording differs because
+ * "unlabelled" and "unranked" are not the same news: one is the eligible lead
+ * you want, the other is a step that has not run yet.
  */
-function EstatusBreakdown({
+function LabelBreakdown({
+  title,
   rows,
   total,
   error,
+  unsetLabel,
+  unsetWord,
+  setWord,
+  footnote,
+  missingNote,
 }: {
-  rows: EstatusCount[] | null | undefined
+  title: string
+  rows: LabelCount[] | null | undefined
   total: number
   error?: string | null
+  /** How the NULL row reads in the table. */
+  unsetLabel: string
+  /** The two halves of the summary line above the table. */
+  unsetWord: string
+  setWord: string
+  footnote: string
+  /** Said when every row is unset — the useful case for a rank. */
+  missingNote?: string
 }) {
   // Every reason this can be empty gets said out loud. Rendering nothing was
   // the original behaviour and it is indistinguishable from the feature being
@@ -911,7 +935,7 @@ function EstatusBreakdown({
   // build that predated the API returning it.
   const note = (text: string) => (
     <div className="mt-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">By ESTATUS</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
       <p className="mt-1 text-xs text-amber-300">{text}</p>
     </div>
   )
@@ -929,39 +953,44 @@ function EstatusBreakdown({
         : "Nothing loaded today, so there is nothing to break down."
     )
   }
-  const eligible = rows.filter((r) => r.estatus == null).reduce((a, r) => a + r.leads, 0)
-  const flagged = total - eligible
+  const unset = rows.filter((r) => r.label == null).reduce((a, r) => a + r.leads, 0)
+  const set = total - unset
   const pct = (n: number) => (total > 0 ? `${((100 * n) / total).toFixed(1)}%` : "—")
+  // A single all-NULL row is a step that has not run, not a distribution.
+  const allUnset = rows.length === 1 && rows[0].label == null
 
   return (
     <div className="mt-4">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          By ESTATUS
+          {title}
         </span>
         <span className="text-xs text-muted-foreground">
-          <span className="font-medium text-emerald-300">{eligible.toLocaleString()}</span> unlabelled
+          <span className="font-medium text-emerald-300">{set.toLocaleString()}</span> {setWord}
           {" · "}
-          <span className="font-medium text-amber-300">{flagged.toLocaleString()}</span> labelled
+          <span className="font-medium text-amber-300">{unset.toLocaleString()}</span> {unsetWord}
         </span>
       </div>
+
+      {allUnset && missingNote && <p className="mb-2 text-xs text-amber-300">{missingNote}</p>}
+
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-xs">
           <thead className="bg-card">
             <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-2 font-medium">ESTATUS</th>
+              <th className="px-3 py-2 font-medium">{title.replace(/^By /i, "")}</th>
               <th className="px-3 py-2 text-right font-medium">Leads</th>
               <th className="px-3 py-2 text-right font-medium">Share</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.estatus ?? "__none__"} className="border-t border-border">
+              <tr key={r.label ?? "__none__"} className="border-t border-border">
                 <td className="px-3 py-2">
-                  {r.estatus == null ? (
-                    <span className="text-emerald-300">(no label — eligible)</span>
+                  {r.label == null ? (
+                    <span className="text-amber-300">{unsetLabel}</span>
                   ) : (
-                    <span className="text-foreground">{r.estatus}</span>
+                    <span className="text-foreground">{r.label}</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-foreground">
@@ -975,10 +1004,7 @@ function EstatusBreakdown({
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Labelled leads are in this batch, not excluded from it — the load carries ESTATUS through
-        rather than filtering on it. Whether that is right depends on what reads ESTATUS downstream.
-      </p>
+      <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>
     </div>
   )
 }
@@ -1061,11 +1087,29 @@ function VerifyCountsSection({
       )}
 
       {result && (
-        <EstatusBreakdown
-          rows={result.byEstatus}
-          total={result.hllCount}
-          error={result.byEstatusError}
-        />
+        <>
+          <LabelBreakdown
+            title="By ESTATUS"
+            rows={result.byEstatus}
+            total={result.hllCount}
+            error={result.byEstatusError}
+            unsetLabel="(no label — eligible)"
+            setWord="labelled"
+            unsetWord="unlabelled"
+            footnote="Labelled leads are in this batch, not excluded from it — the load carries ESTATUS through rather than filtering on it. Whether that is right depends on what reads ESTATUS downstream."
+          />
+          <LabelBreakdown
+            title="By rank (UDM30)"
+            rows={result.byRank}
+            total={result.hllCount}
+            error={result.byRankError}
+            unsetLabel="(no rank)"
+            setWord="ranked"
+            unsetWord="unranked"
+            missingNote="Nothing is ranked yet. UDM30 is written by the last update-HLL procedure, so this stays empty until that step has run."
+            footnote="Ordered by rank, not by size, so it reads as a ladder. A rank that is not a number sorts last."
+          />
+        </>
       )}
     </div>
   )

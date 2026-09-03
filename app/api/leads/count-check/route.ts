@@ -17,48 +17,66 @@ async function countRows(sql: string, opts: { database: string; schema: string }
   return typeof v === "number" ? v : parseInt(String(v ?? "0"), 10) || 0
 }
 
-export type EstatusCount = {
-  /** null for an unlabelled (eligible) lead — not a string, so the UI decides how to say it. */
-  estatus: string | null
+export type LabelCount = {
+  /** null for an absent value — not a string, so the UI decides how to say it. */
+  label: string | null
   leads: number
 }
 
 /**
- * Today's rows for this campaign, grouped by ESTATUS, biggest group first.
+ * The columns this endpoint will group by, and how each is ordered.
  *
- * Never throws. The counts either side of it are this endpoint's job and the
- * breakdown is an addition, so a breakdown that fails must not take the
- * reconciliation with it — it reports its own failure instead, and the UI says
- * so rather than quietly showing one fewer panel.
+ * A fixed map, not a request parameter: the column name is interpolated into
+ * SQL, so it can only ever be one of these literals.
+ *
+ * ESTATUS is ordered by size — the dominant exclusion reason is what you look
+ * for. UDM30 is a rank, which has its own order and reads as a ladder, so it is
+ * ordered numerically. TRY_TO_NUMBER takes VARCHAR only, hence the cast; a rank
+ * that is not numeric sorts last by its text rather than breaking the query.
  */
-async function readEstatus(
-  campaignId: number
-): Promise<{ rows: EstatusCount[] | null; error: string | null }> {
+const GROUPABLE: Record<string, { column: string; orderBy: string }> = {
+  estatus: { column: "ESTATUS", orderBy: "LEADS DESC" },
+  rank: { column: "UDM30", orderBy: "TRY_TO_NUMBER(UDM30::VARCHAR) NULLS LAST, UDM30" },
+}
+
+/**
+ * Today's rows for this campaign, grouped by one column.
+ *
+ * Never throws. The counts are this endpoint's job and the breakdowns are an
+ * addition, so a breakdown that fails must not take the reconciliation with it —
+ * it reports its own failure instead, and the UI says so rather than quietly
+ * showing one fewer panel.
+ */
+async function readGrouped(
+  campaignId: number,
+  which: keyof typeof GROUPABLE
+): Promise<{ rows: LabelCount[] | null; error: string | null }> {
+  const { column, orderBy } = GROUPABLE[which]
   try {
-    const rows = await executeSnowflakeQuery<{ ESTATUS: string | null; LEADS: number | string }>(
-      `SELECT ESTATUS, COUNT(1) AS LEADS
+    const rows = await executeSnowflakeQuery<{ LABEL: string | null; LEADS: number | string }>(
+      `SELECT ${column} AS LABEL, COUNT(1) AS LEADS
          FROM ${HLL_TABLE}
         WHERE CAMPAIGNID = ${campaignId}
           AND CAST(CREATEDONDATE AS DATE) = CURRENT_DATE()
-        GROUP BY ESTATUS
-        ORDER BY LEADS DESC`,
+        GROUP BY ${column}
+        ORDER BY ${orderBy}`,
       HLL_SF_OPTS
     )
     return {
       rows: rows.map((r) => {
-        const raw = r.ESTATUS
+        const raw = r.LABEL
         // An empty string is not the same as NULL in Snowflake but means the
-        // same thing here, so both collapse to "no label" rather than showing a
-        // blank row.
+        // same thing here, so both collapse to one row rather than showing a
+        // blank one.
         const label = raw == null || String(raw).trim() === "" ? null : String(raw)
         const n = typeof r.LEADS === "number" ? r.LEADS : parseInt(String(r.LEADS ?? "0"), 10) || 0
-        return { estatus: label, leads: n }
+        return { label, leads: n }
       }),
       error: null,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("[/api/leads/count-check] ESTATUS breakdown failed:", message)
+    console.error(`[/api/leads/count-check] ${column} breakdown failed:`, message)
     return { rows: null, error: message }
   }
 }
@@ -114,7 +132,7 @@ export async function POST(request: Request) {
   const [stageDb, stageSchema] = stageTable.split(".")
 
   try {
-    const [stageCount, hllCount, byEstatus] = await Promise.all([
+    const [stageCount, hllCount, byEstatus, byRank] = await Promise.all([
       countRows(`SELECT COUNT(1) AS CNT FROM ${stageTable}`, {
         database: stageDb,
         schema: stageSchema,
@@ -131,7 +149,11 @@ export async function POST(request: Request) {
       // perfectly and still be mostly leads something upstream excluded.
       // NULL is its own row rather than being folded away: an unlabelled lead
       // is the eligible case, and it is the number people are looking for.
-      readEstatus(id),
+      readGrouped(id, "estatus"),
+      // UDM30 is the rank, written by the LAST update-HLL procedure. Straight
+      // after a load it is legitimately all NULL, and the count of unranked
+      // leads is how you see whether the ranking has run at all.
+      readGrouped(id, "rank"),
     ])
 
     return NextResponse.json({
@@ -141,6 +163,8 @@ export async function POST(request: Request) {
       match: stageCount === hllCount,
       byEstatus: byEstatus.rows,
       byEstatusError: byEstatus.error,
+      byRank: byRank.rows,
+      byRankError: byRank.error,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
