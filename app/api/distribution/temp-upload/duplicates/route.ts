@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { callHint } from "@/lib/distribution-steps"
+import { callHint, probeProcedure } from "@/lib/distribution-steps"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[temp-upload/duplicates] scan error:", message)
       return NextResponse.json(
-        { error: message + callHint(message, SYNC_PROC_REF), steps },
+        { error: message + callHint(message, SYNC_PROC_REF) + (await probeProcedure(message, SYNC_PROC)), steps },
         { status: 500 }
       )
     }
@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[temp-upload/duplicates] delete error:", message)
       return NextResponse.json(
-        { error: message + callHint(message, SYNC_PROC_REF), steps },
+        { error: message + callHint(message, SYNC_PROC_REF) + (await probeProcedure(message, SYNC_PROC)), steps },
         { status: 500 }
       )
     }

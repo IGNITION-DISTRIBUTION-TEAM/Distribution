@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { submitSnowflakeStatementAsync, getSnowflakeStatementStatus } from "@/lib/snowflake"
-import { readRunConfig, buildStepSql, procRefForStep, callHint } from "@/lib/distribution-steps"
+import {
+  readRunConfig,
+  buildStepSql,
+  procRefForStep,
+  callHint,
+  probeProcedure,
+} from "@/lib/distribution-steps"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -63,7 +69,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-// Re-read the config to name the procedure the failed step called. Best effort
+// Re-read the config to name the procedure the failed step called, then ask
+// Snowflake — as the app — which of the three causes it actually is. Best effort
 // and only on failure, so a config read that itself fails costs nothing.
 async function hintFor(id: string, key: string, message: string): Promise<string> {
   const campaignId = parseId(id)
@@ -71,7 +78,8 @@ async function hintFor(id: string, key: string, message: string): Promise<string
   try {
     const config = await readRunConfig(campaignId)
     const ref = config ? procRefForStep(config, key) : null
-    return ref ? callHint(message, ref) : ""
+    if (!ref) return ""
+    return callHint(message, ref) + (await probeProcedure(message, ref))
   } catch {
     return ""
   }

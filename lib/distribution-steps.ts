@@ -387,3 +387,112 @@ export function callHint(message: string, procRef: string): string {
     `SHOW PROCEDURES LIKE '${short}' IN ACCOUNT tells you which.`
   )
 }
+
+/** Read a column out of a SHOW result, whose column names come back lower-case. */
+function showCol(row: Record<string, unknown>, name: string): string {
+  const hit = Object.keys(row).find((k) => k.toLowerCase() === name.toLowerCase())
+  const v = hit ? row[hit] : undefined
+  return v == null ? "" : String(v)
+}
+
+/**
+ * Answer the three-way question in callHint by asking Snowflake, as the app.
+ *
+ * callHint can only list the possibilities, because a string function cannot
+ * look anything up — so every one of these failures costs a round trip through
+ * a worksheet, and a worksheet answers for the ROLE RUNNING IT, not for the app.
+ * That is the whole difficulty: "it exists, I can see it" and "the app cannot
+ * call it" are both true at once, and nothing in the error says so.
+ *
+ * These SHOWs run on the app's own connection, so an empty result IS the answer.
+ * Three questions, narrowing:
+ *
+ *   in the configured schema   visible → not a visibility problem at all
+ *   anywhere in the account    visible → the config names the WRONG SCHEMA,
+ *                                        and we can say which one is right
+ *   the schema itself          invisible → no USAGE ON SCHEMA, which hides
+ *                                          every object inside it
+ *
+ * Best effort. Any failure here returns "" — a diagnostic must never replace the
+ * error it is diagnosing. Only runs on an already-failed step.
+ */
+export async function probeProcedure(message: string, procRef: string): Promise<string> {
+  if (!/unknown (user-defined )?function|does not exist or not authorized|invalid identifier/i.test(message)) {
+    return ""
+  }
+  const ref = procRef.split("(")[0].trim()
+  const parts = ref.split(".")
+  if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_]+$/.test(p))) return ""
+  const [db, schema, name] = parts
+
+  const show = async (sql: string, opts?: { database: string; schema: string }) => {
+    try {
+      return await executeSnowflakeQuery<Record<string, unknown>>(sql, opts)
+    } catch {
+      return null
+    }
+  }
+
+  // 1. Can the app see it where the config says it is?
+  const inSchema = await show(`SHOW PROCEDURES LIKE '${name}' IN SCHEMA ${db}.${schema}`, {
+    database: db,
+    schema,
+  })
+  if (inSchema && inSchema.length > 0) {
+    const sigs = inSchema.map((r) => showCol(r, "arguments")).filter(Boolean).join(" | ")
+    return (
+      `\n\nCHECKED AS THE APP: it CAN see ${ref}, so this is not a grant.` +
+      (sigs ? ` The signatures it can reach are: ${sigs}. Compare the argument list in the config against those.` : "")
+    )
+  }
+
+  // 2. Can it see that name anywhere else? Then the config's schema is wrong,
+  //    and the row we found says what it should be.
+  const inAccount = await show(`SHOW PROCEDURES LIKE '${name}' IN ACCOUNT`)
+  if (inAccount && inAccount.length > 0) {
+    const where = inAccount
+      .map((r) => {
+        const at = [showCol(r, "catalog_name"), showCol(r, "schema_name"), showCol(r, "name")]
+          .filter(Boolean)
+          .join(".")
+        const sig = showCol(r, "arguments")
+        return sig ? `${at} ${sig}` : at
+      })
+      .join("; ")
+    return (
+      `\n\nCHECKED AS THE APP: nothing called ${name} is visible in ${db}.${schema}, but the app CAN ` +
+      `see it here: ${where}. The config points at the wrong schema — correct it and save.`
+    )
+  }
+
+  // 3. Nothing visible. Can the app even see the schema? If not, every object in
+  //    it is hidden and granting the procedure alone will not help.
+  const schemas = await show(`SHOW SCHEMAS LIKE '${schema}' IN DATABASE ${db}`)
+
+  // null means the SHOW itself was refused, which is NOT the same as an empty
+  // result and must not be reported as one — saying "it can see the schema"
+  // here would be a claim the probe never established.
+  if (schemas === null) {
+    return (
+      `\n\nCHECKED AS THE APP: could not complete the check — even SHOW SCHEMAS IN DATABASE ${db} was ` +
+      `refused, which usually means no USAGE on the database itself. /api/distribution/snowflake-identity ` +
+      `reports what the app's session can reach.`
+    )
+  }
+
+  if (schemas.length === 0) {
+    return (
+      `\n\nCHECKED AS THE APP: it cannot see the schema ${db}.${schema} at all, which hides every ` +
+      `object inside it — so granting the procedure on its own will not fix this. Run, as ACCOUNTADMIN:` +
+      `\n  GRANT USAGE ON SCHEMA ${db}.${schema} TO ROLE <the app's role>;` +
+      `\nThe app's role is reported by /api/distribution/snowflake-identity.`
+    )
+  }
+
+  return (
+    `\n\nCHECKED AS THE APP: it can see the schema ${db}.${schema}, but no procedure called ${name} ` +
+    `in it. So either it was never created there, or it exists and the app has no USAGE on the ` +
+    `procedure itself. SHOW PROCEDURES LIKE '${name}' IN ACCOUNT run as ACCOUNTADMIN separates those: ` +
+    `a row there and nothing here means the grant is missing.`
+  )
+}

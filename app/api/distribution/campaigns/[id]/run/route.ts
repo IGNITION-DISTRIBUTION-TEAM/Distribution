@@ -9,7 +9,7 @@ import {
   RUN_PROC_IDENT,
 } from "@/app/api/campaign-config/route"
 import { IDENT_COL } from "@/app/api/distribution/tasks/route"
-import { callHint } from "@/lib/distribution-steps"
+import { callHint, probeProcedure } from "@/lib/distribution-steps"
 import {
   HLL_TABLE,
   hllColumnSet,
@@ -168,7 +168,7 @@ async function* runStepsGen(campaignId: number, config: RunConfig): AsyncGenerat
       yield emitEnd({ step, status: "success", message: `Ran ${proc}` })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      yield emitEnd({ step, status: "error", message: `Failed at ${proc}: ${message}${callHint(message, proc)}` })
+      yield emitEnd({ step, status: "error", message: `Failed at ${proc}: ${message}${callHint(message, proc)}${await probeProcedure(message, proc)}` })
       yield await done(campaignId, results); return
     }
   }
@@ -255,7 +255,7 @@ async function runInitialSource(
     return { step, status: "success", message: `Loaded ${label} into HLL${loaded}` }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { step, status: "error", message: `Initial source → HLL failed: ${message}${callHint(message, object)}` }
+    return { step, status: "error", message: `Initial source → HLL failed: ${message}${callHint(message, object)}${await probeProcedure(message, object)}` }
   }
 }
 
