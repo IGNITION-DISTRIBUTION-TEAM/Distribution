@@ -1,4 +1,4 @@
-import { executeSnowflakeQuery } from "@/lib/snowflake"
+import { executeSnowflakeQuery, executeSnowflakeQueryWithMeta } from "@/lib/snowflake"
 import {
   TABLE as CONFIG_TABLE,
   SF_OPTS as CONFIG_SF_OPTS,
@@ -282,6 +282,57 @@ export async function buildStepSql(
     if (pairs.filter(([h]) => !autoUpper.has(h.toUpperCase())).length === 0) {
       throw new Error("Map at least one source column (besides the auto-filled ones) into HLL.")
     }
+
+    // Check the mapping against the columns that actually exist before building
+    // an INSERT out of it. A saved mapping outlives the object it was made
+    // against — point a config at a new view and every column the old one had
+    // is still in the config — and Snowflake reports the result as
+    // "invalid identifier 'AGE'" at a character offset, naming neither the side
+    // that is wrong nor the object it is missing from.
+    //
+    // LIMIT 0 rather than INFORMATION_SCHEMA: it works for a view, a table or
+    // anything else readable, and it asks the question with exactly the
+    // privileges the INSERT itself will use. Best effort — if the probe fails,
+    // fall through and let Snowflake report whatever it would have reported.
+    const mapped = pairs.filter(([h]) => !autoUpper.has(h.toUpperCase()))
+    try {
+      const [rdb, rschema] = readFrom.split(".")
+      const meta = await executeSnowflakeQueryWithMeta(`SELECT * FROM ${readFrom} LIMIT 0`, {
+        database: rdb,
+        schema: rschema,
+      })
+      const sourceCols = new Set(meta.columns.map((c) => String(c.name).toUpperCase()))
+      if (sourceCols.size > 0) {
+        const missing = mapped.filter(([, s]) => !sourceCols.has(s.toUpperCase()))
+        if (missing.length > 0) {
+          const names = missing.map(([h, s]) => (h.toUpperCase() === s.toUpperCase() ? s : `${s} → ${h}`))
+          throw new Error(
+            `The column mapping is out of date. ${readFrom} has no column ` +
+              `${names.length === 1 ? "" : "s"}${names.join(", ")}. ` +
+              `A mapping is saved against the object it was built from, so pointing the config at a ` +
+              `different view leaves the old object's columns behind in it. Re-map the source in ` +
+              `Settings → Campaign automation and save. ` +
+              `${readFrom} actually has: ${[...sourceCols].sort().join(", ")}.`
+          )
+        }
+      }
+      // The other half of the same mistake: an HLL column that no longer exists.
+      if (hllColumns && hllColumns.size > 0) {
+        const noHome = mapped.filter(([h]) => !hllColumns.has(h.toUpperCase())).map(([h]) => h)
+        if (noHome.length > 0) {
+          throw new Error(
+            `The column mapping targets ${noHome.join(", ")}, which ${
+              noHome.length === 1 ? "is not a column" : "are not columns"
+            } of ${HLL_TABLE}. Re-map the source in Settings → Campaign automation and save.`
+          )
+        }
+      }
+    } catch (error) {
+      // Only our own diagnosis propagates; a failed probe must not break a load
+      // that would otherwise have worked.
+      if (error instanceof Error && /column mapping/i.test(error.message)) throw error
+    }
+
     const { hllCols, selectExprs } = buildHllInsertLists(pairs, autos)
     return {
       sql: `INSERT INTO ${HLL_TABLE} (${hllCols.join(", ")}) SELECT ${selectExprs.join(", ")} FROM ${readFrom}`,
