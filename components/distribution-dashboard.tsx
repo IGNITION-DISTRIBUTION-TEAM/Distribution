@@ -7499,6 +7499,9 @@ function CampaignSettingsPanel() {
   const [viewCols, setViewCols] = useState<{ name: string; type: string }[]>([])
   const [colsLoading, setColsLoading] = useState(false)
   const [colsMsg, setColsMsg] = useState<string | null>(null)
+  // Separate from colsMsg, which renders as an error. Dropping a stale mapping
+  // is a successful cleanup, not a failure, and must not look like one.
+  const [colsNote, setColsNote] = useState<string | null>(null)
   const [isActive, setIsActive] = useState(true)
   // --- Full-distribution run ---
   const [running, setRunning] = useState(false)
@@ -7562,7 +7565,7 @@ function CampaignSettingsPanel() {
     const readFrom =
       sourceLoadFrom.trim() || (sourceKind === "proc" ? targetTable.trim() : sourceObject.trim())
     if (!readFrom) { setColsMsg(sourceKind === "proc" ? "Set the Upload target (table or view) below first, or a Load from object." : "Enter the view name first."); return }
-    setColsLoading(true); setColsMsg(null)
+    setColsLoading(true); setColsMsg(null); setColsNote(null)
     try {
       const [h, v] = await Promise.all([
         fetch("/api/distribution/columns?object=hll").then((r) => r.json()),
@@ -7574,20 +7577,47 @@ function CampaignSettingsPanel() {
       const vc = v.columns ?? []
       if (!vc.length) throw new Error("No columns found on the source (check name / grants).")
       setHllCols(hc); setViewCols(vc)
-      setSourceMapping((m) => {
-        const next = { ...m }
+      // Built synchronously rather than in a setState updater: the updater runs
+      // during a later render, so anything it collects is not available to the
+      // lines below it. This is a click handler, so the current state is the
+      // current render's state.
+      const stale: string[] = []
+      {
+        const next = { ...sourceMapping }
         // These HLL columns are auto-filled (campaign id / today / today+N) —
         // never map them from a source column (drop any stale entries too).
         const AUTO = ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]
         for (const a of AUTO) delete next[a]
+
+        // Drop entries whose SOURCE column is not on this object. A mapping is
+        // saved against the object it was built from and outlives it, so
+        // repointing a config at another view leaves the old one's columns
+        // behind. Matching by name below cannot clear them — it skips anything
+        // already mapped — so this ran as a pure add and a stale entry survived
+        // every attempt to fix it from here, then failed the INSERT with
+        // "invalid identifier". An entry naming a column that does not exist has
+        // no other outcome available to it, so there is nothing to preserve.
+        const srcNames = new Set(vc.map((s: { name: string }) => s.name.toUpperCase()))
+        for (const [hcol, scol] of Object.entries(next)) {
+          if (!srcNames.has(String(scol).toUpperCase())) { stale.push(`${hcol} ← ${scol}`); delete next[hcol] }
+        }
+
         for (const hcol of hc) {
           if (AUTO.includes(hcol.name.toUpperCase())) continue
           if (next[hcol.name]) continue
           const hit = vc.find((s: { name: string }) => s.name.toLowerCase() === hcol.name.toLowerCase())
           if (hit) next[hcol.name] = hit.name
         }
-        return next
-      })
+        setSourceMapping(next)
+      }
+      // Say so — a mapping silently changing under you is worse than the error.
+      if (stale.length > 0) {
+        setColsNote(
+          `Dropped ${stale.length} stale mapping${stale.length === 1 ? "" : "s"} — ` +
+            `${stale.join(", ")} — because ${stale.length === 1 ? "that column is" : "those columns are"} ` +
+            `not on ${readFrom}. Save to keep this.`
+        )
+      }
     } catch (e) {
       setColsMsg(e instanceof Error ? e.message : String(e))
     } finally {
@@ -8283,6 +8313,7 @@ function CampaignSettingsPanel() {
                     {Object.keys(sourceMapping).length > 0 && <span className="text-xs text-muted-foreground">{Object.keys(sourceMapping).length} column(s) mapped</span>}
                   </div>
                   {colsMsg && <p className="mt-2 text-xs text-rose-400">{colsMsg}</p>}
+                  {colsNote && <p className="mt-2 text-xs text-amber-300">{colsNote}</p>}
                   {hllCols.length > 0 && (
                     <div className="mt-3 max-h-72 overflow-auto rounded-md border border-border">
                       <table className="w-full text-sm">
