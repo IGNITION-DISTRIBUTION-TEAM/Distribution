@@ -330,7 +330,7 @@ export function TasksSection() {
                 runs.map((r, i) => (
                   <tr key={i} className="border-b border-border last:border-0">
                     <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">
-                      {r.startedAt ? String(r.startedAt).replace("T", " ").slice(0, 19) : "—"}
+                      {r.startedAt ?? "—"}
                     </td>
                     <td className="px-3 py-1.5 text-xs text-foreground">{r.syncName}</td>
                     <td className={cn("px-3 py-1.5 text-xs", statusClass(r.status))}>{r.status}</td>

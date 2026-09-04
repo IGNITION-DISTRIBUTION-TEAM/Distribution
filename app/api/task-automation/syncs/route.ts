@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { listSyncs, forgetSync } from "@/lib/sftp-sync-registry"
+import {
+  listSyncs,
+  forgetSync,
+  findMissingTargets,
+  consecutiveFailures,
+  CONFIGS_TABLE,
+  REGISTRY_SF,
+} from "@/lib/sftp-sync-registry"
 import { objectNames } from "@/lib/sftp-sync-codegen"
 
 export const dynamic = "force-dynamic"
@@ -41,6 +48,27 @@ export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "task-automation")
   if (guard instanceof NextResponse) return guard
 
+  // ?sql=NAME returns one job's deployed SQL, on demand. It is up to 60KB per
+  // job, so it is deliberately not part of the list payload.
+  const wantSql = (request.nextUrl.searchParams.get("sql") ?? "").trim().toUpperCase()
+  if (wantSql) {
+    if (!IDENT.test(wantSql)) {
+      return NextResponse.json({ error: `Invalid sync name: ${JSON.stringify(wantSql)}` }, { status: 400 })
+    }
+    try {
+      const rows = await executeSnowflakeQuery<{ DEPLOYED_SQL: unknown }>(
+        `SELECT DEPLOYED_SQL FROM ${CONFIGS_TABLE} WHERE SYNC_NAME = '${wantSql}' LIMIT 1`,
+        REGISTRY_SF
+      )
+      return NextResponse.json({ syncName: wantSql, sql: rows[0]?.DEPLOYED_SQL ?? null })
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 }
+      )
+    }
+  }
+
   try {
     const registry = await listSyncs()
 
@@ -57,11 +85,39 @@ export async function GET(request: NextRequest) {
     let control: Record<string, unknown>[] = []
     try {
       control = await executeSnowflakeQuery<Record<string, unknown>>(
-        `SELECT SOURCE_NAME, LAST_MODIFIED, LAST_SYNCED, ROW_COUNT, STATUS FROM ${CONTROL}`,
+        // TO_VARCHAR so timestamps arrive readable rather than as Snowflake's
+        // "<seconds>.<nanos>" wire form — executeSnowflakeQuery does not format.
+        `SELECT SOURCE_NAME,
+                TO_VARCHAR(LAST_MODIFIED, 'YYYY-MM-DD HH24:MI:SS') AS LAST_MODIFIED,
+                TO_VARCHAR(LAST_SYNCED,   'YYYY-MM-DD HH24:MI:SS') AS LAST_SYNCED,
+                ROW_COUNT, STATUS
+           FROM ${CONTROL}`,
         { database: "DATAWAREHOUSE", schema: "DW" }
       )
     } catch {
       control = []
+    }
+
+    // Does each target table still exist? One query for the whole schema.
+    // A sync whose table has been dropped deploys clean and then fails at its
+    // scheduled hour, which is the least useful moment to find out.
+    let missing = new Set<string>()
+    try {
+      missing = await findMissingTargets(
+        registry.map((r) => ({
+          db: r.config.targetDb,
+          schema: r.config.targetSchema,
+          table: r.config.targetTable,
+        }))
+      )
+    } catch {
+      missing = new Set()
+    }
+    let failures = new Map<string, number>()
+    try {
+      failures = await consecutiveFailures()
+    } catch {
+      failures = new Map()
     }
 
     const taskByName = new Map<string, { state: string | null; schedule: string | null }>()
@@ -78,12 +134,20 @@ export async function GET(request: NextRequest) {
     const syncs = registry.map((r) => {
       const name = r.config.syncName.toUpperCase()
       const task = taskByName.get(objectNames(name).task.toUpperCase()) ?? null
+      const target = `${r.config.targetDb}.${r.config.targetSchema}.${r.config.targetTable}`.toUpperCase()
       return {
         ...r,
         source: "registry" as const,
         taskState: task?.state ?? null,
         taskSchedule: task?.schedule ?? null,
         control: controlByName.get(name) ?? null,
+        targetMissing: missing.has(target),
+        // Only offer to build it when the stored types are real ones. A job
+        // configured against an existing table carries VARCHAR(1000)
+        // placeholders, and creating a wrongly-typed table out of a typo would
+        // be worse than the failure it replaces.
+        canCreateTarget: missing.has(target) && r.config.createTable,
+        consecutiveFailures: failures.get(name) ?? null,
       }
     })
 

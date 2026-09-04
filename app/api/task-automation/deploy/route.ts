@@ -50,7 +50,32 @@ export async function POST(request: NextRequest) {
   }
 
   const [db, schema] = [body.config.targetDb, body.config.targetSchema]
+  const target = `${db}.${schema}.${body.config.targetTable}`
   const results: { label: string; ok: boolean; error?: string }[] = []
+
+  // PRE-FLIGHT. Nothing in the script creates the target when the job was
+  // configured against an existing table, so without this the deploy succeeds,
+  // the task is armed, and the first anyone hears of a missing table is a
+  // failure at whatever hour the schedule fires.
+  if (!body.config.createTable) {
+    try {
+      await executeSnowflakeQuery(`SELECT * FROM ${target} LIMIT 0`, { database: db, schema })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return NextResponse.json(
+        {
+          deployed: false,
+          error:
+            `${target} cannot be read, so this sync would deploy cleanly and then fail on its ` +
+            `schedule. Snowflake reports a missing object and a missing privilege the same way, ` +
+            `so it either does not exist or this app's role cannot see it. Nothing was created.\n\n` +
+            `If the table should be created, go back to Destination and choose "Create a new ` +
+            `table".\n\nDetail: ${message}`,
+        },
+        { status: 400 }
+      )
+    }
+  }
 
   for (const st of built.statements) {
     try {
@@ -79,6 +104,29 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
+  }
+
+  // POST-FLIGHT. Every statement reported success; confirm the thing they were
+  // all for actually exists. This catches routes to a missing target that the
+  // pre-flight cannot — including a CREATE that succeeded against a name other
+  // than the one the procedure references.
+  try {
+    await executeSnowflakeQuery(`SELECT * FROM ${target} LIMIT 0`, { database: db, schema })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return NextResponse.json(
+      {
+        deployed: false,
+        results,
+        statements: built.statements,
+        warnings: built.warnings,
+        error:
+          `Every statement ran, but ${target} still cannot be read afterwards — so this sync ` +
+          `would fail on its first run. The objects that were created are still there and a ` +
+          `re-deploy is safe.\n\nDetail: ${message}`,
+      },
+      { status: 500 }
+    )
   }
 
   // Record what was deployed, so the job can be reopened and edited later.

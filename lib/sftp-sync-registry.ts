@@ -182,7 +182,11 @@ export function rowToRegistry(r: Record<string, unknown>): SyncRegistryRow {
 export async function listSyncs(): Promise<SyncRegistryRow[]> {
   await ensureRegistryTables()
   const rows = await executeSnowflakeQuery<Record<string, unknown>>(
-    `SELECT * FROM ${CONFIGS_TABLE} ORDER BY SYNC_NAME`,
+    // EXCLUDE + TO_VARCHAR: SELECT * would hand DEPLOYED_AT back as Snowflake's
+    // raw "<seconds>.<nanos>" wire form, which reads as a big number on screen.
+    `SELECT * EXCLUDE (DEPLOYED_AT),
+            TO_VARCHAR(DEPLOYED_AT, 'YYYY-MM-DD HH24:MI:SS') AS DEPLOYED_AT
+       FROM ${CONFIGS_TABLE} ORDER BY SYNC_NAME`,
     REGISTRY_SF
   )
   return rows.map(rowToRegistry)
@@ -285,7 +289,15 @@ export async function listRuns(opts: { days: number; limit: number }): Promise<S
   const days = Math.max(1, Math.min(365, Math.trunc(opts.days) || 7))
   const limit = Math.max(1, Math.min(500, Math.trunc(opts.limit) || 100))
   const rows = await executeSnowflakeQuery<Record<string, unknown>>(
-    `SELECT SYNC_NAME, STARTED_AT, FINISHED_AT, STATUS, FILES, ROWS_LOADED, ROWS_IN_TARGET, MESSAGE
+    // TO_VARCHAR, not raw columns: executeSnowflakeQuery hands back Snowflake's
+    // wire encoding, so a TIMESTAMP arrives as "1788491077.765000000". That is
+    // ugly on screen and worse in densify(), which buckets by the first ten
+    // characters expecting YYYY-MM-DD — on a raw epoch every row falls outside
+    // every bucket and the chart renders flat zero however many runs there were.
+    `SELECT SYNC_NAME,
+            TO_VARCHAR(STARTED_AT,  'YYYY-MM-DD HH24:MI:SS') AS STARTED_AT,
+            TO_VARCHAR(FINISHED_AT, 'YYYY-MM-DD HH24:MI:SS') AS FINISHED_AT,
+            STATUS, FILES, ROWS_LOADED, ROWS_IN_TARGET, MESSAGE
        FROM ${RUNS_TABLE}
       WHERE STARTED_AT >= DATEADD(day, -${days}, CURRENT_TIMESTAMP())
       ORDER BY STARTED_AT DESC
@@ -330,4 +342,82 @@ export function densify(
     if (/^FAILED/i.test(r.status)) b.failed += 1
   }
   return [...buckets.values()]
+}
+
+/* ----------------------------------------------------- target table health */
+
+/**
+ * Which of these target tables do not exist?
+ *
+ * One INFORMATION_SCHEMA query per distinct database, not one per sync — a job
+ * list of twenty should cost one round trip, not twenty.
+ *
+ * A caveat worth stating rather than hiding: INFORMATION_SCHEMA lists only what
+ * the role has privileges on, so "missing" here means absent OR invisible.
+ * Snowflake words both failures identically at run time too, so the distinction
+ * is not one this app can make — the UI says so instead of asserting the table
+ * is gone.
+ */
+export async function findMissingTargets(
+  targets: { db: string; schema: string; table: string }[]
+): Promise<Set<string>> {
+  const key = (t: { db: string; schema: string; table: string }) =>
+    `${t.db}.${t.schema}.${t.table}`.toUpperCase()
+  const missing = new Set(targets.map(key))
+  if (targets.length === 0) return missing
+
+  const byDb = new Map<string, typeof targets>()
+  for (const t of targets) {
+    const d = t.db.toUpperCase()
+    byDb.set(d, [...(byDb.get(d) ?? []), t])
+  }
+
+  for (const [db, list] of byDb) {
+    if (!/^[A-Za-z0-9_]+$/.test(db)) continue
+    const schemas = [...new Set(list.map((t) => t.schema.toUpperCase()))].filter((x) =>
+      /^[A-Za-z0-9_]+$/.test(x)
+    )
+    if (schemas.length === 0) continue
+    try {
+      const rows = await executeSnowflakeQuery<{ TABLE_SCHEMA: string; TABLE_NAME: string }>(
+        `SELECT TABLE_SCHEMA, TABLE_NAME
+           FROM ${db}.INFORMATION_SCHEMA.TABLES
+          WHERE TABLE_SCHEMA IN (${schemas.map((x) => `'${x}'`).join(", ")})`,
+        { database: db, schema: schemas[0] }
+      )
+      for (const r of rows) {
+        missing.delete(`${db}.${String(r.TABLE_SCHEMA)}.${String(r.TABLE_NAME)}`.toUpperCase())
+      }
+    } catch {
+      // Could not check. Report nothing as missing rather than badging every
+      // job red on the strength of a failed lookup.
+      for (const t of list) missing.delete(key(t))
+    }
+  }
+  return missing
+}
+
+/**
+ * Consecutive failures per sync, most recent run first.
+ *
+ * Counts the unbroken run of FAILED at the head of each sync's history, so one
+ * bad night reads as 1 and a job that has been broken for a week reads as 7.
+ * A sync with no logged runs is absent from the map rather than zero — those
+ * are the ones deployed before run logging, and calling them "0 failures"
+ * would be a claim the data does not support.
+ */
+export async function consecutiveFailures(): Promise<Map<string, number>> {
+  const runs = await listRuns({ days: 90, limit: 500 })
+  const out = new Map<string, number>()
+  const stopped = new Set<string>()
+  for (const r of runs) {
+    // listRuns is already ordered STARTED_AT DESC.
+    if (stopped.has(r.syncName)) continue
+    if (/^FAILED/i.test(r.status)) out.set(r.syncName, (out.get(r.syncName) ?? 0) + 1)
+    else {
+      stopped.add(r.syncName)
+      if (!out.has(r.syncName)) out.set(r.syncName, 0)
+    }
+  }
+  return out
 }

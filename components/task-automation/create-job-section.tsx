@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils"
 import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
 import { SCHEDULE_TZ } from "@/lib/cron-schedule"
 import { SchedulePicker } from "@/components/task-automation-schedule-picker"
+import { restoreFromConfig, rebuildColumns } from "@/lib/sftp-sync-restore"
 import {
   SKIP_VALUE,
   ALLOWED_SQL_TYPES,
@@ -216,6 +217,15 @@ export function CreateJobSection({
   // ---- step 5: test the load before anything permanent exists
   const [syncName, setSyncName] = useState("")
   const [reopened, setReopened] = useState(false)
+  /**
+   * Source headers restored from a saved job, by POSITION.
+   *
+   * Preferred over deriving them from the peeked file, because a reopened job
+   * has a column map rather than a file — and because packing the mapped
+   * columns back together is what used to drop every column after a skipped
+   * one. Cleared the moment a real file is opened.
+   */
+  const [restoredHeaders, setRestoredHeaders] = useState<string[] | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestLoadResult | null>(null)
 
@@ -239,11 +249,11 @@ export function CreateJobSection({
   /**
    * Reopen a saved job.
    *
-   * Everything except the file sample is restored from the registry, including
-   * the column mapping — COLUMN_MAP_JSON carries the source header names and
-   * their ordinals, so the mapping table redraws without going back to the
-   * SFTP. Pressing into the browser for a fresh sample is optional, and a file
-   * that has since been archived does not block editing the schedule.
+   * Everything but the file sample comes from the registry. `restoreFromConfig`
+   * rebuilds the source headers BY POSITION — a job whose second field was
+   * skipped restores to three header slots with a placeholder in the middle,
+   * not two packed together. Packing them was silently dropping every column
+   * after a skipped one; see lib/sftp-sync-restore.ts.
    *
    * Keyed on loadToken, not on the config object, so an unrelated re-render
    * cannot re-apply a config over edits already made to it.
@@ -251,22 +261,28 @@ export function CreateJobSection({
   useEffect(() => {
     const cfg = loadConfig?.current
     if (!loadToken || !cfg) return
+    const r = restoreFromConfig(cfg)
+
     setEndpoint(cfg.endpoint)
     setPath(cfg.remoteDir)
     setPattern(cfg.filePattern)
     setDelimiter(cfg.delimiter as Delimiter)
     setHasHeader(cfg.skipHeader)
-    setDestMode(cfg.createTable ? "new" : "existing")
-    setDestTable(`${cfg.targetDb}.${cfg.targetSchema}.${cfg.targetTable}`)
     setLoadMode(cfg.loadMode)
     setMergeKeys(cfg.mergeKeys)
     setSyncName(cfg.syncName)
     setCron(cfg.scheduleCron)
     setWarehouse(cfg.warehouse)
-    setMapping(Object.fromEntries(cfg.columns.map((c) => [c.ordinal - 1, c.target])))
-    setNewTypes(Object.fromEntries(cfg.columns.map((c) => [c.target, c.type])))
+
+    setDestMode(r.destMode)
+    setDestTable(r.destTable)
+    setRestoredHeaders(r.headers)
+    setMapping(r.mapping)
+    setNewTypes(r.newTypes)
+    setPeek(null)
+
     // The wizard gates its later steps on a picked file. A reopened job has a
-    // pattern rather than one specific file, so stand in the pattern as the
+    // pattern rather than one specific file, so the pattern stands in as the
     // selection — the sync matches on the pattern anyway, not on this name.
     setSelected({
       name: cfg.filePattern,
@@ -275,8 +291,30 @@ export function CreateJobSection({
       mtime_epoch: null,
       path: `${cfg.remoteDir}/${cfg.filePattern}`,
     })
-    setPeek(cfg.columns.map((c) => c.source).join(cfg.delimiter) ? [cfg.columns.map((c) => c.source).join(cfg.delimiter)] : null)
     setReopened(true)
+
+    // An existing-table job needs the real target columns before anything below
+    // step 3 will render — `targetColumns` is `destCols ?? []` in that mode, so
+    // without this the restored mapping is invisible and the job cannot be
+    // redeployed. This is a Snowflake read, not an SFTP one, so it still works
+    // for a source file that has since been archived.
+    if (r.destMode === "existing") {
+      setDestCols(null)
+      setDestError(null)
+      setDestLoading(true)
+      void fetch("/api/snowflake/table-columns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: r.destTable }),
+      })
+        .then(async (res) => {
+          const d = await res.json()
+          if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+          setDestCols(d.columns ?? [])
+        })
+        .catch((e) => setDestError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setDestLoading(false))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadToken])
 
@@ -329,6 +367,9 @@ export function CreateJobSection({
   useEffect(() => { if (endpoint && path) void browse(path) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [endpoint])
 
   const openFile = async (entry: SftpEntry) => {
+    // A real file wins over anything restored from the registry.
+    setRestoredHeaders(null)
+    setReopened(false)
     setSelected(entry)
     setPattern(suggestPattern(entry.name))
     setPeeking(true)
@@ -371,13 +412,14 @@ export function CreateJobSection({
   }, [peek])
 
   const sourceHeaders = useMemo(() => {
+    if (restoredHeaders) return restoredHeaders
     if (!peek || peek.length === 0) return []
     const first = splitDelimited(peek[0], delimiter)
     // No header row means the columns have no names, so they get positional
     // ones. COL1..COLn matches how COPY INTO addresses them ($1..$n), which is
     // the thing the generator has to line up with.
     return hasHeader ? first : first.map((_, i) => `COL${i + 1}`)
-  }, [peek, delimiter, hasHeader])
+  }, [peek, delimiter, hasHeader, restoredHeaders])
 
   const sampleRows = useMemo(() => {
     if (!peek) return []
@@ -441,9 +483,9 @@ export function CreateJobSection({
     if (!selected || !syncName.trim() || !destTable.trim()) return null
     const parts = destTable.trim().split(".")
     if (parts.length !== 3) return null
-    const mapped = sourceHeaders
-      .map((h, i) => ({ h, i, target: destMode === "new" ? targetColumns[i]?.COLUMN_NAME : mapping[i] }))
-      .filter((m) => m.target && m.target !== SKIP_VALUE)
+    // Shared with the reopen path so scripts/task-automation/restore-tests.ts
+    // exercises this exact function rather than a copy of it.
+    const mapped = rebuildColumns(sourceHeaders, mapping, newTypes, destMode, targetColumns)
     if (mapped.length === 0) return null
     return {
       syncName: syncName.trim().toUpperCase(),
@@ -452,14 +494,7 @@ export function CreateJobSection({
       filePattern: pattern,
       targetDb: parts[0], targetSchema: parts[1], targetTable: parts[2],
       createTable: destMode === "new",
-      columns: mapped.map((m) => ({
-        source: m.h,
-        // 1-based, and the position in the FILE — not the position among the
-        // mapped columns. A skipped field must not shift the ones after it.
-        ordinal: m.i + 1,
-        target: m.target as string,
-        type: newTypes[m.target as string] ?? "VARCHAR(1000)",
-      })),
+      columns: mapped,
       loadMode,
       mergeKeys: loadMode === "merge" ? mergeKeys : [],
       delimiter,
@@ -623,9 +658,10 @@ export function CreateJobSection({
     <div className="flex max-w-5xl flex-col gap-5">
       {reopened && (
         <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-          Reopened from the job list. The mapping and schedule came from the registry, not from
-          the file — open the source folder again if you want a fresh sample. Creating it again
-          replaces the existing objects rather than making a second set.
+          Reopened from the job list. The column mapping and schedule came from the registry
+          rather than from the file, so fields you skipped last time are still skipped and the
+          positions are unchanged. Open the source folder again if you want a fresh sample.
+          Creating it again replaces the existing objects rather than making a second set.
         </div>
       )}
       <div className="rounded-xl border border-border bg-card p-6">

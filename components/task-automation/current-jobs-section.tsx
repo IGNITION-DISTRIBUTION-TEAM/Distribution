@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Loader2, Pencil, PlayCircle, RefreshCw, Trash2, UploadCloud } from "lucide-react"
+import { AlertTriangle, Code2, Loader2, Pencil, PlayCircle, RefreshCw, TableProperties, Trash2, UploadCloud } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { parseCron, describeCron } from "@/lib/cron-schedule"
 import type { SyncConfig } from "@/lib/sftp-sync-codegen"
@@ -36,6 +36,9 @@ type SyncRow = {
   stale: boolean
   taskState: string | null
   control: Record<string, unknown> | null
+  targetMissing: boolean
+  canCreateTarget: boolean
+  consecutiveFailures: number | null
 }
 type Foreign = { syncName: string; control: Record<string, unknown> }
 
@@ -57,6 +60,7 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<SyncRow | null>(null)
+  const [showSql, setShowSql] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -136,6 +140,44 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
     }
   }
 
+  const createTarget = async (r: SyncRow) => {
+    setBusy(r.config.syncName)
+    setNote(null)
+    try {
+      const res = await fetch("/api/task-automation/create-target", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncName: r.config.syncName }),
+      })
+      const d = await res.json()
+      setNote(res.ok ? `Created ${d.created}. Run it now to check it loads.` : d.error)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+      void load()
+    }
+  }
+
+  /** Fetched on click: the deployed SQL runs to tens of kilobytes per job. */
+  const openSql = async (r: SyncRow) => {
+    setShowSql("Loading…")
+    try {
+      const res = await fetch(
+        `/api/task-automation/syncs?sql=${encodeURIComponent(r.config.syncName)}`,
+        { cache: "no-store" }
+      )
+      const d = await res.json()
+      setShowSql(
+        d.sql ??
+          `Nothing recorded for ${r.config.syncName}. Jobs deployed before the registry existed ` +
+            `have no stored SQL.`
+      )
+    } catch (e) {
+      setShowSql(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const doDelete = async () => {
     const r = confirmDelete
     setConfirmDelete(null)
@@ -211,9 +253,28 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
               </tr>
             ) : (
               rows.map((r) => (
-                <tr key={r.config.syncName} className="border-b border-border last:border-0 align-top">
+                <tr
+                  key={r.config.syncName}
+                  className={cn(
+                    "border-b border-border last:border-0 align-top",
+                    (r.targetMissing || (r.consecutiveFailures ?? 0) > 0) && "bg-rose-500/5"
+                  )}
+                >
                   <td className="px-3 py-2">
                     <span className="font-medium text-foreground">{r.config.syncName}</span>
+                    {r.targetMissing && (
+                      <span
+                        className="ml-2 inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300"
+                        title="The target table cannot be read. Snowflake reports a missing object and a missing privilege the same way, so it is one or the other."
+                      >
+                        <AlertTriangle className="h-3 w-3" /> target missing
+                      </span>
+                    )}
+                    {(r.consecutiveFailures ?? 0) > 0 && (
+                      <span className="ml-2 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300">
+                        {r.consecutiveFailures} failed run{r.consecutiveFailures === 1 ? "" : "s"} in a row
+                      </span>
+                    )}
                     {r.stale && (
                       <span
                         className="ml-2 rounded border border-amber-500/40 bg-amber-500/5 px-1.5 py-0.5 text-[10px] text-amber-300"
@@ -262,6 +323,29 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
+                      {r.canCreateTarget && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-amber-300"
+                          disabled={busy === r.config.syncName}
+                          onClick={() => void createTarget(r)}
+                          aria-label="Create the target table"
+                          title="Create the target table with the types this job was set up with"
+                        >
+                          <TableProperties className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => void openSql(r)}
+                        aria-label="Show the SQL that was deployed"
+                        title="Show the SQL that was deployed"
+                      >
+                        <Code2 className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -316,6 +400,32 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
           </tbody>
         </table>
       </div>
+
+      {rows.some((r) => r.targetMissing && !r.canCreateTarget) && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+          A job whose target is missing but which was set up against an{" "}
+          <em>existing</em> table has no Create button: it stored placeholder column types rather
+          than the real ones, so building the table from them would give you something that loads
+          quietly and holds the wrong types. Open the job, switch Destination to &ldquo;Create a
+          new table&rdquo;, choose the types and deploy again.
+        </p>
+      )}
+
+      {showSql !== null && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              SQL that was deployed
+            </p>
+            <Button variant="ghost" size="sm" onClick={() => setShowSql(null)}>
+              Close
+            </Button>
+          </div>
+          <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/40 p-3 text-[11px] leading-relaxed text-muted-foreground">
+            {showSql}
+          </pre>
+        </div>
+      )}
 
       {foreign.length > 0 && (
         <div>

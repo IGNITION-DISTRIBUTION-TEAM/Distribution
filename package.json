@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx tsx scripts/task-automation/codegen-tests.ts && npx tsx scripts/task-automation/cron-schedule-tests.ts && npx tsx scripts/task-automation/endpoint-sql-tests.ts"
+    "test": "npx tsx scripts/task-automation/codegen-tests.ts && npx tsx scripts/task-automation/cron-schedule-tests.ts && npx tsx scripts/task-automation/endpoint-sql-tests.ts && npx tsx scripts/task-automation/restore-tests.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

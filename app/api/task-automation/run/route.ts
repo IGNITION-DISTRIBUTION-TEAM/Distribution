@@ -89,7 +89,12 @@ export async function POST(request: NextRequest) {
       }
 
       const control = await executeSnowflakeQuery<Record<string, unknown>>(
-        `SELECT SOURCE_NAME, LAST_MODIFIED, LAST_SYNCED, ROW_COUNT, STATUS
+        // TO_VARCHAR: executeSnowflakeQuery returns Snowflake's raw wire values,
+        // so without this the wizard's "Last synced" tile shows an epoch.
+        `SELECT SOURCE_NAME,
+                TO_VARCHAR(LAST_MODIFIED, 'YYYY-MM-DD HH24:MI:SS') AS LAST_MODIFIED,
+                TO_VARCHAR(LAST_SYNCED,   'YYYY-MM-DD HH24:MI:SS') AS LAST_SYNCED,
+                ROW_COUNT, STATUS
            FROM DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
           WHERE SOURCE_NAME = '${p.sourceName.replace(/'/g, "''")}'`,
         { database: "DATAWAREHOUSE", schema: "DW" }
