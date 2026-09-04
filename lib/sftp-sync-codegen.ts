@@ -30,8 +30,10 @@ export const ALLOWED_TARGET_SCHEMAS = ["SPOT_DW.SPOT_SFTP"]
  * showing it as a sync that mysteriously never runs anything.
  *
  * 2 — the generated procedure writes to TSK_SFTP_SYNC_RUNS.
+ * 3 — it verifies its own load: reporting SUCCESS while the target is empty is
+ *     the worst failure this thing has, and it happened.
  */
-export const GENERATOR_VERSION = 2
+export const GENERATOR_VERSION = 3
 
 /**
  * The app-owned run log. One row per run of any generated sync.
@@ -91,6 +93,11 @@ export type SyncConfig = {
   scheduleCron: string
   scheduleTz: string
   onError: "ABORT_STATEMENT" | "CONTINUE"
+  /**
+   * Set by the test load when it measured the merge key against the whole file
+   * and found duplicates. Evidence, not a guess — so `validate()` refuses on it.
+   */
+  mergeKeyProvenNonUnique?: { distinct: number; rows: number; suggestion?: string[] | null }
 }
 
 export type BuildResult = {
@@ -221,6 +228,22 @@ function validate(cfg: SyncConfig): string[] {
       if (!targets.has(ident(k, "Merge key"))) {
         throw new Error(`Merge key ${k} is not one of the mapped target columns.`)
       }
+    }
+    // A merge key the test load PROVED non-unique is refused, not warned about.
+    // Snowflake raises "Duplicate row detected during DML action" when several
+    // source rows match one target row, so this deploys a job that fails at its
+    // scheduled hour with nobody awake — and the fix is one more ticked column.
+    const nu = cfg.mergeKeyProvenNonUnique
+    if (nu) {
+      throw new Error(
+        `${cfg.mergeKeys.join(", ")} is not unique in the file that was tested: ${nu.rows} rows ` +
+          `but only ${nu.distinct} distinct values. A merge on it would either fail with ` +
+          `"Duplicate row detected during DML action" or keep one arbitrary row per key and ` +
+          `discard the rest.` +
+          (nu.suggestion?.length
+            ? ` Merging on ${nu.suggestion.join(", ")} would be unique.`
+            : ` Add columns to the key until it identifies one row, or use truncate and insert.`)
+      )
     }
   }
 
@@ -607,6 +630,21 @@ ${loadBlock}
 
     SELECT GET(:fetched, 'max_mtime_epoch')::NUMBER INTO :max_mtime;
     SELECT COUNT(*) INTO :n_total FROM ${target};
+
+    /* CHECK OUR OWN WORK. A load that reports rows into a table that is empty a
+       statement later is not a success, and reporting it as one is how a sync
+       goes on looking healthy for days while delivering nothing. Whatever the
+       cause — a second sync truncating the same target, a rollback, a write
+       that went somewhere else — the honest answer here is FAILED. */
+    IF (n_loaded > 0 AND n_total = 0) THEN
+        errmsg := 'Loaded ' || n_loaded || ' row(s) but ${target} is empty immediately afterwards. '
+               || 'Check whether another sync writes to the same table.';
+        UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
+           SET STATUS = 'FAILED: ' || LEFT(:errmsg, 180), LAST_SYNCED = CURRENT_TIMESTAMP()
+         WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'FAILED'", ":n_files", ":n_loaded", ":n_total", ":errmsg")}
+        RETURN 'FAILED: ' || :errmsg;
+    END IF;
 
     UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
        SET LAST_MODIFIED = TO_TIMESTAMP_NTZ(:max_mtime),

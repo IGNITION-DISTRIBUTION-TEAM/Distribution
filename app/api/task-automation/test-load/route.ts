@@ -190,6 +190,66 @@ export async function POST(request: NextRequest) {
     const rowCount = Number(Object.values(counted[0] ?? {})[0] ?? 0)
     steps.push({ label: "COPY INTO the staging table", ok: true, detail: `${rowCount} row(s)` })
 
+    /* 5b — is the merge key actually unique?
+       The whole file is in the staging table, so this is an exact count for
+       this file rather than an inference from a sample. Snowflake raises
+       "Duplicate row detected during DML action" when a MERGE source has
+       several rows matching one target row, so a non-unique key is not a
+       stylistic problem — it is a scheduled failure, or silent row loss if
+       ERROR_ON_NONDETERMINISTIC_MERGE is off. */
+    let mergeKeyCheck: {
+      keys: string[]
+      rows: number
+      distinct: number
+      unique: boolean
+      suggestion: string[] | null
+    } | null = null
+
+    if (config.loadMode === "merge" && config.mergeKeys.length > 0) {
+      const expr = (cols: string[]) =>
+        cols.map((c) => `COALESCE(${c}, '\u0000')`).join(" || '\u0001' || ")
+      const distinctOf = async (cols: string[]) => {
+        const r = await executeSnowflakeQuery<Record<string, unknown>>(
+          `SELECT COUNT(DISTINCT ${expr(cols)}) AS N FROM ${resolved.staging}`,
+          sf
+        )
+        return Number(Object.values(r[0] ?? {})[0] ?? 0)
+      }
+      const distinct = await distinctOf(config.mergeKeys)
+      let suggestion: string[] | null = null
+      if (distinct !== rowCount) {
+        // Grow the key one column at a time until it separates every row. Not
+        // exhaustive — the first combination that works is the useful answer,
+        // not the smallest one.
+        const tryCols = [...config.mergeKeys]
+        for (const c of colNames) {
+          if (tryCols.includes(c)) continue
+          tryCols.push(c)
+          if ((await distinctOf(tryCols)) === rowCount) {
+            suggestion = [...tryCols]
+            break
+          }
+        }
+      }
+      mergeKeyCheck = {
+        keys: config.mergeKeys,
+        rows: rowCount,
+        distinct,
+        unique: distinct === rowCount,
+        suggestion,
+      }
+      steps.push({
+        label: "Merge key check",
+        ok: distinct === rowCount,
+        detail:
+          distinct === rowCount
+            ? `${config.mergeKeys.join(", ")} is unique across all ${rowCount} rows`
+            : `${config.mergeKeys.join(", ")} has only ${distinct} distinct values across ` +
+              `${rowCount} rows` +
+              (suggestion ? ` — ${suggestion.join(", ")} would be unique` : ""),
+      })
+    }
+
     /* 6 — the sample, under the target column names. This is the thing worth
        looking at: a wrong delimiter collapses it to one column, and a wrong
        ordinal puts the values under the wrong heading. */
@@ -205,6 +265,7 @@ export async function POST(request: NextRequest) {
       rowCount,
       columns: colNames,
       rows: sample.map((r) => colNames.map((c) => r[c] ?? r[c.toLowerCase()] ?? null)),
+      mergeKeyCheck,
       file: staged ?? null,
       stage: resolved.stage,
       staging: resolved.staging,

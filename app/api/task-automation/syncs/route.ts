@@ -134,6 +134,27 @@ export async function GET(request: NextRequest) {
     } catch {
       health = new Map()
     }
+    // Live row count per distinct target, so a control row claiming rows into
+    // an empty table is visible rather than inferred.
+    const counts = new Map<string, number>()
+    await Promise.all(
+      [...new Set(registry.map((r) =>
+        `${r.config.targetDb}.${r.config.targetSchema}.${r.config.targetTable}`.toUpperCase()
+      ))].map(async (t) => {
+        if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(t)) return
+        const [db, sch] = t.split(".")
+        try {
+          const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+            `SELECT COUNT(*) AS N FROM ${t}`,
+            { database: db, schema: sch }
+          )
+          counts.set(t, Number(Object.values(rows[0] ?? {})[0] ?? 0))
+        } catch {
+          // Missing or unreadable — targetHealth already says so.
+        }
+      })
+    )
+
     let failures = new Map<string, number>()
     try {
       failures = await consecutiveFailures()
@@ -169,6 +190,18 @@ export async function GET(request: NextRequest) {
       const targetHealth: TargetHealth = blamed ? "missing" : looked
       const targetMissing = targetHealth === "missing"
 
+      // Two syncs writing to one table is a data-loss pattern, not a preference
+      // — whichever runs last wins, and with truncate-and-insert the loser's
+      // rows are simply gone. Nothing looked for this before.
+      const sharesTargetWith = registry
+        .filter(
+          (o) =>
+            o.config.syncName !== r.config.syncName &&
+            `${o.config.targetDb}.${o.config.targetSchema}.${o.config.targetTable}`.toUpperCase() ===
+              target.toUpperCase()
+        )
+        .map((o) => ({ syncName: o.config.syncName, loadMode: o.config.loadMode }))
+
       return {
         ...r,
         source: "registry" as const,
@@ -178,6 +211,8 @@ export async function GET(request: NextRequest) {
         target,
         targetHealth,
         targetMissing,
+        sharesTargetWith,
+        targetRowCount: counts.get(target.toUpperCase()) ?? null,
         // Only offer to build it when the stored types are real ones. A job
         // configured against an existing table carries VARCHAR(1000)
         // placeholders, and creating a wrongly-typed table out of a typo would

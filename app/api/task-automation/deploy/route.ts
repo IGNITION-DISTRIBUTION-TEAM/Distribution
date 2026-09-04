@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { buildSyncScript, objectNames, type SyncConfig } from "@/lib/sftp-sync-codegen"
-import { recordDeploy } from "@/lib/sftp-sync-registry"
+import { recordDeploy, getSync } from "@/lib/sftp-sync-registry"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -65,6 +65,27 @@ export async function POST(request: NextRequest) {
    * So the prior state is captured here and restored at the end. A first deploy
    * has no prior state, lands suspended, and the review gate is intact.
    */
+  /**
+   * Did this deploy change how the data is loaded?
+   *
+   * If so it will not take effect until the source file changes, because change
+   * detection returns NO_CHANGE before reaching any load logic. Comparing
+   * against the registry row we are about to replace is the only place that is
+   * knowable, and saying nothing is how a mode switch gets deployed, run, and
+   * quietly not applied.
+   */
+  let changedLoadLogic = false
+  try {
+    const before = await getSync(body.config.syncName)
+    if (before) {
+      const shape = (c: SyncConfig) =>
+        JSON.stringify([c.loadMode, c.mergeKeys, c.columns, c.delimiter, c.skipHeader])
+      changedLoadLogic = shape(before.config) !== shape(body.config)
+    }
+  } catch {
+    changedLoadLogic = false
+  }
+
   let wasStarted = false
   const taskRef = `${db}.${schema}.${objectNames(body.config.syncName).task}`
   try {
@@ -192,6 +213,11 @@ export async function POST(request: NextRequest) {
     deployedBy: guard.email,
     deployedAt: new Date().toISOString(),
     taskWasStarted: wasStarted,
+    changedLoadLogic,
+    loadLogicNote: changedLoadLogic
+      ? "The mapping or load mode changed. Change detection means this will not take effect " +
+        "until the source file changes — use Force reload to apply it to the current file now."
+      : null,
     rearmed,
     taskNote: wasStarted
       ? rearmed

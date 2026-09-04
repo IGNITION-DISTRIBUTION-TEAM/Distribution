@@ -60,6 +60,13 @@ type TestLoadResult = {
   columns?: string[]
   rows?: (string | number | null)[][]
   file?: { name?: string; size?: number; mtime_epoch?: number } | null
+  mergeKeyCheck?: {
+    keys: string[]
+    rows: number
+    distinct: number
+    unique: boolean
+    suggestion: string[] | null
+  } | null
   staging?: string
   target?: string
   targetExists?: boolean
@@ -543,8 +550,21 @@ export function CreateJobSection({
       scheduleCron: cron.trim(),
       scheduleTz: SCHEDULE_TZ,
       onError: "ABORT_STATEMENT",
+      // Evidence from the test load, so the generator can refuse a merge on a
+      // key measured non-unique rather than warn about one it guessed at.
+      mergeKeyProvenNonUnique:
+        loadMode === "merge" &&
+        testResult?.mergeKeyCheck &&
+        !testResult.mergeKeyCheck.unique &&
+        JSON.stringify(testResult.mergeKeyCheck.keys) === JSON.stringify(mergeKeys)
+          ? {
+              rows: testResult.mergeKeyCheck.rows,
+              distinct: testResult.mergeKeyCheck.distinct,
+              suggestion: testResult.mergeKeyCheck.suggestion,
+            }
+          : undefined,
     }
-  }, [selected, syncName, destTable, sourceHeaders, destMode, targetColumns, mapping,
+  }, [selected, syncName, destTable, sourceHeaders, destMode, targetColumns, mapping, testResult,
       newTypes, endpoint, path, pattern, loadMode, mergeKeys, delimiter, hasHeader,
       warehouse, cron])
 
@@ -1203,6 +1223,14 @@ export function CreateJobSection({
             </span>
             <h2 className="font-medium text-foreground">How the load runs</h2>
           </div>
+
+          {/* Two hops, and only the second one is a choice. Worth drawing,
+              because "truncate and insert" reads as if it might mean the
+              staging table. */}
+          <p className="mb-3 rounded-md border border-border bg-background/40 p-2 font-mono text-[11px] text-muted-foreground">
+            file → staging table <span className="text-foreground">(always emptied and refilled)</span>
+            {" → "}target table <span className="text-foreground">(your choice, below)</span>
+          </p>
 
           <div className="flex flex-wrap gap-2">
             <Button

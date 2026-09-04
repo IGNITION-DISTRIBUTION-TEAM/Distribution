@@ -72,6 +72,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, task: p.task, state: verb })
     }
 
+    if (action === "force") {
+      /* Rewind the watermark, then run.
+         Change detection means a sync only fetches files newer than
+         LAST_MODIFIED, so a mapping or load-mode change sits dormant until the
+         source file next changes — the procedure returns NO_CHANGE before it
+         reaches any load logic. This is the only way to exercise a change
+         against a file that has not moved, short of editing the control table
+         by hand. The app already holds UPDATE on it. */
+      await executeSnowflakeQuery(
+        `UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
+            SET LAST_MODIFIED = '1970-01-01'::TIMESTAMP_NTZ, STATUS = 'BASELINE_RESET'
+          WHERE SOURCE_NAME = '${p.sourceName.replace(/'/g, "''")}'`,
+        { database: "DATAWAREHOUSE", schema: "DW" }
+      )
+      const handle = await submitSnowflakeStatementAsync(`CALL ${p.proc}()`, sf)
+      return NextResponse.json({
+        handle,
+        ran: `CALL ${p.proc}()`,
+        note: "Watermark rewound, so every matching file is re-fetched and re-loaded.",
+      })
+    }
+
     if (action === "reschedule") {
       // Snowflake will not ALTER a running task, so this suspends, changes the
       // schedule and puts the task back the way it was found. Leaving a task

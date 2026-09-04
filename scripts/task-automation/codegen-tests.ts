@@ -273,18 +273,28 @@ for (const mode of ["merge", "truncate_insert"] as const) {
   const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
   const inserts = proc.match(new RegExp(`INSERT INTO ${RUN_LOG_TABLE.replace(/\./g, "\\.")}`, "g")) ?? []
 
-  // Four ways out: fetch FAILED, NO_CHANGE, SUCCESS, and the exception handler.
-  check(`${mode}: all four exit paths log`, inserts.length === 4, `found ${inserts.length}`)
+  // Five ways out: fetch FAILED, NO_CHANGE, the loaded-but-empty self-check,
+  // SUCCESS, and the exception handler.
+  check(`${mode}: all five exit paths log`, inserts.length === 5, `found ${inserts.length}`)
 
   // Each write is wrapped in its own handler. Without that, a failure to write
   // the log falls through to the procedure's own handler and reports a load
   // that succeeded as FAILED — the record of the work breaking the work.
   check(
     `${mode}: every log write is guarded`,
-    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 4,
+    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 5,
     "a log insert is not inside its own exception block"
   )
   check(`${mode}: the run is timed`, proc.includes("started_at := CURRENT_TIMESTAMP();"))
+  // A load that reports rows into a table that is empty a statement later must
+  // not be recorded as SUCCESS. This is the check that was missing when a run
+  // said "605 rows" against an empty table.
+  check(
+    `${mode}: refuses to call an empty target a success`,
+    /IF \(n_loaded > 0 AND n_total = 0\) THEN/.test(proc) &&
+      proc.includes("is empty immediately afterwards"),
+    "the procedure does not verify its own load"
+  )
   // A double-quoted JS string where a template literal was needed put the
   // characters ${target} into the SQL, so every SUCCESS row read
   // "Loaded into ${target}" instead of naming the table.
@@ -307,6 +317,103 @@ for (const mode of ["merge", "truncate_insert"] as const) {
     "the run log is an app-owned table",
     RUN_LOG_TABLE.startsWith("DATAWAREHOUSE.LEADS_DISTRIBUTION."),
     RUN_LOG_TABLE
+  )
+}
+
+/* ---- 4d. Merge semantics -------------------------------------------------- */
+
+console.log("Merge")
+{
+  const procFor = (over: Partial<SyncConfig>) =>
+    buildSyncScript(cfg(over)).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+
+  // Single key: no stray AND.
+  const one = procFor({ loadMode: "merge", mergeKeys: ["TXN_DATE"] })
+  check("single key joins on just that column", /ON t\.TXN_DATE = s\.TXN_DATE\n/.test(one), "")
+  check("single key emits no stray AND", !/ON t\.TXN_DATE = s\.TXN_DATE\s+AND/.test(one))
+
+  // Multi-column key, ANDed.
+  const two = procFor({ loadMode: "merge", mergeKeys: ["TXN_DATE", "TRANSACTION"] })
+  check(
+    "multi-column key is ANDed",
+    /ON t\.TXN_DATE = s\.TXN_DATE\s+AND t\.TRANSACTION = s\.TRANSACTION/.test(two),
+    two.split("\n").find((l) => l.includes("ON t.")) ?? ""
+  )
+
+  // Every business column is carried on both branches.
+  for (const col of ["TXN_DATE", "TRANSACTION", "INCOME"]) {
+    check(`${col} is updated on match`, new RegExp(`t\\.${col} = s\\.${col}`).test(one))
+    check(`${col} is inserted when not matched`, new RegExp(`s\\.${col}`).test(one))
+  }
+
+  // _UPDATED is stamped, never copied from staging — it means "when we last
+  // wrote this row here", which is not a property of the file.
+  check("_UPDATED is stamped on update", /t\._UPDATED = CURRENT_TIMESTAMP\(\)/.test(one))
+  check("_UPDATED is never copied from staging", !/s\._UPDATED/.test(one))
+  check("_MODIFIED IS copied from staging", /t\._MODIFIED = s\._MODIFIED/.test(one))
+
+  // No business key falls back to the file position.
+  const none = procFor({ loadMode: "merge", mergeKeys: [] })
+  check(
+    "no key falls back to (_FILE, _LINE)",
+    /ON t\._FILE = s\._FILE\s+AND t\._LINE = s\._LINE/.test(none)
+  )
+
+  // The two modes are genuinely exclusive.
+  const trunc = procFor({ loadMode: "truncate_insert", mergeKeys: [] })
+  check("truncate mode emits no MERGE", !trunc.includes("MERGE INTO"))
+  check("merge mode does not truncate the target", !/TRUNCATE TABLE SPOT_DW\.SPOT_SFTP\.SPOT_FEES/.test(one))
+
+  // Hop 1 is fixed for BOTH modes: the staging table is always replaced.
+  for (const [name, sql] of [["merge", one], ["truncate_insert", trunc]] as const) {
+    check(
+      `${name}: staging is always truncated before the COPY`,
+      sql.indexOf("TRUNCATE TABLE SPOT_DW.SPOT_SFTP.STG_SPOT_FEES") > -1 &&
+        sql.indexOf("TRUNCATE TABLE SPOT_DW.SPOT_SFTP.STG_SPOT_FEES") < sql.indexOf("COPY INTO"),
+      "the staging table is not emptied before the file is copied in"
+    )
+  }
+}
+
+/* ---- 4e. A merge key proven non-unique is refused ------------------------- */
+
+console.log("Merge key uniqueness")
+{
+  const threw = (over: Partial<SyncConfig>) => {
+    try {
+      buildSyncScript(cfg(over))
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
+  const msg = threw({
+    loadMode: "merge",
+    mergeKeys: ["TXN_DATE"],
+    mergeKeyProvenNonUnique: { rows: 605, distinct: 14, suggestion: ["TXN_DATE", "TRANSACTION"] },
+  })
+  check("a proven non-unique key is refused", msg !== null)
+  check("the message gives both counts", (msg ?? "").includes("605") && (msg ?? "").includes("14"))
+  check("and names a key that would work", (msg ?? "").includes("TXN_DATE, TRANSACTION"))
+  check(
+    "without a suggestion it still says what to do",
+    (threw({
+      loadMode: "merge",
+      mergeKeys: ["TXN_DATE"],
+      mergeKeyProvenNonUnique: { rows: 605, distinct: 14, suggestion: null },
+    }) ?? "").includes("Add columns to the key")
+  )
+  check(
+    "a key measured as unique deploys",
+    threw({ loadMode: "merge", mergeKeys: ["TXN_DATE"] }) === null
+  )
+  check(
+    "truncate mode ignores the measurement entirely",
+    threw({
+      loadMode: "truncate_insert",
+      mergeKeys: [],
+      mergeKeyProvenNonUnique: { rows: 605, distinct: 14 },
+    }) === null
   )
 }
 

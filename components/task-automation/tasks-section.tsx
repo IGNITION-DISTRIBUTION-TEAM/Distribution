@@ -247,10 +247,12 @@ export function TasksSection() {
 
       {totals && totals.notReporting > 0 && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
-          {totals.notReporting} sync{totals.notReporting === 1 ? "" : "s"} deployed before run
-          logging existed and contribute nothing to the figures above. Redeploy them from Current
-          jobs — it is <code className="text-foreground">CREATE OR REPLACE</code> throughout and
-          changes nothing else about them.
+          {totals.notReporting} sync{totals.notReporting === 1 ? "" : "s"} were built by an older
+          generator. They may contribute nothing to the figures above, and they do not check that
+          their own load landed — an older sync can report SUCCESS against a target that ended up
+          empty. Redeploy them from Current jobs: it is{" "}
+          <code className="text-foreground">CREATE OR REPLACE</code> throughout and the task state
+          is preserved.
         </div>
       )}
 
@@ -428,13 +430,14 @@ export function TasksSection() {
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium">Files</th>
                 <th className="px-3 py-2 text-right font-medium">Rows</th>
+                <th className="px-3 py-2 text-right font-medium">In target</th>
                 <th className="px-3 py-2 font-medium">Message</th>
               </tr>
             </thead>
             <tbody>
               {runs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                     No runs recorded in this window.
                   </td>
                 </tr>
@@ -449,6 +452,25 @@ export function TasksSection() {
                     <td className="px-3 py-1.5 text-right font-mono text-xs text-muted-foreground">{r.files}</td>
                     <td className="px-3 py-1.5 text-right font-mono text-xs text-foreground">
                       {r.rowsLoaded.toLocaleString()}
+                    </td>
+                    {/* The target's count taken immediately after the load. A
+                        SUCCESS that loaded rows into a table reading zero is
+                        self-contradictory, and showing only "rows loaded" is
+                        how that went unnoticed. */}
+                    <td
+                      className={cn(
+                        "px-3 py-1.5 text-right font-mono text-xs",
+                        r.rowsLoaded > 0 && r.rowsInTarget === 0
+                          ? "text-rose-300"
+                          : "text-muted-foreground"
+                      )}
+                      title={
+                        r.rowsLoaded > 0 && r.rowsInTarget === 0
+                          ? "Loaded rows, and the target was empty a statement later. Something else is writing to this table."
+                          : undefined
+                      }
+                    >
+                      {r.rowsInTarget != null ? r.rowsInTarget.toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-1.5 text-xs text-muted-foreground">{r.message ?? "—"}</td>
                   </tr>

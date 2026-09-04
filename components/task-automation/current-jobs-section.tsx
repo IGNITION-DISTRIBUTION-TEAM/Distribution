@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { AlertTriangle, Code2, Loader2, Pencil, PlayCircle, RefreshCw, TableProperties, Trash2, UploadCloud } from "lucide-react"
+import { AlertTriangle, Code2, History, Loader2, Pencil, PlayCircle, RefreshCw, TableProperties, Trash2, UploadCloud } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { parseCron, describeCron } from "@/lib/cron-schedule"
 import { objectNames } from "@/lib/sftp-sync-codegen"
@@ -42,6 +42,8 @@ type SyncRow = {
   targetMissing: boolean
   canCreateTarget: boolean
   consecutiveFailures: number | null
+  sharesTargetWith: { syncName: string; loadMode: string }[]
+  targetRowCount: number | null
 }
 type Foreign = { syncName: string; control: Record<string, unknown> }
 
@@ -132,9 +134,52 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
       const d = await res.json()
       setNote(
         d.deployed
-          ? `${r.config.syncName}: redeployed. ${d.taskNote ?? ""}`.trim()
+          ? `${r.config.syncName}: redeployed. ${d.taskNote ?? ""} ${d.loadLogicNote ?? ""}`.trim()
           : `${r.config.syncName}: ${d.error ?? "redeploy failed"}`
       )
+    } catch (e) {
+      setNote(`${r.config.syncName}: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(null)
+      void load()
+    }
+  }
+
+  const [confirmForce, setConfirmForce] = useState<SyncRow | null>(null)
+
+  /**
+   * Rewind the watermark and run.
+   *
+   * The only way to exercise a changed mapping or load mode against a file that
+   * has not moved: change detection returns NO_CHANGE before reaching any load
+   * logic, so a redeployed job can run, succeed, and never touch the new code.
+   */
+  const forceReload = async (r: SyncRow) => {
+    setBusy(r.config.syncName)
+    setNote(null)
+    try {
+      const res = await fetch("/api/task-automation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "force",
+          db: r.config.targetDb,
+          schema: r.config.targetSchema,
+          syncName: r.config.syncName,
+        }),
+      })
+      const sub = await res.json()
+      if (!res.ok || !sub.handle) throw new Error(sub.error || "No statement handle returned")
+      for (;;) {
+        await new Promise((x) => setTimeout(x, 2500))
+        const pr = await fetch(`/api/task-automation/run?handle=${encodeURIComponent(sub.handle)}`, {
+          cache: "no-store",
+        })
+        const ps = (await pr.json()) as { status?: string; error?: string; result?: string }
+        if (ps.status === "running") continue
+        setNote(`${r.config.syncName}: ${ps.result || ps.error || "finished with no message"}`)
+        break
+      }
     } catch (e) {
       setNote(`${r.config.syncName}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -298,12 +343,19 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                           : "Set up against an existing table, so its stored types are placeholders — open it, switch Destination to \u201cCreate a new table\u201d and deploy."}
                       </p>
                     )}
+                    {r.sharesTargetWith.length > 0 && (
+                      <p className="mt-1 text-[10px] text-rose-300">
+                        Writes to the same table as{" "}
+                        {r.sharesTargetWith.map((o) => `${o.syncName} (${o.loadMode === "merge" ? "merge" : "replace"})`).join(", ")}.
+                        Whichever runs last wins, and a replace wipes the other&apos;s rows.
+                      </p>
+                    )}
                     {r.stale && (
                       <span
                         className="ml-2 rounded border border-amber-500/40 bg-amber-500/5 px-1.5 py-0.5 text-[10px] text-amber-300"
-                        title="Deployed before run logging existed, so it does not appear on the Tasks dashboard. Redeploy to fix — it is safe and idempotent."
+                        title="Built by an older generator: it may not log its runs, and it does not check that its own load actually landed. Redeploy to bring it up to date — CREATE OR REPLACE throughout, and the task state is preserved."
                       >
-                        not reporting runs
+                        older generator
                       </span>
                     )}
                     <p className="text-xs text-muted-foreground">
@@ -341,8 +393,24 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                     {controlValue(r.control, "STATUS")}
                     <p className="text-[10px]">{controlValue(r.control, "LAST_SYNCED")}</p>
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                    {r.control?.ROW_COUNT != null ? Number(r.control.ROW_COUNT).toLocaleString() : "—"}
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    <span className={cn(
+                      r.targetRowCount === 0 && Number(r.control?.ROW_COUNT ?? 0) > 0
+                        ? "text-rose-300"
+                        : "text-foreground"
+                    )}>
+                      {r.targetRowCount != null ? r.targetRowCount.toLocaleString() : "—"}
+                    </span>
+                    {/* The control table's figure is from the last run; the one
+                        above is the table right now. They disagreeing is the
+                        signature of a target emptied behind the sync's back. */}
+                    {r.control?.ROW_COUNT != null &&
+                      r.targetRowCount != null &&
+                      Number(r.control.ROW_COUNT) !== r.targetRowCount && (
+                        <p className="text-[10px] text-rose-300">
+                          last run said {Number(r.control.ROW_COUNT).toLocaleString()}
+                        </p>
+                      )}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
@@ -393,6 +461,17 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                         ) : (
                           <PlayCircle className="h-4 w-4" />
                         )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={busy === r.config.syncName}
+                        onClick={() => setConfirmForce(r)}
+                        aria-label="Force reload"
+                        title="Rewind the watermark and re-load every matching file"
+                      >
+                        <History className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -484,6 +563,34 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
           </div>
         </div>
       )}
+
+      <AlertDialog open={!!confirmForce} onOpenChange={(o) => !o && setConfirmForce(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Force reload {confirmForce?.config.syncName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Rewinds this sync&apos;s watermark to 1970 and runs it, so every matching file is
+              fetched and loaded again rather than skipped as unchanged. Use it after changing a
+              mapping or load mode, which otherwise sits dormant until the source file changes.
+              {confirmForce?.config.loadMode === "merge"
+                ? " On merge this re-applies the same rows, so the row count should not move — which is the property worth checking."
+                : " On truncate and insert this empties the target and rebuilds it."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const t = confirmForce
+                setConfirmForce(null)
+                if (t) void forceReload(t)
+              }}
+            >
+              Force reload
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
