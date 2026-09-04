@@ -365,11 +365,15 @@ BEGIN
         ${lit(stage)}, :last_seen, 200
     ) INTO :fetched;
 
-    status  := :fetched:status::VARCHAR;
-    n_files := COALESCE(:fetched:files_staged::NUMBER, 0);
+    /* GET(), not the :variable:path form. Path syntax on a SCRIPTING variable
+       is the construct I am least sure of here, and GET() is plain SQL that
+       works the same way on any VARIANT. If this procedure ever fails to
+       compile, this is the first place to look. */
+    SELECT GET(:fetched, 'status')::VARCHAR                   INTO :status;
+    SELECT COALESCE(GET(:fetched, 'files_staged')::NUMBER, 0) INTO :n_files;
 
     IF (status = 'FAILED') THEN
-        errmsg := COALESCE(:fetched:error_message::VARCHAR, 'fetch failed');
+        SELECT COALESCE(GET(:fetched, 'error_message')::VARCHAR, 'fetch failed') INTO :errmsg;
         UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
            SET STATUS = 'FAILED: ' || LEFT(:errmsg, 180), LAST_SYNCED = CURRENT_TIMESTAMP()
          WHERE SOURCE_NAME = ${lit(sourceName)};
@@ -407,12 +411,12 @@ BEGIN
        so it is backfilled from what the fetch reported, matched per file. */
     UPDATE ${staging} s
        SET _MODIFIED = TO_TIMESTAMP_TZ(f.value:mtime_epoch::NUMBER)
-      FROM TABLE(FLATTEN(INPUT => :fetched:files)) f
+      FROM TABLE(FLATTEN(INPUT => GET(:fetched, 'files'))) f
      WHERE s._FILE LIKE '%' || f.value:name::VARCHAR || '%';
 
 ${loadBlock}
 
-    max_mtime := :fetched:max_mtime_epoch::NUMBER;
+    SELECT GET(:fetched, 'max_mtime_epoch')::NUMBER INTO :max_mtime;
     SELECT COUNT(*) INTO :n_total FROM ${target};
 
     UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
