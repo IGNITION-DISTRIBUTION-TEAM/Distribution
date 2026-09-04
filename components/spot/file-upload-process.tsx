@@ -1,28 +1,30 @@
 "use client"
 
+/**
+ * A Spot "Processes" upload page that REPLACES its target table.
+ *
+ * One component for every entry in lib/spot-uploads.ts. It mirrors the ARPU
+ * File page's layout deliberately — same dropzone, same history panel — so the
+ * three pages read as one feature rather than two conventions.
+ *
+ * Two differences, both because this load is destructive where ARPU's merge is
+ * not: the button goes through a confirmation naming the table and what it
+ * currently holds, and the history panel reports "Rows replaced" instead of
+ * Inserted/Updated, which mean nothing when every row is deleted first.
+ */
 import { useState, useCallback, useRef, useEffect } from "react"
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
-  ArrowLeft,
-  LogOut,
-  Target,
   Upload,
   FileSpreadsheet,
   Loader2,
@@ -31,68 +33,56 @@ import {
   X,
   History,
 } from "lucide-react"
-import { FileUploadProcess } from "@/components/spot/file-upload-process"
-import { SPOT_UPLOADS, getSpotUpload } from "@/lib/spot-uploads"
-
-const ARPU_TABLE = "SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES"
-
-type NavItem = { id: string; label: string; icon: React.ReactNode }
-
-/**
- * ARPU File is listed explicitly because it has its own route and merge
- * semantics; the replace-mode processes come from the registry, so adding one
- * there puts it in this menu without touching this file.
- */
-const navItems: NavItem[] = [
-  { id: "arpu-file", label: "ARPU File", icon: <FileSpreadsheet className="h-4 w-4" /> },
-  ...SPOT_UPLOADS.map((p) => ({
-    id: p.id,
-    label: p.label,
-    icon: <FileSpreadsheet className="h-4 w-4" />,
-  })),
-]
+import { fqTable, type SpotUploadProcess } from "@/lib/spot-uploads"
 
 type UploadResult = {
-  rowsMerged?: number
-  rowsParsed?: number
-  columns?: string[]
   table?: string
+  columns?: string[]
+  rowsParsed?: number
+  rowsLoaded?: number
+  rowsReplaced?: number
 }
 
 type UploadHistoryRow = {
   fileName: string
   rowsParsed: number
-  rowsMerged: number
-  inserted: number
-  updated: number
+  rowsLoaded: number
+  rowsReplaced: number
   uploadedBy: string
   uploadedAt: string
 }
 
-function ArpuFileContent() {
+export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<UploadResult | null>(null)
   const [history, setHistory] = useState<UploadHistoryRow[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
+  const [rowsInTarget, setRowsInTarget] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const accept = ".xlsx,.xls,.csv"
+  const table = fqTable(process)
+  const endpoint = `/api/spot/upload/${process.id}`
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
     try {
-      const res = await fetch("/api/spot/arpu-upload", { method: "GET" })
+      const res = await fetch(endpoint, { method: "GET" })
       const data = await res.json()
-      if (res.ok && Array.isArray(data.uploads)) setHistory(data.uploads)
+      if (res.ok) {
+        if (Array.isArray(data.uploads)) setHistory(data.uploads)
+        setRowsInTarget(typeof data.rowsInTarget === "number" ? data.rowsInTarget : null)
+      }
     } catch {
       // Non-fatal: the panel just stays empty.
     } finally {
       setHistoryLoading(false)
     }
-  }, [])
+  }, [endpoint])
 
   useEffect(() => {
     loadHistory()
@@ -105,8 +95,7 @@ function ArpuFileContent() {
       setFile(null)
       return
     }
-    const ok = /\.(xlsx|xls|csv)$/i.test(f.name)
-    if (!ok) {
+    if (!/\.(xlsx|xls|csv)$/i.test(f.name)) {
       setError("Only .xlsx, .xls, or .csv files are accepted.")
       setFile(null)
       return
@@ -125,20 +114,22 @@ function ArpuFileContent() {
 
   const handleUpload = useCallback(async () => {
     if (!file) return
+    setConfirming(false)
     setUploading(true)
     setError(null)
     setResult(null)
     try {
       const fd = new FormData()
       fd.append("file", file)
-      const res = await fetch("/api/spot/arpu-upload", { method: "POST", body: fd })
+      const res = await fetch(endpoint, { method: "POST", body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || data.message || `Upload failed (${res.status})`)
       setResult({
-        rowsMerged: data.rowsMerged,
-        rowsParsed: data.rowsParsed,
-        columns: data.columns,
         table: data.table,
+        columns: data.columns,
+        rowsParsed: data.rowsParsed,
+        rowsLoaded: data.rowsLoaded,
+        rowsReplaced: data.rowsReplaced,
       })
       setFile(null)
       if (inputRef.current) inputRef.current.value = ""
@@ -148,16 +139,24 @@ function ArpuFileContent() {
     } finally {
       setUploading(false)
     }
-  }, [file, loadHistory])
+  }, [file, endpoint, loadHistory])
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">ARPU File</h2>
+        <h2 className="text-2xl font-semibold text-foreground">{process.label}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Upload an Excel (.xlsx/.xls) or CSV file. Its rows are loaded into{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">{ARPU_TABLE}</code>. Columns are
-          taken from the file&apos;s header row.
+          {process.description} Upload an Excel (.xlsx/.xls) or CSV file.{" "}
+          <span className="text-foreground">
+            Every row in <code className="rounded bg-muted px-1 py-0.5 text-xs">{table}</code> is
+            deleted and replaced by the file&apos;s rows.
+          </span>{" "}
+          Columns are taken from the file&apos;s header row and must match the table.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {rowsInTarget === null
+            ? "Current row count unavailable."
+            : `The table currently holds ${rowsInTarget} row${rowsInTarget === 1 ? "" : "s"}.`}
         </p>
       </div>
 
@@ -184,7 +183,7 @@ function ArpuFileContent() {
             browse
           </button>
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">.xlsx, .xls or .csv · up to 50MB</p>
+        <p className="mt-1 text-xs text-muted-foreground">.xlsx, .xls or .csv · up to 4MB</p>
         <input
           ref={inputRef}
           type="file"
@@ -196,7 +195,7 @@ function ArpuFileContent() {
 
       {file && (
         <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex min-w-0 items-center gap-3">
             <FileSpreadsheet className="h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-foreground">{file.name}</p>
@@ -217,7 +216,7 @@ function ArpuFileContent() {
       )}
 
       <div>
-        <Button onClick={handleUpload} disabled={!file || uploading}>
+        <Button onClick={() => setConfirming(true)} disabled={!file || uploading}>
           {uploading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -226,11 +225,38 @@ function ArpuFileContent() {
           ) : (
             <>
               <Upload className="mr-2 h-4 w-4" />
-              Upload to Snowflake
+              Replace and load
             </>
           )}
         </Button>
       </div>
+
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace every row in {process.table}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  <code className="text-xs">{table}</code>{" "}
+                  {rowsInTarget === null
+                    ? "will be emptied"
+                    : `currently holds ${rowsInTarget} row${rowsInTarget === 1 ? "" : "s"}, which will be deleted`}
+                  , then reloaded from <span className="text-foreground">{file?.name}</span>.
+                </p>
+                <p>
+                  Columns the file does not contain are left NULL. This cannot be undone from the
+                  app.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleUpload}>Replace and load</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
@@ -243,12 +269,19 @@ function ArpuFileContent() {
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm">
           <div className="flex items-center gap-2 text-emerald-300">
             <CheckCircle2 className="h-4 w-4" />
-            <span className="font-medium">Upload complete</span>
+            <span className="font-medium">Load complete</span>
           </div>
           <ul className="mt-2 space-y-1 text-muted-foreground">
-            <li>Table: <code className="text-xs">{result.table ?? ARPU_TABLE}</code></li>
+            <li>
+              Table: <code className="text-xs">{result.table ?? table}</code>
+            </li>
             {typeof result.rowsParsed === "number" && <li>Rows parsed: {result.rowsParsed}</li>}
-            {typeof result.rowsMerged === "number" && <li>Rows merged: {result.rowsMerged}</li>}
+            {typeof result.rowsLoaded === "number" && (
+              <li>Rows now in the table: {result.rowsLoaded}</li>
+            )}
+            {typeof result.rowsReplaced === "number" && (
+              <li>Rows replaced: {result.rowsReplaced}</li>
+            )}
             {result.columns && result.columns.length > 0 && (
               <li>Columns: {result.columns.join(", ")}</li>
             )}
@@ -266,9 +299,8 @@ function ArpuFileContent() {
             <thead>
               <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
                 <th className="px-3 py-2 font-medium">File</th>
-                <th className="px-3 py-2 font-medium">Rows merged</th>
-                <th className="px-3 py-2 font-medium">Inserted</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
+                <th className="px-3 py-2 font-medium">Rows loaded</th>
+                <th className="px-3 py-2 font-medium">Rows replaced</th>
                 <th className="px-3 py-2 font-medium">Uploaded by</th>
                 <th className="px-3 py-2 font-medium">When</th>
               </tr>
@@ -276,13 +308,13 @@ function ArpuFileContent() {
             <tbody>
               {historyLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin" />
                   </td>
                 </tr>
               ) : history.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
                     No files loaded yet.
                   </td>
                 </tr>
@@ -290,9 +322,8 @@ function ArpuFileContent() {
                 history.map((h, i) => (
                   <tr key={i} className="border-b border-border last:border-0">
                     <td className="px-3 py-2 text-foreground">{h.fileName}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.rowsMerged}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.inserted}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.updated}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.rowsLoaded}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{h.rowsReplaced}</td>
                     <td className="px-3 py-2 text-muted-foreground">{h.uploadedBy}</td>
                     <td className="px-3 py-2 text-muted-foreground">{h.uploadedAt}</td>
                   </tr>
@@ -303,110 +334,5 @@ function ArpuFileContent() {
         </div>
       </div>
     </div>
-  )
-}
-
-export function SpotDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
-  const [activeNav, setActiveNav] = useState("arpu-file")
-
-  const renderContent = () => {
-    if (activeNav === "arpu-file") return <ArpuFileContent />
-    const process = getSpotUpload(activeNav)
-    if (process) return <FileUploadProcess key={process.id} process={process} />
-    // An unknown id used to fall through to ARPU, which silently showed the
-    // wrong process. Say so instead.
-    return (
-      <p className="text-sm text-muted-foreground">
-        Unknown process &quot;{activeNav}&quot;. Pick one from the menu.
-      </p>
-    )
-  }
-
-  return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <Target className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">Spot</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Processes</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      onClick={() => setActiveNav(item.id)}
-                      isActive={activeNav === item.id}
-                      tooltip={item.label}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <span className="text-sm font-medium text-muted-foreground">Spot Department</span>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-auto min-w-0">
-          <div className="min-w-0 p-6">{renderContent()}</div>
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
   )
 }
