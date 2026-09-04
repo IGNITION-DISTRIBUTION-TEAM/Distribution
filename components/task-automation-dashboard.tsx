@@ -28,6 +28,8 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
+import { SCHEDULE_TZ } from "@/lib/cron-schedule"
+import { SchedulePicker } from "@/components/task-automation-schedule-picker"
 import {
   SKIP_VALUE,
   ALLOWED_SQL_TYPES,
@@ -406,7 +408,7 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
       skipHeader: hasHeader,
       warehouse: warehouse.trim().toUpperCase(),
       scheduleCron: cron.trim(),
-      scheduleTz: "Africa/Johannesburg",
+      scheduleTz: SCHEDULE_TZ,
       onError: "ABORT_STATEMENT",
     }
   }, [selected, syncName, destTable, sourceHeaders, destMode, targetColumns, mapping,
@@ -1168,19 +1170,11 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                   <label className="mb-1 block text-xs text-muted-foreground">Warehouse</label>
                   <Input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="font-mono text-sm" />
                 </div>
-                <div className="w-56">
-                  <label className="mb-1 block text-xs text-muted-foreground">Schedule</label>
-                  <Select value={cron} onValueChange={setCron}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0 7 * * *">Daily, 07:00</SelectItem>
-                      <SelectItem value="0 5 * * 1-5">Weekdays, 05:00</SelectItem>
-                      <SelectItem value="0 6-18 * * *">Hourly, 06:00-18:00</SelectItem>
-                      <SelectItem value="0 6-18/2 * * *">Every 2 hours, 06:00-18:00</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <p className="pb-2 text-xs text-muted-foreground">Africa/Johannesburg</p>
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-1.5 block text-xs text-muted-foreground">Schedule</label>
+                <SchedulePicker value={cron} onChange={setCron} timezone={SCHEDULE_TZ} />
               </div>
 
               {preview?.error && (

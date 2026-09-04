@@ -184,6 +184,72 @@ for (const n of [1, 3, 60]) {
   )
 }
 
+/* ---- 4b. The schedule reaches DDL validated, canonical, and nothing else -- */
+
+console.log("Schedule safety")
+{
+  const threw = (over: Partial<SyncConfig>) => {
+    try {
+      buildSyncScript(cfg(over))
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  // THE REGRESSION TEST FOR THE INJECTION. scheduleTz sat immediately before
+  // the generated `AS`, so a quote in it made the rest of the task body
+  // caller-chosen — no semicolon needed.
+  check(
+    "a quote in the timezone is refused",
+    threw({ scheduleTz: "UTC' AS CALL SPOT_DW.X.EVIL() --" })
+  )
+  for (const tz of ["UTC", "utc", "Africa/Johannesburg ", "", "africa/johannesburg"]) {
+    check(`timezone ${JSON.stringify(tz)} is refused (allow-list is exact)`, threw({ scheduleTz: tz }))
+  }
+  check("a semicolon in the cron is refused", threw({ scheduleCron: "0 7 * * *; DROP TABLE X" }))
+  check("sub-hourly is refused server-side, not only in the UI", threw({ scheduleCron: "*/5 * * * *" }))
+  check("both DOM and DOW restricted is refused", threw({ scheduleCron: "0 6 1 * 1" }))
+  check("an impossible date is refused", threw({ scheduleCron: "0 0 30 2 *" }))
+
+  // Emission uses the canonical form, so what Snowflake sees is a string the
+  // cron module built out of integers rather than the caller's text.
+  const messy = buildSyncScript(cfg({ scheduleCron: "0  07   *  *  *" }))
+  const taskSql = messy.statements.find((s) => s.label.startsWith("Task"))!.sql
+  check(
+    "the emitted task carries the canonical expression",
+    taskSql.includes("SCHEDULE  = 'USING CRON 0 7 * * * Africa/Johannesburg'"),
+    taskSql.split("\n").find((l) => l.includes("SCHEDULE")) ?? "no SCHEDULE line"
+  )
+
+  // The SQL API takes one statement per request, so CREATE TASK and the
+  // SUSPEND that follows it have to be separate entries in the list.
+  const script = buildSyncScript(cfg())
+  const taskStatements = script.statements.filter((s) => /Task |Suspend /.test(s.label))
+  check("CREATE TASK and ALTER TASK SUSPEND are separate statements", taskStatements.length === 2)
+  // Strip comments and any $$-quoted body first: a procedure's body is full of
+  // semicolons and is still one statement.
+  const bare = (sql: string) =>
+    sql
+      .replace(/\$\$[\s\S]*?\$\$/g, "$$$$")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/;\s*$/, "")
+  check(
+    "no statement contains two SQL statements",
+    script.statements.every((s) => !bare(s.sql).includes(";")),
+    script.statements.filter((s) => bare(s.sql).includes(";")).map((s) => s.label).join(", ")
+  )
+
+  // Warnings, not refusals.
+  check(
+    "every-hour-every-day warns",
+    buildSyncScript(cfg({ scheduleCron: "0 * * * *" })).warnings.some((w) => w.includes("730"))
+  )
+  for (const preset of ["0 7 * * *", "0 5 * * 1-5", "0 6-18 * * *", "0 6-18/2 * * *"]) {
+    check(`existing preset ${preset} still builds`, !threw({ scheduleCron: preset }))
+  }
+}
+
 /* ---- 5. Identifiers are refused, not escaped ----------------------------- */
 
 console.log("Identifier rejection")

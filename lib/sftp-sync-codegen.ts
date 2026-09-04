@@ -14,6 +14,8 @@
  * rather than having to diff against the template.
  */
 
+import { checkSchedule } from "./cron-schedule"
+
 /** Legal unqualified Snowflake identifier. Anything else is REFUSED, not quoted. */
 const IDENT = /^[A-Za-z0-9_]+$/
 
@@ -80,6 +82,22 @@ function lit(value: string): string {
 }
 
 /**
+ * The SCHEDULE clause, validated and NORMALISED at the point of use.
+ *
+ * Deliberately shaped like `ident()`: it throws rather than escaping, and it
+ * emits what `checkSchedule` canonicalised rather than what the caller sent.
+ * Checking alone would not be enough — `"0   7 * * *"` passes a check and then
+ * interpolates its double spaces into the DDL.
+ *
+ * Doing it here rather than only in `validate()` means no future code path can
+ * emit a task without the check, even one that skips validation.
+ */
+function scheduleClause(cfg: SyncConfig): string {
+  const { canonical } = checkSchedule(cfg.scheduleCron, cfg.scheduleTz)
+  return `'USING CRON ${canonical} ${cfg.scheduleTz}'`
+}
+
+/**
  * The delimiter, as a Snowflake FIELD_DELIMITER literal.
  * A tab has to travel as an escape sequence, not a raw tab character.
  */
@@ -121,6 +139,11 @@ function validate(cfg: SyncConfig): string[] {
   ident(cfg.syncName, "Sync name")
   ident(cfg.endpoint, "Endpoint name")
   ident(cfg.warehouse, "Warehouse")
+
+  // Throws on a bad cron or a timezone off the allow-list. Both reach a
+  // CREATE TASK run by a privileged role, and the cron was the only free-text
+  // value in this file that used to get there unchecked.
+  warnings.push(...checkSchedule(cfg.scheduleCron, cfg.scheduleTz).warnings)
 
   if (cfg.createTable && !ALLOWED_TARGET_SCHEMAS.includes(`${db}.${schema}`)) {
     throw new Error(
@@ -366,18 +389,26 @@ WHERE NOT EXISTS (
   /* 5 — the sync procedure */
   statements.push({ label: `Procedure ${o.proc}`, sql: buildProcedure(cfg, { target, staging, stage, proc, cols, sourceName: o.sourceName }) })
 
-  /* 6 — task, suspended */
+  /* 6 — task.
+     Two SEPARATE statements, not one blob with a semicolon in the middle: the
+     deploy route sends each through the Snowflake SQL API on its own, and that
+     API takes a single statement per request unless MULTI_STATEMENT_COUNT is
+     set, which it is not. Splitting also means a failure names which half. */
   statements.push({
-    label: `Task ${o.task} (suspended)`,
+    label: `Task ${o.task}`,
     sql: `CREATE OR REPLACE TASK ${task}
     WAREHOUSE = ${ident(cfg.warehouse, "Warehouse")}
-    SCHEDULE  = 'USING CRON ${cfg.scheduleCron} ${cfg.scheduleTz}'
+    SCHEDULE  = ${scheduleClause(cfg)}
 AS
-    CALL ${proc}();
+    CALL ${proc}()`,
+  })
 
-/* Created SUSPENDED and left that way. Resuming is a deliberate act after
-   review, per §10 of the standards document. */
-ALTER TASK ${task} SUSPEND;`,
+  /* 7 — and left suspended. */
+  statements.push({
+    label: `Suspend ${o.task} until it has been reviewed`,
+    sql: `/* Resuming is a deliberate act after review, per §10 of the standards
+   document — never a side effect of creating the sync. */
+ALTER TASK ${task} SUSPEND`,
   })
 
   return { statements, warnings }
