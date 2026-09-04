@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { BarChart3, Briefcase, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck } from "lucide-react"
+import { BarChart3, Briefcase, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -71,6 +71,13 @@ const DEPARTMENTS: Department[] = [
     label: "Reporting",
     description: "Campaign performance — leads loaded, dialled, sales, and conversion.",
     icon: LineChart,
+    enabled: true,
+  },
+  {
+    id: "task-automation",
+    label: "Task Automation",
+    description: "Scheduled jobs. First up: SFTP files into Snowflake tables.",
+    icon: Workflow,
     enabled: true,
   },
 ]
