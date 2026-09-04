@@ -221,6 +221,13 @@ export function resolveSync(cfg: SyncConfig) {
     target: q(table),
     table,
     stage: q(o.stage),
+    /**
+     * The same stage, as a stage REFERENCE. The `@` is not decoration: without
+     * it a COPY's FROM clause reads the name as a table and Snowflake answers
+     * "Invalid from object type used in Copy transformation". DDL takes the
+     * bare name, everything that reads the stage takes this one.
+     */
+    stageRef: `@${q(o.stage)}`,
     staging: q(o.staging),
     proc: q(o.proc),
     task: q(o.task),
@@ -296,7 +303,7 @@ FROM (
            NULL::TIMESTAMP_TZ,
            CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
            ${selects.join(", ")}
-      FROM ${r.stage}
+      FROM ${r.stageRef}
 )
 FILE_FORMAT = (TYPE = CSV
                FIELD_DELIMITER = ${delimiterLiteral(cfg.delimiter)}

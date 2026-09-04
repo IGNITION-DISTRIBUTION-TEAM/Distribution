@@ -82,6 +82,36 @@ for (const variant of [
   )
 }
 
+/* ---- 1b. The COPY reads a STAGE, not a table ----------------------------- */
+
+console.log("Stage reference")
+{
+  const c = cfg()
+  const copy = buildCopyStatement(c, { purge: false })
+  // Without the @ Snowflake reads the name as a table and refuses the whole
+  // transformation with "Invalid from object type used in Copy transformation".
+  check(
+    "COPY's FROM names the stage with @",
+    /FROM @SPOT_DW\.SPOT_SFTP\.STG_SFTP_SPOT_FEES\b/.test(copy),
+    copy.split("\n").find((l) => l.includes("FROM ")) ?? "no FROM line"
+  )
+  // The DDL takes the bare name — an @ there is a different error.
+  check(
+    "CREATE STAGE names it without @",
+    /CREATE STAGE IF NOT EXISTS SPOT_DW\.SPOT_SFTP\.STG_SFTP_SPOT_FEES\b/.test(
+      buildStageStatement(c).sql
+    )
+  )
+  // SP_SFTP_FETCH validates DATABASE.SCHEMA.NAME against its allow-list, so the
+  // procedure must hand it the bare name too.
+  const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+  check(
+    "SP_SFTP_FETCH is passed the bare stage name",
+    proc.includes("'SPOT_DW.SPOT_SFTP.STG_SFTP_SPOT_FEES'"),
+    "the fetch call has an @ it should not have"
+  )
+}
+
 /* ---- 2. The shared stage/staging statements are the deploy's own --------- */
 
 console.log("Shared statements")
