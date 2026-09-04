@@ -19,10 +19,12 @@ import {
   LogOut,
   ChevronsUpDown,
   RefreshCw,
+  PlayCircle,
   Table2,
   Workflow,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
 import {
   SKIP_VALUE,
   ALLOWED_SQL_TYPES,
@@ -180,6 +182,15 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const [mergeKeys, setMergeKeys] = useState<string[]>([])
   const [loadMode, setLoadMode] = useState<"truncate_insert" | "merge">("truncate_insert")
 
+  // ---- step 5: schedule and deploy
+  const [syncName, setSyncName] = useState("")
+  const [cron, setCron] = useState("0 7 * * *")
+  const [warehouse, setWarehouse] = useState("SPOT_WH")
+  const [deploying, setDeploying] = useState(false)
+  const [deployResult, setDeployResult] = useState<
+    { deployed: boolean; results?: { label: string; ok: boolean; error?: string }[]; error?: string } | null
+  >(null)
+
   // Endpoints come from the secure view; the app never sees host or key.
   useEffect(() => {
     let cancelled = false
@@ -335,6 +346,72 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
     () => Object.values(mapping).filter((v) => v && v !== SKIP_VALUE).length,
     [mapping]
   )
+
+  /** The config as the generator wants it. Null until it is complete enough. */
+  const syncConfig: SyncConfig | null = useMemo(() => {
+    if (!selected || !syncName.trim() || !destTable.trim()) return null
+    const parts = destTable.trim().split(".")
+    if (parts.length !== 3) return null
+    const mapped = sourceHeaders
+      .map((h, i) => ({ h, i, target: destMode === "new" ? targetColumns[i]?.COLUMN_NAME : mapping[i] }))
+      .filter((m) => m.target && m.target !== SKIP_VALUE)
+    if (mapped.length === 0) return null
+    return {
+      syncName: syncName.trim().toUpperCase(),
+      endpoint,
+      remoteDir: path,
+      filePattern: pattern,
+      targetDb: parts[0], targetSchema: parts[1], targetTable: parts[2],
+      createTable: destMode === "new",
+      columns: mapped.map((m) => ({
+        source: m.h,
+        // 1-based, and the position in the FILE — not the position among the
+        // mapped columns. A skipped field must not shift the ones after it.
+        ordinal: m.i + 1,
+        target: m.target as string,
+        type: newTypes[m.target as string] ?? "VARCHAR(1000)",
+      })),
+      loadMode,
+      mergeKeys: loadMode === "merge" ? mergeKeys : [],
+      delimiter,
+      skipHeader: hasHeader,
+      warehouse: warehouse.trim().toUpperCase(),
+      scheduleCron: cron.trim(),
+      scheduleTz: "Africa/Johannesburg",
+      onError: "ABORT_STATEMENT",
+    }
+  }, [selected, syncName, destTable, sourceHeaders, destMode, targetColumns, mapping,
+      newTypes, endpoint, path, pattern, loadMode, mergeKeys, delimiter, hasHeader,
+      warehouse, cron])
+
+  /** Preview is generated client-side by the same pure function the server uses. */
+  const preview = useMemo(() => {
+    if (!syncConfig) return null
+    try {
+      return { ...buildSyncScript(syncConfig), error: null as string | null }
+    } catch (e) {
+      return { statements: [], warnings: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  }, [syncConfig])
+
+  const deploy = async () => {
+    if (!syncConfig) return
+    setDeploying(true)
+    setDeployResult(null)
+    try {
+      const res = await fetch("/api/task-automation/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: syncConfig, execute: true }),
+      })
+      const d = await res.json()
+      setDeployResult(d)
+    } catch (e) {
+      setDeployResult({ deployed: false, error: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setDeploying(false)
+    }
+  }
 
   // Breadcrumbs stop at the floor: there is nothing above it to click to.
   const crumbs = useMemo(() => {
@@ -821,6 +898,130 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                   The target is emptied and refilled on every run. Right for a full snapshot;
                   wrong for a feed that only sends the day&apos;s changes.
                 </p>
+              )}
+            </div>
+          )}
+
+          {selected && targetColumns.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  5
+                </span>
+                <h2 className="font-medium text-foreground">Name it, schedule it, create it</h2>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-64">
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Sync name
+                  </label>
+                  <Input
+                    value={syncName}
+                    onChange={(e) => setSyncName(e.target.value)}
+                    placeholder="ARPU_FEES"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="w-40">
+                  <label className="mb-1 block text-xs text-muted-foreground">Warehouse</label>
+                  <Input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="font-mono text-sm" />
+                </div>
+                <div className="w-56">
+                  <label className="mb-1 block text-xs text-muted-foreground">Schedule</label>
+                  <Select value={cron} onValueChange={setCron}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0 7 * * *">Daily, 07:00</SelectItem>
+                      <SelectItem value="0 5 * * 1-5">Weekdays, 05:00</SelectItem>
+                      <SelectItem value="0 6-18 * * *">Hourly, 06:00-18:00</SelectItem>
+                      <SelectItem value="0 6-18/2 * * *">Every 2 hours, 06:00-18:00</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="pb-2 text-xs text-muted-foreground">Africa/Johannesburg</p>
+              </div>
+
+              <p className="mt-2 text-xs text-muted-foreground">
+                The name drives every object created — stage, staging table, procedure, task —
+                and the key this sync reports under in SFTP_SYNC_CONTROL.
+              </p>
+
+              {preview?.error && (
+                <div className="mt-4 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                  {preview.error}
+                </div>
+              )}
+
+              {preview && preview.warnings.length > 0 && (
+                <ul className="mt-4 flex flex-col gap-2">
+                  {preview.warnings.map((w, i) => (
+                    <li key={i} className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {preview && preview.statements.length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {preview.statements.length} statements
+                  </p>
+                  <div className="max-h-96 overflow-auto rounded-md border border-border">
+                    {preview.statements.map((st, i) => (
+                      <details key={i} className="border-b border-border last:border-b-0">
+                        <summary className="cursor-pointer px-3 py-2 text-xs text-foreground hover:bg-muted/40">
+                          {i + 1}. {st.label}
+                        </summary>
+                        <pre className="overflow-x-auto bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                          {st.sql}
+                        </pre>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={() => void deploy()} disabled={!syncConfig || deploying || Boolean(preview?.error)}>
+                  {deploying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+                  {deploying ? "Creating..." : "Create in Snowflake"}
+                </Button>
+                {!syncConfig && (
+                  <p className="text-xs text-muted-foreground">
+                    Needs a sync name, a target table and at least one mapped column.
+                  </p>
+                )}
+              </div>
+
+              {deployResult && (
+                <div className="mt-4">
+                  {deployResult.results && (
+                    <ul className="mb-3 flex flex-col gap-1">
+                      {deployResult.results.map((r, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs">
+                          <span className={r.ok ? "text-emerald-400" : "text-rose-400"}>
+                            {r.ok ? "\u2713" : "\u2717"}
+                          </span>
+                          <span className="text-foreground">{r.label}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div
+                    className={cn(
+                      "whitespace-pre-wrap rounded-md border p-3 text-xs",
+                      deployResult.deployed
+                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+                        : "border-rose-500/30 bg-rose-500/5 text-rose-300"
+                    )}
+                  >
+                    {deployResult.deployed
+                      ? `Created. The task exists but is SUSPENDED — nothing runs on a schedule until it is resumed. Test it first with:\n\n  CALL ${syncConfig?.targetDb}.${syncConfig?.targetSchema}.SP_SFTP_SYNC_${syncConfig?.syncName}();\n\nRun it twice: the second call should return NO_CHANGE, which is what proves change detection works.`
+                      : deployResult.error ?? "Failed."}
+                  </div>
+                </div>
               )}
             </div>
           )}

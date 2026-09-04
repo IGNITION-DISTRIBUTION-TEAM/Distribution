@@ -796,6 +796,436 @@ $BODY$;
 
 
 /* -----------------------------------------------------------------------------
+   SECTION 6b — the downloader every generated sync calls
+
+   WHY THIS EXISTS, AND WHY IT IS NOT PER-SYNC.
+
+   Justin's standard makes each sync its own Python + paramiko procedure. That
+   cannot work here, and the reason is the whole point of the registry: a sync
+   procedure CREATED BY THE APP is owned by the app role, EXECUTE AS OWNER runs
+   it as the app role, and the app role deliberately has no read on
+   SFTP_ENDPOINTS. It could never obtain the host or the pinned host key.
+   Granting it that access would undo the boundary.
+
+   So paramiko, the secret and the pin stay in ACCOUNTADMIN-owned procedures,
+   and every generated sync becomes thin SQL that calls this one. Beyond the
+   boundary that buys two things: one downloader instead of one per sync, and a
+   generated procedure that contains no credentials to leak.
+
+   THE CONNECTION BLOCK IS DUPLICATED FROM SP_SFTP_INSPECT, and that is a
+   deliberate trade, not an oversight. Snowflake has no include mechanism for
+   procedure bodies, so the choice is two copies or one procedure that both
+   reads and writes. They are kept apart because INSPECT is READ-ONLY and FETCH
+   STAGES FILES: separate objects mean the harmless one can be granted more
+   widely later without handing out the ability to write into a stage.
+
+   The cost is real: a host-key rotation, a host change or a fix to _safe_path
+   must be applied to BOTH. The two bodies are identical today — diff them
+   before assuming otherwise.
+
+   It downloads the files matching a pattern that are newer than SINCE_EPOCH,
+   verifies each size, PUTs them to the caller's stage and reports what it
+   staged plus the newest mtime seen — which is what the caller writes back to
+   SFTP_SYNC_CONTROL.LAST_MODIFIED as its change-detection baseline.
+-------------------------------------------------------------------------------- */
+
+CREATE OR REPLACE PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_FETCH(
+    ENDPOINT     STRING,
+    REMOTE_DIR   STRING,
+    FILE_PATTERN STRING,
+    TARGET_STAGE STRING,
+    SINCE_EPOCH  NUMBER,
+    MAX_FILES    NUMBER
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python', 'paramiko')
+HANDLER = 'run'
+EXTERNAL_ACCESS_INTEGRATIONS = (SPOT_SFTP_ACCESS)
+SECRETS = ('pkey'       = DATAWAREHOUSE.SPOT.SPOT_SFTP_PRIVATE_KEY
+         , 'passphrase' = DATAWAREHOUSE.SPOT.SPOT_SFTP_KEY_PASSPHRASE)
+EXECUTE AS OWNER
+AS
+$FETCH$
+import base64
+import binascii
+import fnmatch
+import io
+import os
+import posixpath
+import re
+import shutil
+import stat as statmod
+import struct
+import tempfile
+import traceback
+
+import paramiko
+import _snowflake
+
+KEY_CLASSES = {
+    'ssh-rsa': paramiko.RSAKey,
+    'ssh-ed25519': paramiko.Ed25519Key,
+    'ecdsa-sha2-nistp256': paramiko.ECDSAKey,
+    'ecdsa-sha2-nistp384': paramiko.ECDSAKey,
+    'ecdsa-sha2-nistp521': paramiko.ECDSAKey,
+}
+
+# This procedure runs as ACCOUNTADMIN, so it could PUT into any stage in the
+# account. It must not. Only these schemas may be written to, whatever the
+# caller asks for — the app can name a stage, not choose a destination.
+ALLOWED_STAGE_SCHEMAS = {'SPOT_DW.SPOT_SFTP'}
+
+HARD_MAX_FILES = 200
+
+REGISTRY = 'SPOT_DW.SFTP_ADMIN.SFTP_ENDPOINTS'
+
+# Paramiko class per host key type. Anything not listed is refused rather than
+# guessed — trusting a key we cannot parse correctly is worse than failing.
+KEY_CLASSES = {
+    'ssh-rsa': paramiko.RSAKey,
+    'ssh-ed25519': paramiko.Ed25519Key,
+    'ecdsa-sha2-nistp256': paramiko.ECDSAKey,
+    'ecdsa-sha2-nistp384': paramiko.ECDSAKey,
+    'ecdsa-sha2-nistp521': paramiko.ECDSAKey,
+}
+
+
+def _endpoint(session, name):
+    """Load and validate one endpoint row. Every guard that matters is here,
+    because Snowflake does not enforce the table's constraints."""
+    n = (name or '').strip().upper()
+    if not n or not re.match(r'^[A-Z0-9_]+$', n):
+        raise ValueError(
+            'Endpoint name {!r} is not a plain identifier.'.format(name)
+        )
+
+    rows = session.sql(
+        'SELECT HOST, PORT, SFTP_USER, HOST_KEY_TYPE, HOST_KEY_B64, '
+        '       SECRET_KEY_NAME, SECRET_PASSPHRASE_NAME, '
+        '       ROOT_FLOOR, ALLOWED_ROOT, '
+        '       MAX_ENTRIES, MAX_PEEK_LINES, MAX_PEEK_BYTES, ENABLED '
+        '  FROM ' + REGISTRY + ' WHERE UPPER(ENDPOINT_NAME) = ?',
+        params=[n],
+    ).collect()
+
+    if not rows:
+        raise ValueError('No SFTP endpoint registered as {!r}.'.format(n))
+    if len(rows) > 1:
+        # The PK is metadata only, so this really can happen.
+        raise ValueError(
+            '{} rows registered for endpoint {!r}. The primary key on '
+            'SFTP_ENDPOINTS is not enforced by Snowflake; de-duplicate it '
+            'before using this endpoint.'.format(len(rows), n)
+        )
+
+    r = rows[0].as_dict()
+    if not r['ENABLED']:
+        raise ValueError('Endpoint {!r} is registered but not ENABLED.'.format(n))
+
+    floor = (r['ROOT_FLOOR'] or '').strip()
+    root = (r['ALLOWED_ROOT'] or '').strip()
+    if not floor or floor == '/':
+        raise ValueError(
+            'Endpoint {!r} has ROOT_FLOOR = {!r}. A floor of / or blank is not a '
+            'boundary; set a real subtree.'.format(n, floor)
+        )
+    if not root:
+        root = floor
+
+    # THE FLOOR IS ENFORCED HERE, ON READ — not only when the app writes.
+    # ALLOWED_ROOT is app-editable, so checking it only at write time would mean
+    # a direct UPDATE on the table (or a future second writer) could widen the
+    # boundary and nothing downstream would notice. Checked here, ROOT_FLOOR is
+    # the boundary however ALLOWED_ROOT came to hold its value.
+    #
+    # Refused rather than silently clamped to the floor: a wider ALLOWED_ROOT
+    # means someone misconfigured this endpoint, and quietly narrowing it would
+    # hide that while appearing to work.
+    f_norm = re.sub(r'/{2,}', '/', posixpath.normpath(floor))
+    r_norm = re.sub(r'/{2,}', '/', posixpath.normpath(root))
+    if r_norm != f_norm and not r_norm.startswith(f_norm.rstrip('/') + '/'):
+        raise ValueError(
+            'Endpoint {!r} has ALLOWED_ROOT {!r}, which is outside its '
+            'ROOT_FLOOR {!r}. Refusing rather than clamping — fix the row.'
+            .format(n, root, floor)
+        )
+    root = r_norm
+    if not (r['HOST_KEY_B64'] or '').strip():
+        raise ValueError(
+            'Endpoint {!r} has no HOST_KEY_B64. Refusing to connect without '
+            'host key verification.'.format(n)
+        )
+    if r['HOST_KEY_TYPE'] not in KEY_CLASSES:
+        raise ValueError(
+            'Endpoint {!r} has HOST_KEY_TYPE {!r}, which this procedure does '
+            'not know how to parse. Known types: {}.'
+            .format(n, r['HOST_KEY_TYPE'], ', '.join(sorted(KEY_CLASSES)))
+        )
+
+    r['ALLOWED_ROOT'] = root
+    r['ROOT_FLOOR'] = f_norm
+    r['ENDPOINT_NAME'] = n
+    return r
+
+
+def _safe_path(raw, root, default_root):
+    """Resolve a path and require it to sit under root.
+
+    THE ROOT CHECK IS THE CONTROL, not a test for '..'. posixpath.normpath
+    CLAMPS at root, so '/a/../../etc' normalises to '/etc' with no '..' left in
+    it — a '..' test applied after normalising is dead code and passes that
+    path. Duplicate slashes are collapsed first because normpath preserves a
+    leading '//', which would then fail the prefix comparison.
+
+    The prefix is compared WITH a trailing slash: without it, '/spot_money_x'
+    would pass a root of '/spot_money'.
+    """
+    p = (raw or '').strip()
+    if not p:
+        if not default_root:
+            raise ValueError('No file path given.')
+        p = root
+    if not p.startswith('/'):
+        p = '/' + p
+    p = re.sub(r'/{2,}', '/', p)
+    p = posixpath.normpath(p)
+
+    r = re.sub(r'/{2,}', '/', posixpath.normpath(root))
+    if p != r and not p.startswith(r.rstrip('/') + '/'):
+        raise ValueError(
+            'Refusing {!r}: resolves to {!r}, outside the permitted root {!r}.'
+            .format(raw, p, r)
+        )
+    return p
+
+
+def _load_private_key(ep):
+    material = _snowflake.get_generic_secret_string(ep['SECRET_KEY_NAME'])
+    passphrase = None
+    if ep['SECRET_PASSPHRASE_NAME']:
+        try:
+            passphrase = _snowflake.get_generic_secret_string(
+                ep['SECRET_PASSPHRASE_NAME']) or None
+        except Exception:
+            passphrase = None
+
+    last = None
+    for cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+        try:
+            return cls.from_private_key(io.StringIO(material), password=passphrase)
+        except paramiko.SSHException as exc:
+            last = exc
+    raise RuntimeError(
+        'Could not load the private key from secret binding {!r}. Check the '
+        'full key including BEGIN/END lines is stored and the passphrase '
+        'matches. Last error: {}'.format(ep['SECRET_KEY_NAME'], last)
+    )
+
+
+def _parse_host_key(ep):
+    """Turn the stored pin into (key_type, PKey), accepting what people paste.
+
+    ssh-keyscan emits three whitespace-separated fields:
+        host  keytype  base64
+    Operators paste all three, or the last two, or just the base64. All are
+    accepted here — the alternative is that the wrong shape reaches paramiko and
+    surfaces as a UnicodeDecodeError three frames deep inside its wire-format
+    parser, which says nothing about what to fix.
+
+    Everything else is refused BY NAME, and the message says what a correct
+    value looks like: a real ssh-rsa pin always starts AAAAB3NzaC1yc2E, because
+    the blob begins with a length-prefixed literal "ssh-rsa".
+    """
+    raw = (ep['HOST_KEY_B64'] or '').strip()
+    if not raw:
+        raise ValueError(
+            'Endpoint {!r} has an empty HOST_KEY_B64. Refusing to connect '
+            'without host key verification.'.format(ep['ENDPOINT_NAME'])
+        )
+
+    parts = raw.split()
+    if len(parts) >= 3:
+        ktype, b64 = parts[-2], parts[-1]          # full ssh-keyscan line
+    elif len(parts) == 2:
+        ktype, b64 = parts                          # 'ssh-rsa AAAA...'
+    else:
+        ktype, b64 = (ep['HOST_KEY_TYPE'] or '').strip(), parts[0]
+
+    # validate=True so a fingerprint or stray punctuation is rejected here
+    # rather than silently decoding to garbage.
+    try:
+        blob = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError(
+            'HOST_KEY_B64 for {!r} is not valid base64. Paste the THIRD field '
+            'of the ssh-keyscan line; a valid ssh-rsa pin starts '
+            'AAAAB3NzaC1yc2E. Got: {!r}...'.format(ep['ENDPOINT_NAME'], raw[:40])
+        )
+
+    # SSH wire format: 4-byte big-endian length, then the key type as text.
+    if len(blob) < 8:
+        raise ValueError(
+            'HOST_KEY_B64 for {!r} decodes to {} bytes — too short to be a host '
+            'key.'.format(ep['ENDPOINT_NAME'], len(blob))
+        )
+    n = struct.unpack('>I', blob[:4])[0]
+    bad_blob = (
+        'HOST_KEY_B64 for {!r} is valid base64 but is not an SSH public key '
+        'blob. A real ssh-rsa pin starts AAAAB3NzaC1yc2E; ed25519 starts '
+        'AAAAC3NzaC1lZDI1NTE5. Got: {!r}...'.format(ep['ENDPOINT_NAME'], raw[:40])
+    )
+    if n <= 0 or n > 64 or len(blob) < 4 + n:
+        raise ValueError(bad_blob)
+    try:
+        embedded = blob[4:4 + n].decode('ascii')
+    except UnicodeDecodeError:
+        raise ValueError(bad_blob)
+
+    if embedded not in KEY_CLASSES:
+        raise ValueError(
+            'Host key for {!r} is of type {!r}, which this procedure cannot '
+            'parse. Known types: {}.'
+            .format(ep['ENDPOINT_NAME'], embedded, ', '.join(sorted(KEY_CLASSES)))
+        )
+    # A type column that disagrees with the key means one of them is stale, and
+    # pinning against the wrong one is worse than not pinning.
+    if ktype and ktype != embedded:
+        raise ValueError(
+            'Endpoint {!r} declares HOST_KEY_TYPE {!r} but the stored key is '
+            '{!r}. Fix the row rather than trusting either.'
+            .format(ep['ENDPOINT_NAME'], ktype, embedded)
+        )
+
+    return embedded, KEY_CLASSES[embedded](data=blob)
+
+
+def _connect(ep):
+    ktype, expected = _parse_host_key(ep)
+    client = paramiko.SSHClient()
+    client.get_host_keys().add(ep['HOST'], ktype, expected)
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    client.connect(
+        hostname=ep['HOST'], port=int(ep['PORT']), username=ep['SFTP_USER'],
+        pkey=_load_private_key(ep),
+        allow_agent=False, look_for_keys=False,
+        timeout=60, banner_timeout=60, auth_timeout=60,
+    )
+    return client
+
+
+def _safe_stage(raw):
+    """A stage the caller may write to. Qualified, allow-listed, no injection."""
+    st = (raw or '').strip().lstrip('@')
+    if not re.match(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$', st):
+        raise ValueError(
+            'TARGET_STAGE must be DATABASE.SCHEMA.NAME using letters, digits and '
+            'underscores. Got {!r}.'.format(raw)
+        )
+    schema = '.'.join(st.split('.')[:2]).upper()
+    if schema not in ALLOWED_STAGE_SCHEMAS:
+        raise ValueError(
+            'Refusing to stage into {}: only {} may be written to. This procedure '
+            'runs as its owner, so the allow-list is the control.'
+            .format(st, ', '.join(sorted(ALLOWED_STAGE_SCHEMAS)))
+        )
+    return '@' + st
+
+
+def run(session, endpoint, remote_dir, file_pattern, target_stage, since_epoch, max_files):
+    result = {
+        'status': 'FAILED', 'endpoint': None, 'remote_dir': None, 'pattern': None,
+        'stage': None, 'files': [], 'files_found': 0, 'files_staged': 0,
+        'bytes_staged': 0, 'max_mtime_epoch': None, 'remaining': 0,
+        'error_message': None,
+    }
+    client = None
+    tmpdir = None
+    try:
+        ep = _endpoint(session, endpoint)
+        result['endpoint'] = ep['ENDPOINT_NAME']
+
+        d = _safe_path(remote_dir, ep['ALLOWED_ROOT'], default_root=True)
+        result['remote_dir'] = d
+
+        stage = _safe_stage(target_stage)
+        result['stage'] = stage
+
+        pattern = (file_pattern or '*').strip()
+        result['pattern'] = pattern
+
+        try:
+            since = int(since_epoch) if since_epoch is not None else 0
+        except (TypeError, ValueError):
+            since = 0
+        try:
+            cap = int(max_files) if max_files else HARD_MAX_FILES
+        except (TypeError, ValueError):
+            cap = HARD_MAX_FILES
+        cap = max(1, min(cap, HARD_MAX_FILES))
+
+        tmpdir = tempfile.mkdtemp(prefix='sftp_fetch_')
+        client = _connect(ep)
+        sftp = client.open_sftp()
+        try:
+            entries = sftp.listdir_attr(d)
+            matches = [
+                e for e in entries
+                if not (e.st_mode is not None and statmod.S_ISDIR(e.st_mode))
+                and fnmatch.fnmatch(e.filename, pattern)
+                and (e.st_mtime or 0) > since
+            ]
+            result['files_found'] = len(matches)
+
+            # Oldest first, so a capped run always advances the watermark by the
+            # oldest unprocessed files and the next run picks up where it left
+            # off. Newest-first would strand the backlog forever.
+            matches.sort(key=lambda e: e.st_mtime or 0)
+            batch = matches[:cap]
+            result['remaining'] = len(matches) - len(batch)
+
+            for e in batch:
+                remote = posixpath.join(d, e.filename)
+                local = os.path.join(tmpdir, e.filename)
+                sftp.get(remote, local)
+
+                size = os.path.getsize(local)
+                if e.st_size is not None and size != e.st_size:
+                    raise RuntimeError(
+                        'Size mismatch on {}: remote {} bytes, local {}. Aborting '
+                        'rather than loading a truncated file.'
+                        .format(remote, e.st_size, size)
+                    )
+
+                session.file.put(local, stage, auto_compress=True, overwrite=True)
+                result['files'].append({
+                    'name': e.filename, 'bytes': size, 'mtime_epoch': e.st_mtime,
+                })
+                result['files_staged'] += 1
+                result['bytes_staged'] += size
+        finally:
+            sftp.close()
+
+        if result['files']:
+            result['max_mtime_epoch'] = max(f['mtime_epoch'] or 0 for f in result['files'])
+        result['status'] = 'SUCCESS' if result['files_staged'] else 'NO_FILES'
+        return result
+
+    except Exception as exc:
+        result['error_message'] = '{}: {}'.format(type(exc).__name__, exc)
+        result['traceback'] = traceback.format_exc()
+        return result
+
+    finally:
+        if client is not None:
+            client.close()
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+$FETCH$;
+
+
+/* -----------------------------------------------------------------------------
    SECTION 7 — grants
 
    CREATE OR REPLACE PROCEDURE drops its grants and has no COPY GRANTS clause,
@@ -808,6 +1238,10 @@ $BODY$;
 -------------------------------------------------------------------------------- */
 
 GRANT USAGE ON PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_INSPECT(STRING, STRING, STRING, NUMBER)
+  TO ROLE SVC_VERCEL_APP_ROLE;
+
+GRANT USAGE ON PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_FETCH(
+    STRING, STRING, STRING, STRING, NUMBER, NUMBER)
   TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT USAGE ON PROCEDURE SPOT_DW.SFTP_ADMIN.SP_SFTP_ENDPOINT_UPDATE(
