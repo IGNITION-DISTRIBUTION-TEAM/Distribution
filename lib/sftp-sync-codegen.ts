@@ -23,6 +23,31 @@ const IDENT = /^[A-Za-z0-9_]+$/
 export const ALLOWED_TARGET_SCHEMAS = ["SPOT_DW.SPOT_SFTP"]
 
 /**
+ * Bumped whenever the emitted objects change in a way that matters.
+ *
+ * The registry stores the version each sync was deployed with, so Current jobs
+ * can say "this one predates the run log" and offer a redeploy, instead of
+ * showing it as a sync that mysteriously never runs anything.
+ *
+ * 2 — the generated procedure writes to TSK_SFTP_SYNC_RUNS.
+ */
+export const GENERATOR_VERSION = 2
+
+/**
+ * The app-owned run log. One row per run of any generated sync.
+ *
+ * It lives with the app's other TSK_ tables rather than in SPOT_SFTP, and the
+ * generated procedure runs EXECUTE AS OWNER as the app role, so writing to it
+ * needs no grant that does not already exist.
+ *
+ * This is the ONLY place rows-loaded-per-run is recorded.
+ * DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL keeps one row per sync holding the whole
+ * target's row count, which answers a different question and overwrites itself
+ * every run.
+ */
+export const RUN_LOG_TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_SFTP_SYNC_RUNS"
+
+/**
  * The four metadata columns the standards document requires.
  *
  * They are placed AFTER the business columns, not before them. The template
@@ -481,6 +506,35 @@ ${names.map((n) => `          t.${n} = s.${n}`).join(",\n")},
       FROM ${staging};
     n_loaded := SQLROWCOUNT;`
 
+  /**
+   * Append one row to the run log.
+   *
+   * WRAPPED IN ITS OWN BEGIN/EXCEPTION. Without the nested block, a failure to
+   * write the log would fall through to the procedure's own handler and report
+   * a load that actually succeeded as FAILED — the record of the work breaking
+   * the work it records. Losing a log row is the right failure here.
+   */
+  const logRun = (
+    statusExpr: string,
+    filesExpr: string,
+    rowsExpr: string,
+    totalExpr: string,
+    messageExpr: string,
+    indent = "        "
+  ) =>
+    [
+      `BEGIN`,
+      `    INSERT INTO ${RUN_LOG_TABLE}`,
+      `        (SYNC_NAME, STARTED_AT, FINISHED_AT, STATUS, FILES, ROWS_LOADED, ROWS_IN_TARGET, MESSAGE)`,
+      `    SELECT ${lit(sourceName)}, :started_at, CURRENT_TIMESTAMP(), ${statusExpr},`,
+      `           ${filesExpr}, ${rowsExpr}, ${totalExpr}, LEFT(${messageExpr}, 1000);`,
+      `EXCEPTION`,
+      `    WHEN OTHER THEN NULL;`,
+      `END;`,
+    ]
+      .map((l) => (l.length > 0 ? indent + l : l))
+      .join("\n")
+
   return `CREATE OR REPLACE PROCEDURE ${proc}()
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -496,7 +550,9 @@ DECLARE
     max_mtime   NUMBER;
     last_seen   NUMBER DEFAULT 0;
     errmsg      VARCHAR;
+    started_at  TIMESTAMP_LTZ;
 BEGIN
+    started_at := CURRENT_TIMESTAMP();
     /* Change detection: only files newer than the last successful run. The
        watermark is the max mtime the fetch reported, not "now" — a file that
        lands while this runs is picked up next time rather than skipped. */
@@ -524,6 +580,7 @@ BEGIN
         UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
            SET STATUS = 'FAILED: ' || LEFT(:errmsg, 180), LAST_SYNCED = CURRENT_TIMESTAMP()
          WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'FAILED'", "0", "0", "NULL", ":errmsg")}
         RETURN 'FAILED: ' || :errmsg;
     END IF;
 
@@ -531,6 +588,7 @@ BEGIN
         UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
            SET STATUS = 'NO_CHANGE', LAST_SYNCED = CURRENT_TIMESTAMP()
          WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'NO_CHANGE'", "0", "0", "NULL", "'Nothing newer than the last run.'")}
         RETURN 'NO_CHANGE: nothing newer than the last run.';
     END IF;
 
@@ -557,6 +615,8 @@ ${loadBlock}
            STATUS        = 'SUCCESS'
      WHERE SOURCE_NAME = ${lit(sourceName)};
 
+${logRun("'SUCCESS'", ":n_files", ":n_loaded", ":n_total", "'Loaded into ${target}'", "    ")}
+
     RETURN 'SUCCESS: ' || n_files || ' file(s), ' || n_loaded
         || ' row(s) into ${target}, ' || n_total || ' total.';
 
@@ -569,6 +629,7 @@ EXCEPTION
         UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
            SET STATUS = 'FAILED: ' || LEFT(:errmsg, 180), LAST_SYNCED = CURRENT_TIMESTAMP()
          WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'FAILED'", ":n_files", "0", "NULL", ":errmsg")}
         RETURN 'FAILED: ' || :errmsg;
 END;
 $$;`

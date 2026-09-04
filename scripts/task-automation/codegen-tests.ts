@@ -8,6 +8,8 @@
  * successful test would be evidence about a statement nobody ever runs again.
  */
 import {
+  GENERATOR_VERSION,
+  RUN_LOG_TABLE,
   buildSyncScript,
   buildCopyStatement,
   buildStageStatement,
@@ -261,6 +263,43 @@ console.log("Schedule safety")
   for (const preset of ["0 7 * * *", "0 5 * * 1-5", "0 6-18 * * *", "0 6-18/2 * * *"]) {
     check(`existing preset ${preset} still builds`, !threw({ scheduleCron: preset }))
   }
+}
+
+/* ---- 4c. Every exit path records the run ---------------------------------- */
+
+console.log("Run log")
+for (const mode of ["merge", "truncate_insert"] as const) {
+  const c = cfg({ loadMode: mode, mergeKeys: mode === "merge" ? ["TXN_DATE"] : [] })
+  const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+  const inserts = proc.match(new RegExp(`INSERT INTO ${RUN_LOG_TABLE.replace(/\./g, "\\.")}`, "g")) ?? []
+
+  // Four ways out: fetch FAILED, NO_CHANGE, SUCCESS, and the exception handler.
+  check(`${mode}: all four exit paths log`, inserts.length === 4, `found ${inserts.length}`)
+
+  // Each write is wrapped in its own handler. Without that, a failure to write
+  // the log falls through to the procedure's own handler and reports a load
+  // that succeeded as FAILED — the record of the work breaking the work.
+  check(
+    `${mode}: every log write is guarded`,
+    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 4,
+    "a log insert is not inside its own exception block"
+  )
+  check(`${mode}: the run is timed`, proc.includes("started_at := CURRENT_TIMESTAMP();"))
+  check(
+    `${mode}: SUCCESS records rows loaded, not just the table total`,
+    /:n_loaded, :n_total/.test(proc),
+    "the SUCCESS row does not distinguish rows loaded from rows in the target"
+  )
+}
+{
+  check("the generator is versioned", Number.isInteger(GENERATOR_VERSION) && GENERATOR_VERSION >= 2)
+  // The run log lives with the app's own tables, not in the SFTP schema, so
+  // writing to it needs no grant beyond the ones the app already has.
+  check(
+    "the run log is an app-owned table",
+    RUN_LOG_TABLE.startsWith("DATAWAREHOUSE.LEADS_DISTRIBUTION."),
+    RUN_LOG_TABLE
+  )
 }
 
 /* ---- 5. Identifiers are refused, not escaped ----------------------------- */

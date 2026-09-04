@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
+import { recordDeploy } from "@/lib/sftp-sync-registry"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -80,6 +81,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Record what was deployed, so the job can be reopened and edited later.
+  // Best-effort: the objects exist in Snowflake either way, and failing the
+  // whole deploy because the bookkeeping failed would be the wrong trade.
+  let registered = true
+  let registryError: string | null = null
+  try {
+    await recordDeploy(body.config, {
+      deployedBy: guard.email,
+      deployedSql: built.statements.map((s) => `-- ${s.label}\n${s.sql}`).join("\n\n"),
+    })
+  } catch (error) {
+    registered = false
+    registryError = error instanceof Error ? error.message : String(error)
+    console.error("[task-automation/deploy] registry write failed:", registryError)
+  }
+
   return NextResponse.json({
     deployed: true,
     results,
@@ -87,5 +104,11 @@ export async function POST(request: NextRequest) {
     warnings: built.warnings,
     deployedBy: guard.email,
     deployedAt: new Date().toISOString(),
+    registered,
+    registryError:
+      registered
+        ? null
+        : `The sync was created, but it could not be saved to the job list, so it will not ` +
+          `appear under Current jobs: ${registryError}`,
   })
 }
