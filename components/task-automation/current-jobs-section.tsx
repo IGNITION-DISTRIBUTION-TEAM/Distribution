@@ -26,6 +26,7 @@ import {
 import { AlertTriangle, Code2, Loader2, Pencil, PlayCircle, RefreshCw, TableProperties, Trash2, UploadCloud } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { parseCron, describeCron } from "@/lib/cron-schedule"
+import { objectNames } from "@/lib/sftp-sync-codegen"
 import type { SyncConfig } from "@/lib/sftp-sync-codegen"
 
 type SyncRow = {
@@ -191,7 +192,12 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
         { method: "DELETE" }
       )
       const d = await res.json()
-      setNote(d.note ?? d.error ?? "Removed.")
+      setNote(
+        d.error ??
+          `${r.config.syncName}: removed from the job list. The Snowflake objects are still ` +
+            `there and ${objectNames(r.config.syncName).task} is still scheduled — ` +
+            `scripts/task-automation/drop-sync.sql removes them in the right order.`
+      )
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e))
     } finally {
@@ -483,11 +489,33 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {confirmDelete?.config.syncName} from the list?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This forgets the configuration, so the job can no longer be opened or edited here.
-              It does <strong>not</strong> drop the Snowflake objects — the table, its data, the
-              procedure and the task all stay, and the task keeps running on its schedule. Suspend
-              it first if that is not what you want.
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  This deletes one row — the app&apos;s record of the job — so it can no longer be
+                  opened, edited or redeployed here. It drops nothing in Snowflake. These stay:
+                </p>
+                {confirmDelete && (
+                  <ul className="rounded-md border border-border bg-background/40 p-2 font-mono text-[11px] leading-relaxed">
+                    <li className="text-rose-300">
+                      {objectNames(confirmDelete.config.syncName).task} — still on its schedule
+                    </li>
+                    <li>{objectNames(confirmDelete.config.syncName).proc}</li>
+                    <li>{objectNames(confirmDelete.config.syncName).staging}</li>
+                    <li>{objectNames(confirmDelete.config.syncName).stage}</li>
+                    <li>{confirmDelete.target} — the loaded data</li>
+                    <li>SFTP_SYNC_CONTROL row {confirmDelete.config.syncName}</li>
+                  </ul>
+                )}
+                <p>
+                  <strong>Suspend the task first</strong> unless you want it to keep running. And
+                  note the control row survives: recreating a sync with this name inherits its
+                  watermark, so it reports NO_CHANGE for files it already loaded.
+                </p>
+                <p className="text-muted-foreground">
+                  scripts/task-automation/drop-sync.sql removes the rest, in the right order.
+                </p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
