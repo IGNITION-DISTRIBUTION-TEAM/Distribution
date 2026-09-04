@@ -72,6 +72,16 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const pending = useRef<SyncConfig | null>(null)
   const [loadToken, setLoadToken] = useState(0)
 
+  /**
+   * Which job the wizard currently holds, if any.
+   *
+   * The wizard stays mounted, so "Create job" would otherwise be a menu item
+   * that quietly shows someone else's job. While a job is open the nav item
+   * says so, and creating a new sync is a deliberate press inside the wizard
+   * rather than something the menu label implies.
+   */
+  const [editingName, setEditingName] = useState<string | null>(null)
+
   const openInWizard = useCallback((config: SyncConfig) => {
     pending.current = config
     setLoadToken((n) => n + 1)
@@ -101,7 +111,9 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                       tooltip={item.label}
                     >
                       {item.icon}
-                      <span>{item.label}</span>
+                      <span>
+                        {item.id === "create" && editingName ? `Editing ${editingName}` : item.label}
+                      </span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
@@ -170,7 +182,11 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
             {/* Mounted always, hidden when another section is showing — see the
                 note at the top of this file. */}
             <div hidden={activeNav !== "create"}>
-              <CreateJobSection loadConfig={pending} loadToken={loadToken} />
+              <CreateJobSection
+                loadConfig={pending}
+                loadToken={loadToken}
+                onEditingChange={setEditingName}
+              />
             </div>
             {activeNav === "jobs" && <CurrentJobsSection onOpen={openInWizard} />}
             {activeNav === "tasks" && <TasksSection />}

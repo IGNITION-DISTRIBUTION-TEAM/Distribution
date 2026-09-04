@@ -173,10 +173,13 @@ function byName(a: SftpEntry, b: SftpEntry): number {
 export function CreateJobSection({
   loadConfig,
   loadToken,
+  onEditingChange,
 }: {
   /** A config handed over from Current jobs, read once per loadToken change. */
   loadConfig?: RefObject<SyncConfig | null>
   loadToken?: number
+  /** Tells the shell which job is open, so the sidebar can say so. */
+  onEditingChange?: (syncName: string | null) => void
 }) {
 
   const [endpoints, setEndpoints] = useState<SftpEndpoint[]>([])
@@ -315,6 +318,7 @@ export function CreateJobSection({
     })
     setReopened(true)
     setOpenedFrom(cfg.syncName.toUpperCase())
+    onEditingChange?.(cfg.syncName.toUpperCase())
 
     // An existing-table job needs the real target columns before anything below
     // step 3 will render — `targetColumns` is `destCols ?? []` in that mode, so
@@ -592,11 +596,48 @@ export function CreateJobSection({
   const deployMode = useMemo(() => {
     const name = syncName.trim().toUpperCase()
     if (!name) return "create" as const
-    if (openedFrom && name === openedFrom) return "update" as const
-    if (openedFrom && name !== openedFrom) return "rename" as const
+    // No "rename" state: the name input is locked while a job is open, so a
+    // changed name — which would build a second sync — is not reachable.
+    if (openedFrom) return "update" as const
     if (existingNames?.some((n) => n.toUpperCase() === name)) return "replace" as const
     return "create" as const
   }, [syncName, openedFrom, existingNames])
+
+  /**
+   * Back to a blank wizard.
+   *
+   * The only way out of edit mode, and deliberately explicit: the shell keeps
+   * this component mounted so that navigating away and back does not lose a
+   * half-finished job, which also means nothing clears itself. Creating a new
+   * sync has to be something you ask for.
+   */
+  const startNewJob = () => {
+    setOpenedFrom(null)
+    setReopened(false)
+    setSyncName("")
+    setSelected(null)
+    setPeek(null)
+    setRestoredHeaders(null)
+    setMapping({})
+    setNewTypes({})
+    setMergeKeys([])
+    setLoadMode("truncate_insert")
+    setDestMode("existing")
+    setDestTable("")
+    setDestCols(null)
+    setDestError(null)
+    setTestResult(null)
+    setDeployResult(null)
+    setRunResult(null)
+    setRunCount(0)
+    setTaskState(null)
+    setControl(null)
+    setPattern("")
+    setListed(false)
+    setEntries([])
+    setEntryCount(0)
+    onEditingChange?.(null)
+  }
 
   const deploy = async () => {
     if (!syncConfig) return
@@ -710,12 +751,21 @@ export function CreateJobSection({
 
   return (
     <div className="flex max-w-5xl flex-col gap-5">
-      {reopened && (
-        <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-          Reopened from the job list. The column mapping and schedule came from the registry
-          rather than from the file, so fields you skipped last time are still skipped and the
-          positions are unchanged. Open the source folder again if you want a fresh sample.
-          Creating it again replaces the existing objects rather than making a second set.
+      {openedFrom && (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+          <div className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-foreground">
+              Editing <span className="font-mono">{openedFrom}</span>
+            </p>
+            <p className="mt-1">
+              Deploying updates this job in place — the name is fixed, so nothing is duplicated.
+              The mapping and schedule came from the registry rather than from the file, so
+              fields you skipped last time are still skipped and the positions are unchanged.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={startNewJob}>
+            Start a new job instead
+          </Button>
         </div>
       )}
       <div className="rounded-xl border border-border bg-card p-6">
@@ -1212,11 +1262,17 @@ export function CreateJobSection({
               onChange={(e) => setSyncName(e.target.value)}
               placeholder="ARPU_FEES"
               className="font-mono text-sm"
+              readOnly={Boolean(openedFrom)}
+              disabled={Boolean(openedFrom)}
             />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            The name drives every object created — stage, staging table, procedure, task —
-            and the key this sync reports under in SFTP_SYNC_CONTROL.
+            {openedFrom
+              ? "Fixed while you are editing a job. The name is the identity of every object " +
+                "the sync owns, so changing it here would build a second sync rather than " +
+                "rename this one — start a new job instead."
+              : "The name drives every object created — stage, staging table, procedure, task — " +
+                "and the key this sync reports under in SFTP_SYNC_CONTROL."}
           </p>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1377,26 +1433,6 @@ export function CreateJobSection({
             </div>
           )}
 
-          {deployMode === "rename" && (
-            <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
-              <p>
-                You opened <span className="font-mono text-foreground">{openedFrom}</span> and the
-                name now reads <span className="font-mono text-foreground">{syncName.trim().toUpperCase()}</span>.
-                The name is the identity of the whole job, so this creates a{" "}
-                <strong>second</strong> sync — its own stage, staging table, procedure and task —
-                and leaves <span className="font-mono text-foreground">{openedFrom}</span> in place,
-                still on its schedule.
-              </p>
-              <button
-                type="button"
-                className="mt-2 underline underline-offset-2 hover:text-foreground"
-                onClick={() => setSyncName(openedFrom ?? "")}
-              >
-                Put the name back to {openedFrom} and update that job instead
-              </button>
-            </div>
-          )}
-
           {deployMode === "replace" && (
             <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
               A job called <span className="font-mono text-foreground">{syncName.trim().toUpperCase()}</span>{" "}
@@ -1414,9 +1450,7 @@ export function CreateJobSection({
                   ? `Update ${openedFrom} in Snowflake`
                   : deployMode === "replace"
                     ? "Replace the existing job"
-                    : deployMode === "rename"
-                      ? "Create as a new job"
-                      : "Create in Snowflake"}
+                    : "Create in Snowflake"}
             </Button>
             {!syncConfig ? (
               <p className="text-xs text-muted-foreground">
