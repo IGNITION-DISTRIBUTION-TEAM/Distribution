@@ -189,6 +189,14 @@ export function CreateJobSection({
   const [entryCount, setEntryCount] = useState<number>(0)
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
+  /**
+   * Has a listing actually been asked for?
+   *
+   * Distinct from "there are no files here". A reopened job has an endpoint
+   * and a path but has never browsed, and an empty table would read as an
+   * empty directory.
+   */
+  const [listed, setListed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [sortKey, setSortKey] = useState<SortKey>("name")
@@ -276,6 +284,8 @@ export function CreateJobSection({
 
     setDestMode(r.destMode)
     setDestTable(r.destTable)
+    setListed(false)
+    setEntries([])
     setRestoredHeaders(r.headers)
     setMapping(r.mapping)
     setNewTypes(r.newTypes)
@@ -318,7 +328,13 @@ export function CreateJobSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadToken])
 
-  // Endpoints come from the secure view; the app never sees host or key.
+  /**
+   * Endpoints come from the secure view; the app never sees host or key.
+   *
+   * The list is fetched, but NOTHING is selected and no directory is listed.
+   * Browsing opens an SSH session to a counterparty's server, so it happens
+   * when someone asks for it — not because a page was opened.
+   */
   useEffect(() => {
     let cancelled = false
     fetch("/api/task-automation/endpoints", { cache: "no-store" })
@@ -328,24 +344,24 @@ export function CreateJobSection({
         if (d.error) { setEndpointsError(String(d.error)); return }
         const list: SftpEndpoint[] = d.endpoints ?? []
         setEndpoints(list)
-        const first = list.find((e) => e.enabled) ?? list[0]
-        if (first) { setEndpoint(first.name); setPath(first.allowedRoot) }
       })
       .catch((e) => { if (!cancelled) setEndpointsError(String(e)) })
     return () => { cancelled = true }
   }, [])
 
   const browse = useCallback(
-    async (target: string) => {
-      if (!endpoint) return
+    async (target: string, forEndpoint?: string) => {
+      const ep = forEndpoint ?? endpoint
+      if (!ep) return
       setLoading(true)
+      setListed(true)
       setError(null)
       setPeek(null)
       try {
         const res = await fetch("/api/task-automation/sftp/inspect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint, path: target, action: "list", maxRows: 500 }),
+          body: JSON.stringify({ endpoint: ep, path: target, action: "list", maxRows: 500 }),
         })
         const d = await res.json()
         if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
@@ -363,8 +379,6 @@ export function CreateJobSection({
     },
     [endpoint]
   )
-
-  useEffect(() => { if (endpoint && path) void browse(path) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [endpoint])
 
   const openFile = async (entry: SftpEntry) => {
     // A real file wins over anything restored from the registry.
@@ -681,8 +695,24 @@ export function CreateJobSection({
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-56">
                 <label className="mb-1 block text-xs text-muted-foreground">SFTP endpoint</label>
-                <Select value={endpoint} onValueChange={setEndpoint}>
-                  <SelectTrigger><SelectValue placeholder="Loading…" /></SelectTrigger>
+                <Select
+                  value={endpoint}
+                  onValueChange={(name) => {
+                    const chosen = endpoints.find((e) => e.name === name)
+                    const root = chosen?.allowedRoot ?? "/"
+                    setEndpoint(name)
+                    setPath(root)
+                    setEntries([])
+                    setEntryCount(0)
+                    setError(null)
+                    // Pass the name through: `browse` closes over `endpoint`,
+                    // which is still the previous value at this point.
+                    void browse(root, name)
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={endpoints.length ? "Choose an endpoint" : "Loading…"} />
+                  </SelectTrigger>
                   <SelectContent>
                     {endpoints.map((e) => (
                       <SelectItem key={e.name} value={e.name} disabled={!e.enabled}>
@@ -698,112 +728,131 @@ export function CreateJobSection({
               </Button>
             </div>
 
-            {/* Breadcrumbs. The first crumb is the floor — the app cannot
-                browse above it, and Snowflake enforces that regardless of
-                what this sends. */}
-            <div className="mt-4 flex flex-wrap items-center gap-1 text-xs">
-              <Home className="mr-1 h-3.5 w-3.5 text-muted-foreground" />
-              {crumbs.map((c, i) => (
-                <span key={c.path} className="flex items-center gap-1">
-                  {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/60" />}
-                  <button
-                    type="button"
-                    className={cn(
-                      "rounded px-1 py-0.5 hover:bg-muted",
-                      i === crumbs.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
-                    )}
-                    onClick={() => void browse(c.path)}
-                  >
-                    {c.label}
-                  </button>
-                </span>
-              ))}
-            </div>
+            {!endpoint ? (
+              <p className="mt-4 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                Choose an endpoint to list its files. Nothing is fetched until you do — browsing
+                opens an SSH session to the source, so it is not something to do on page load.
+              </p>
+            ) : null}
 
-            {error && (
-              <div className="mt-3 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
-                {error}
-              </div>
+            {endpoint && !listed && !loading && (
+              <p className="mt-4 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                Nothing listed yet for{" "}
+                <span className="font-mono text-foreground">{path || "this endpoint"}</span>. Press
+                Refresh to browse it — an empty table here would look like an empty folder.
+              </p>
             )}
 
-            <div className="mt-3 max-h-96 overflow-auto rounded-md border border-border">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-card">
-                  <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-                    {([
-                      { key: "name" as SortKey, label: "Name", align: "" },
-                      { key: "size" as SortKey, label: "Size", align: "text-right" },
-                      { key: "mtime" as SortKey, label: "Modified", align: "" },
-                    ]).map((col) => (
-                      <th key={col.key} className={cn("px-3 py-2 font-medium", col.align)}>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(col.key)}
-                          className={cn(
-                            "inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground",
-                            sortKey === col.key && "text-foreground",
-                            col.align === "text-right" && "flex-row-reverse"
-                          )}
-                        >
-                          {col.label}
-                          {sortKey !== col.key ? (
-                            <ChevronsUpDown className="h-3 w-3 opacity-40" />
-                          ) : sortDir === "asc" ? (
-                            <ArrowUp className="h-3 w-3" />
-                          ) : (
-                            <ArrowDown className="h-3 w-3" />
-                          )}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {parent && (
-                    <tr className="border-t border-border hover:bg-muted/40">
-                      <td className="px-3 py-2" colSpan={3}>
-                        <button type="button" className="flex items-center gap-2 text-muted-foreground" onClick={() => void browse(parent)}>
-                          <Folder className="h-3.5 w-3.5" /> ..
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                  {sortedEntries.map((e) => (
-                    <tr
-                      key={e.path}
+            {endpoint && (listed || loading) && (
+              <>
+              {/* Breadcrumbs. The first crumb is the floor — the app cannot
+                  browse above it, and Snowflake enforces that regardless of
+                  what this sends. */}
+              <div className="mt-4 flex flex-wrap items-center gap-1 text-xs">
+                <Home className="mr-1 h-3.5 w-3.5 text-muted-foreground" />
+                {crumbs.map((c, i) => (
+                  <span key={c.path} className="flex items-center gap-1">
+                    {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/60" />}
+                    <button
+                      type="button"
                       className={cn(
-                        "border-t border-border hover:bg-muted/40",
-                        selected?.path === e.path && "bg-primary/5"
+                        "rounded px-1 py-0.5 hover:bg-muted",
+                        i === crumbs.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
                       )}
+                      onClick={() => void browse(c.path)}
                     >
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="flex items-center gap-2 text-left"
-                          onClick={() => (e.is_dir ? void browse(e.path) : void openFile(e))}
-                        >
-                          {e.is_dir
-                            ? <Folder className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                            : <FileIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-                          <span className={e.is_dir ? "text-foreground" : "text-foreground"}>{e.name}</span>
-                        </button>
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{formatBytes(e.size)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{formatMtime(e.mtime_epoch)}</td>
-                    </tr>
-                  ))}
-                  {!loading && entries.length === 0 && !error && (
-                    <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={3}>Empty directory.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      {c.label}
+                    </button>
+                  </span>
+                ))}
+              </div>
 
-            <p className="mt-2 text-xs text-muted-foreground">
-              {entryCount} item{entryCount === 1 ? "" : "s"}
-              {truncated && " — listing capped; narrow the path to see the rest"}
-              {rootFloor && ` · confined to ${rootFloor}`}
-            </p>
+              {error && (
+                <div className="mt-3 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                  {error}
+                </div>
+              )}
+
+              <div className="mt-3 max-h-96 overflow-auto rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {([
+                        { key: "name" as SortKey, label: "Name", align: "" },
+                        { key: "size" as SortKey, label: "Size", align: "text-right" },
+                        { key: "mtime" as SortKey, label: "Modified", align: "" },
+                      ]).map((col) => (
+                        <th key={col.key} className={cn("px-3 py-2 font-medium", col.align)}>
+                          <button
+                            type="button"
+                            onClick={() => toggleSort(col.key)}
+                            className={cn(
+                              "inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground",
+                              sortKey === col.key && "text-foreground",
+                              col.align === "text-right" && "flex-row-reverse"
+                            )}
+                          >
+                            {col.label}
+                            {sortKey !== col.key ? (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            ) : sortDir === "asc" ? (
+                              <ArrowUp className="h-3 w-3" />
+                            ) : (
+                              <ArrowDown className="h-3 w-3" />
+                            )}
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parent && (
+                      <tr className="border-t border-border hover:bg-muted/40">
+                        <td className="px-3 py-2" colSpan={3}>
+                          <button type="button" className="flex items-center gap-2 text-muted-foreground" onClick={() => void browse(parent)}>
+                            <Folder className="h-3.5 w-3.5" /> ..
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {sortedEntries.map((e) => (
+                      <tr
+                        key={e.path}
+                        className={cn(
+                          "border-t border-border hover:bg-muted/40",
+                          selected?.path === e.path && "bg-primary/5"
+                        )}
+                      >
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 text-left"
+                            onClick={() => (e.is_dir ? void browse(e.path) : void openFile(e))}
+                          >
+                            {e.is_dir
+                              ? <Folder className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                              : <FileIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            <span className={e.is_dir ? "text-foreground" : "text-foreground"}>{e.name}</span>
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{formatBytes(e.size)}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{formatMtime(e.mtime_epoch)}</td>
+                      </tr>
+                    ))}
+                    {!loading && entries.length === 0 && !error && (
+                      <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={3}>Empty directory.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="mt-2 text-xs text-muted-foreground">
+                {entryCount} item{entryCount === 1 ? "" : "s"}
+                {truncated && " — listing capped; narrow the path to see the rest"}
+                {rootFloor && ` · confined to ${rootFloor}`}
+              </p>
+              </>
+            )}
           </>
         )}
       </div>
