@@ -273,16 +273,16 @@ for (const mode of ["merge", "truncate_insert"] as const) {
   const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
   const inserts = proc.match(new RegExp(`INSERT INTO ${RUN_LOG_TABLE.replace(/\./g, "\\.")}`, "g")) ?? []
 
-  // Five ways out: fetch FAILED, NO_CHANGE, the loaded-but-empty self-check,
-  // SUCCESS, and the exception handler.
-  check(`${mode}: all five exit paths log`, inserts.length === 5, `found ${inserts.length}`)
+  // Six ways out: fetch FAILED, the repair re-fetch failing, NO_CHANGE, the
+  // loaded-but-empty self-check, SUCCESS, and the exception handler.
+  check(`${mode}: all six exit paths log`, inserts.length === 6, `found ${inserts.length}`)
 
   // Each write is wrapped in its own handler. Without that, a failure to write
   // the log falls through to the procedure's own handler and reports a load
   // that succeeded as FAILED — the record of the work breaking the work.
   check(
     `${mode}: every log write is guarded`,
-    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 5,
+    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 6,
     "a log insert is not inside its own exception block"
   )
   check(`${mode}: the run is timed`, proc.includes("started_at := CURRENT_TIMESTAMP();"))
@@ -317,6 +317,52 @@ for (const mode of ["merge", "truncate_insert"] as const) {
     "the run log is an app-owned table",
     RUN_LOG_TABLE.startsWith("DATAWAREHOUSE.LEADS_DISTRIBUTION."),
     RUN_LOG_TABLE
+  )
+}
+
+/* ---- 4c2. An empty target repairs itself, guarded ------------------------ */
+
+console.log("Empty-target repair")
+for (const mode of ["merge", "truncate_insert"] as const) {
+  const c = cfg({ loadMode: mode, mergeKeys: mode === "merge" ? ["TXN_DATE"] : [] })
+  const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+
+  // NO_CHANGE used to log NULL here, which is why an empty target looked
+  // identical to a healthy no-op in the run log.
+  check(
+    `${mode}: NO_CHANGE counts the target instead of logging NULL`,
+    /'NO_CHANGE',\n\s+0, 0, :n_total,/.test(proc),
+    proc.split("\n").find((l) => l.includes("'NO_CHANGE',")) ?? "no NO_CHANGE log line"
+  )
+
+  // BOTH conditions. A future edit dropping prev_rows would turn this into an
+  // unconditional re-fetch on every run against any empty target — including
+  // one that is empty because the source file is.
+  check(
+    `${mode}: the repair requires an empty target AND a previous load`,
+    proc.includes("IF (n_total = 0 AND prev_rows > 0) THEN"),
+    "the guard is not both conditions"
+  )
+  check(
+    `${mode}: prev_rows comes from the control table's ROW_COUNT`,
+    /SELECT COALESCE\(ROW_COUNT, 0\) INTO :prev_rows/.test(proc)
+  )
+  check(
+    `${mode}: the repair re-fetches from epoch 0`,
+    /SP_SFTP_FETCH\([\s\S]{0,200}?, 0, 200\s*\)\s*INTO :fetched;/.test(proc),
+    "the repair does not ignore the watermark"
+  )
+
+  // A repair must not hide inside a green SUCCESS.
+  check(
+    `${mode}: a repair is recorded as RELOADED_EMPTY_TARGET`,
+    proc.includes("IFF(:reloaded, 'RELOADED_EMPTY_TARGET', 'SUCCESS')") &&
+      (proc.match(/RELOADED_EMPTY_TARGET/g) ?? []).length >= 2,
+    "the repair status does not reach both the control table and the run log"
+  )
+  check(
+    `${mode}: and says why in the message`,
+    proc.includes("the watermark was ignored")
   )
 }
 

@@ -26,7 +26,7 @@ import {
 } from "recharts"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, Pause, Pencil, Play, RefreshCw, Trash2, X } from "lucide-react"
+import { History, Loader2, Pause, Pencil, Play, RefreshCw, Trash2, X } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,6 +85,8 @@ export function TasksSection() {
   const [editing, setEditing] = useState<string | null>(null)
   const [draftCron, setDraftCron] = useState("0 7 * * *")
   const [confirmDrop, setConfirmDrop] = useState<SyncRow | null>(null)
+  const [confirmForce, setConfirmForce] = useState<SyncRow | null>(null)
+  const [targetRows, setTargetRows] = useState<Record<string, number>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -101,6 +103,7 @@ export function TasksSection() {
       setSeries(t.series ?? [])
       setTotals(t.totals ?? null)
       setSyncs(sRes.ok ? (s.syncs ?? []) : [])
+      setTargetRows(t.targetRows ?? {})
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -171,6 +174,47 @@ export function TasksSection() {
   }
 
   const setTask = (s: SyncRow, action: "resume" | "suspend") => act(s, { action })
+
+  /**
+   * Rewind the watermark and run.
+   *
+   * On this screen because this is where a schedule visibly ran and did
+   * nothing — the moment someone wants to make it run anyway. Submitted and
+   * polled rather than awaited: it re-fetches every matching file.
+   */
+  const forceReload = async (s: SyncRow) => {
+    setBusy(s.config.syncName)
+    setNote(null)
+    try {
+      const res = await fetch("/api/task-automation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "force",
+          db: s.config.targetDb,
+          schema: s.config.targetSchema,
+          syncName: s.config.syncName,
+        }),
+      })
+      const sub = await res.json()
+      if (!res.ok || !sub.handle) throw new Error(sub.error || "No statement handle returned")
+      for (;;) {
+        await new Promise((x) => setTimeout(x, 2500))
+        const pr = await fetch(`/api/task-automation/run?handle=${encodeURIComponent(sub.handle)}`, {
+          cache: "no-store",
+        })
+        const ps = (await pr.json()) as { status?: string; error?: string; result?: string }
+        if (ps.status === "running") continue
+        setNote(`${s.config.syncName}: ${ps.result || ps.error || "finished with no message"}`)
+        break
+      }
+    } catch (e) {
+      setNote(`${s.config.syncName}: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(null)
+      void load()
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -305,19 +349,20 @@ export function TasksSection() {
                 <th className="px-3 py-2 font-medium">Schedule</th>
                 <th className="px-3 py-2 font-medium">Next run</th>
                 <th className="px-3 py-2 font-medium">Task</th>
+                <th className="px-3 py-2 text-right font-medium">In target</th>
                 <th className="px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin" />
                   </td>
                 </tr>
               ) : scheduled.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
                     Nothing scheduled yet.
                   </td>
                 </tr>
@@ -333,6 +378,18 @@ export function TasksSection() {
                       <span className={s.taskState?.toLowerCase() === "started" ? "text-emerald-300" : "text-muted-foreground"}>
                         {s.taskState ?? "not visible"}
                       </span>
+                    </td>
+                    {/* A scheduled sync reporting NO_CHANGE at an EMPTY table is
+                        the state that looks healthy and delivers nothing. */}
+                    <td className="px-3 py-2 text-right font-mono text-xs">
+                      <span className={cn(targetRows[s.config.syncName] === 0 ? "text-rose-300" : "text-muted-foreground")}>
+                        {targetRows[s.config.syncName] != null
+                          ? targetRows[s.config.syncName].toLocaleString()
+                          : "—"}
+                      </span>
+                      {targetRows[s.config.syncName] === 0 && (
+                        <p className="text-[10px] text-rose-300">empty</p>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -350,6 +407,17 @@ export function TasksSection() {
                             <Play className="mr-2 h-4 w-4" />
                           )}
                           {s.taskState?.toLowerCase() === "started" ? "Suspend" : "Resume"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={busy === s.config.syncName}
+                          onClick={() => setConfirmForce(s)}
+                          aria-label="Force reload"
+                          title="Rewind the watermark and re-load every matching file"
+                        >
+                          <History className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
@@ -382,7 +450,7 @@ export function TasksSection() {
               {scheduled.map((s) =>
                 editing === s.config.syncName ? (
                   <tr key={`${s.config.syncName}-edit`} className="border-b border-border bg-muted/20">
-                    <td colSpan={5} className="px-3 py-4">
+                    <td colSpan={6} className="px-3 py-4">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-sm font-medium text-foreground">
                           Schedule for {s.config.syncName}
@@ -480,6 +548,31 @@ export function TasksSection() {
           </table>
         </div>
       </div>
+
+      <AlertDialog open={!!confirmForce} onOpenChange={(o) => !o && setConfirmForce(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Force reload {confirmForce?.config.syncName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Rewinds this sync&apos;s watermark and runs it, so every matching file is fetched
+              and loaded again rather than skipped as unchanged. This is what to press when a run
+              reported NO_CHANGE and the target is empty.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const t = confirmForce
+                setConfirmForce(null)
+                if (t) void forceReload(t)
+              }}
+            >
+              Force reload
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!confirmDrop} onOpenChange={(o) => !o && setConfirmDrop(null)}>
         <AlertDialogContent>

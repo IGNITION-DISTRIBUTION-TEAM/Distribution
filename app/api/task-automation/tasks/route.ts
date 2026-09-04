@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { listRuns, densify, listSyncs } from "@/lib/sftp-sync-registry"
+import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -31,6 +32,26 @@ export async function GET(request: NextRequest) {
     const series = densify(runs, days)
     const syncs = await listSyncs()
 
+    // The target's live count per scheduled sync, so "ran and did nothing" and
+    // "ran and the table is empty" are distinguishable here rather than only
+    // on Current jobs.
+    const targetRows = new Map<string, number>()
+    await Promise.all(
+      syncs.map(async (r) => {
+        const t = `${r.config.targetDb}.${r.config.targetSchema}.${r.config.targetTable}`
+        if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(t)) return
+        try {
+          const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+            `SELECT COUNT(*) AS N FROM ${t}`,
+            { database: r.config.targetDb, schema: r.config.targetSchema }
+          )
+          targetRows.set(r.config.syncName, Number(Object.values(rows[0] ?? {})[0] ?? 0))
+        } catch {
+          // Unreadable or missing — Current jobs reports on that separately.
+        }
+      })
+    )
+
     const failed = runs.filter((r) => /^FAILED/i.test(r.status)).length
     const noChange = runs.filter((r) => r.status === "NO_CHANGE").length
     const totals = {
@@ -47,7 +68,13 @@ export async function GET(request: NextRequest) {
       notReporting: syncs.filter((s) => s.stale).length,
     }
 
-    return NextResponse.json({ days, runs: runs.slice(0, 100), series, totals })
+    return NextResponse.json({
+      days,
+      runs: runs.slice(0, 100),
+      series,
+      totals,
+      targetRows: Object.fromEntries(targetRows),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[task-automation/tasks] error:", message)

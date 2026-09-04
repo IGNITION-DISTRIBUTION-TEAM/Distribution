@@ -32,8 +32,9 @@ export const ALLOWED_TARGET_SCHEMAS = ["SPOT_DW.SPOT_SFTP"]
  * 2 — the generated procedure writes to TSK_SFTP_SYNC_RUNS.
  * 3 — it verifies its own load: reporting SUCCESS while the target is empty is
  *     the worst failure this thing has, and it happened.
+ * 4 — it repairs an empty target instead of reporting NO_CHANGE at it forever.
  */
-export const GENERATOR_VERSION = 3
+export const GENERATOR_VERSION = 4
 
 /**
  * The app-owned run log. One row per run of any generated sync.
@@ -572,6 +573,8 @@ DECLARE
     n_total     NUMBER DEFAULT 0;
     max_mtime   NUMBER;
     last_seen   NUMBER DEFAULT 0;
+    prev_rows   NUMBER DEFAULT 0;
+    reloaded    BOOLEAN DEFAULT FALSE;
     errmsg      VARCHAR;
     started_at  TIMESTAMP_LTZ;
 BEGIN
@@ -608,11 +611,50 @@ ${logRun("'FAILED'", "0", "0", "NULL", ":errmsg")}
     END IF;
 
     IF (n_files = 0) THEN
-        UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
-           SET STATUS = 'NO_CHANGE', LAST_SYNCED = CURRENT_TIMESTAMP()
+        /* Nothing newer than the watermark. Before accepting that, look at the
+           target — a NO_CHANGE against an EMPTY table is not a no-op, it is a
+           sync that will never deliver anything again. The watermark sits at
+           the file's mtime, the file does not move, and so every run from here
+           reports the same nothing. */
+        SELECT COUNT(*) INTO :n_total FROM ${target};
+        SELECT COALESCE(ROW_COUNT, 0) INTO :prev_rows
+          FROM DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
          WHERE SOURCE_NAME = ${lit(sourceName)};
-${logRun("'NO_CHANGE'", "0", "0", "NULL", "'Nothing newer than the last run.'")}
-        RETURN 'NO_CHANGE: nothing newer than the last run.';
+
+        /* Repair it, but only where this sync is restoring ITS OWN work:
+           prev_rows > 0 is the control table's record that a previous run put
+           rows in this table. Without that guard a target that is empty because
+           the source file is empty would re-fetch on every single run. */
+        IF (n_total = 0 AND prev_rows > 0) THEN
+            reloaded := TRUE;
+            CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_FETCH(
+                ${lit(cfg.endpoint)}, ${lit(cfg.remoteDir)}, ${lit(cfg.filePattern)},
+                ${lit(stage)}, 0, 200
+            ) INTO :fetched;
+            SELECT GET(:fetched, 'status')::VARCHAR                   INTO :status;
+            SELECT COALESCE(GET(:fetched, 'files_staged')::NUMBER, 0) INTO :n_files;
+
+            IF (status = 'FAILED') THEN
+                SELECT COALESCE(GET(:fetched, 'error_message')::VARCHAR, 'fetch failed') INTO :errmsg;
+                UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
+                   SET STATUS = 'FAILED: ' || LEFT(:errmsg, 180), LAST_SYNCED = CURRENT_TIMESTAMP()
+                 WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'FAILED'", "0", "0", ":n_total", ":errmsg")}
+                RETURN 'FAILED: ' || :errmsg;
+            END IF;
+        END IF;
+
+        /* Still nothing to load: either the target was fine, or the re-fetch
+           found no files at all. Record the target count either way, so
+           "nothing new" and "nothing new AND the table is empty" stop looking
+           identical in the run log. */
+        IF (n_files = 0) THEN
+            UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
+               SET STATUS = 'NO_CHANGE', LAST_SYNCED = CURRENT_TIMESTAMP()
+             WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'NO_CHANGE'", "0", "0", ":n_total", "'Nothing newer than the last run.'")}
+            RETURN 'NO_CHANGE: nothing newer than the last run.';
+        END IF;
     END IF;
 
     TRUNCATE TABLE ${staging};
@@ -650,10 +692,23 @@ ${logRun("'FAILED'", ":n_files", ":n_loaded", ":n_total", ":errmsg")}
        SET LAST_MODIFIED = TO_TIMESTAMP_NTZ(:max_mtime),
            LAST_SYNCED   = CURRENT_TIMESTAMP(),
            ROW_COUNT     = :n_total,
-           STATUS        = 'SUCCESS'
+           /* A repair is not an ordinary success. It means the target was
+              emptied by something outside this sync and the watermark was
+              ignored to put it back — visible the morning after rather than
+              hidden inside a green SUCCESS. */
+           STATUS        = IFF(:reloaded, 'RELOADED_EMPTY_TARGET', 'SUCCESS')
      WHERE SOURCE_NAME = ${lit(sourceName)};
 
-${logRun("'SUCCESS'", ":n_files", ":n_loaded", ":n_total", `'Loaded into ${target}'`, "    ")}
+${logRun(
+      "IFF(:reloaded, 'RELOADED_EMPTY_TARGET', 'SUCCESS')",
+      ":n_files",
+      ":n_loaded",
+      ":n_total",
+      `IFF(:reloaded,
+                    'Target was empty and a previous run had loaded rows, so the watermark was ignored. Reloaded into ${target}',
+                    'Loaded into ${target}')`,
+      "    "
+    )}
 
     RETURN 'SUCCESS: ' || n_files || ' file(s), ' || n_loaded
         || ' row(s) into ${target}, ' || n_total || ' total.';
