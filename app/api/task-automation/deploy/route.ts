@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
+import { buildSyncScript, objectNames, type SyncConfig } from "@/lib/sftp-sync-codegen"
 import { recordDeploy } from "@/lib/sftp-sync-registry"
 
 export const dynamic = "force-dynamic"
@@ -52,6 +52,33 @@ export async function POST(request: NextRequest) {
   const [db, schema] = [body.config.targetDb, body.config.targetSchema]
   const target = `${db}.${schema}.${body.config.targetTable}`
   const results: { label: string; ok: boolean; error?: string }[] = []
+
+  /**
+   * Was this job's schedule already armed?
+   *
+   * The last statement of every script is ALTER TASK … SUSPEND, which is right
+   * for a FIRST deploy — §10 of the standards document wants a human to look
+   * before anything runs on a schedule — and wrong for redeploying something
+   * already reviewed and live: the sync would just stop, and the only sign
+   * would be a task state nobody is watching.
+   *
+   * So the prior state is captured here and restored at the end. A first deploy
+   * has no prior state, lands suspended, and the review gate is intact.
+   */
+  let wasStarted = false
+  const taskRef = `${db}.${schema}.${objectNames(body.config.syncName).task}`
+  try {
+    const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+      `SHOW TASKS LIKE '${objectNames(body.config.syncName).task}' IN SCHEMA ${db}.${schema}`,
+      { database: db, schema }
+    )
+    const r = rows[0]
+    const k = r && Object.keys(r).find((c) => c.toLowerCase() === "state")
+    wasStarted = Boolean(k && r && String(r[k]).toLowerCase() === "started")
+  } catch {
+    // No task yet, or not visible. Either way there is no state to preserve.
+    wasStarted = false
+  }
 
   // PRE-FLIGHT. Nothing in the script creates the target when the job was
   // configured against an existing table, so without this the deploy succeeds,
@@ -106,6 +133,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Put the schedule back the way it was found.
+  let rearmed = false
+  let rearmError: string | null = null
+  if (wasStarted) {
+    try {
+      await executeSnowflakeQuery(`ALTER TASK ${taskRef} RESUME`, { database: db, schema })
+      rearmed = true
+    } catch (error) {
+      rearmError = error instanceof Error ? error.message : String(error)
+    }
+  }
+
   // POST-FLIGHT. Every statement reported success; confirm the thing they were
   // all for actually exists. This catches routes to a missing target that the
   // pre-flight cannot — including a CREATE that succeeded against a name other
@@ -152,6 +191,13 @@ export async function POST(request: NextRequest) {
     warnings: built.warnings,
     deployedBy: guard.email,
     deployedAt: new Date().toISOString(),
+    taskWasStarted: wasStarted,
+    rearmed,
+    taskNote: wasStarted
+      ? rearmed
+        ? "The schedule was running before this, so it has been resumed."
+        : `The schedule was running before this and could NOT be resumed — it is suspended now. ${rearmError}`
+      : "Created suspended. Resume it from Tasks once you are happy with it.",
     registered,
     registryError:
       registered

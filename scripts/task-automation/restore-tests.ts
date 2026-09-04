@@ -12,6 +12,7 @@
  * rowToConfig and stops there; this one goes through the wizard's own state.
  */
 import { restoreFromConfig, rebuildColumns } from "../../lib/sftp-sync-restore"
+import { statusBlamesMissingTarget } from "../../lib/sftp-sync-registry"
 import { sanitizeHeaderRow, SKIP_VALUE, type TargetColumn } from "../../lib/column-mapping"
 import { buildSyncScript, type SyncConfig } from "../../lib/sftp-sync-codegen"
 
@@ -208,6 +209,43 @@ console.log("Destination")
   check(
     "the destination is fully qualified",
     restoreFromConfig(cfg()).destTable === "SPOT_DW.SPOT_SFTP.ARPU_FEES"
+  )
+}
+
+/* ---- 4. Reading the failure Snowflake already recorded ------------------- */
+
+console.log("Missing-target detection")
+{
+  const target = "SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES3"
+  const real =
+    "FAILED: SQL compilation error: Table 'SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES3' " +
+    "does not exist or not authorized."
+
+  // The signal that needs no privilege: the job already told us.
+  check("the real message is recognised", statusBlamesMissingTarget(real, target))
+  check(
+    "the bare table name is enough",
+    statusBlamesMissingTarget(
+      "FAILED: Table 'ARPU_DASHBOARD_FEES3' does not exist or not authorized.",
+      target
+    )
+  )
+  check("case does not matter", statusBlamesMissingTarget(real.toLowerCase(), target))
+
+  // Things that must NOT badge a job red.
+  check("SUCCESS does not", !statusBlamesMissingTarget("SUCCESS", target))
+  check("NO_CHANGE does not", !statusBlamesMissingTarget("NO_CHANGE", target))
+  check("null does not", !statusBlamesMissingTarget(null, target))
+  check(
+    "an unrelated failure does not",
+    !statusBlamesMissingTarget("FAILED: Numeric value 'abc' is not recognized", target)
+  )
+  check(
+    "a missing-object error about a DIFFERENT object does not",
+    !statusBlamesMissingTarget(
+      "FAILED: Table 'SPOT_DW.SPOT_SFTP.SOMETHING_ELSE' does not exist or not authorized.",
+      target
+    )
   )
 }
 

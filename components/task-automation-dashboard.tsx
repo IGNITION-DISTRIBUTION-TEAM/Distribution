@@ -41,6 +41,14 @@ import { TasksSection } from "@/components/task-automation/tasks-section"
 import { EndpointsSection } from "@/components/task-automation/endpoints-section"
 import type { SyncConfig } from "@/lib/sftp-sync-codegen"
 
+/**
+ * The commit this bundle was built from. Inlined at build time by Next, so it
+ * costs nothing at runtime and cannot drift from the JavaScript it is printed
+ * beside. Deliberately not read through lib/snowflake.ts, which reads
+ * process.env at call time and would drag JWT signing into the client bundle.
+ */
+const BUILD_SHA = (process.env.NEXT_PUBLIC_BUILD_SHA ?? "dev").slice(0, 7)
+
 type NavItem = { id: string; label: string; icon: React.ReactNode }
 
 const navItems: NavItem[] = [
@@ -106,6 +114,13 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
             <div className="px-2 text-sm">
               <p className="font-medium text-foreground">{user?.name}</p>
               <p className="text-xs text-muted-foreground">{user?.email}</p>
+              {/* Which build is this? An open tab keeps its cached JavaScript
+                  across a deploy while API routes update immediately, so the
+                  page can show new data through old UI. This makes "am I
+                  looking at the new code?" answerable at a glance. */}
+              <p className="mt-1 font-mono text-[10px] text-muted-foreground" title="Deployed build">
+                build {BUILD_SHA}
+              </p>
             </div>
             {onBack && (
               <Button

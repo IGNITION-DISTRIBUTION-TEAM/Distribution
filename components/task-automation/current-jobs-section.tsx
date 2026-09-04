@@ -36,6 +36,8 @@ type SyncRow = {
   stale: boolean
   taskState: string | null
   control: Record<string, unknown> | null
+  target: string
+  targetHealth: "present" | "missing" | "unknown"
   targetMissing: boolean
   canCreateTarget: boolean
   consecutiveFailures: number | null
@@ -129,7 +131,7 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
       const d = await res.json()
       setNote(
         d.deployed
-          ? `${r.config.syncName}: redeployed. It reports runs from now on.`
+          ? `${r.config.syncName}: redeployed. ${d.taskNote ?? ""}`.trim()
           : `${r.config.syncName}: ${d.error ?? "redeploy failed"}`
       )
     } catch (e) {
@@ -262,18 +264,33 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                 >
                   <td className="px-3 py-2">
                     <span className="font-medium text-foreground">{r.config.syncName}</span>
-                    {r.targetMissing && (
+                    {r.targetHealth === "missing" && (
                       <span
                         className="ml-2 inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300"
-                        title="The target table cannot be read. Snowflake reports a missing object and a missing privilege the same way, so it is one or the other."
+                        title={`${r.target} cannot be read. Snowflake reports a missing object and a missing privilege the same way, so it is one or the other.`}
                       >
                         <AlertTriangle className="h-3 w-3" /> target missing
+                      </span>
+                    )}
+                    {r.targetHealth === "unknown" && (
+                      <span
+                        className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        title="The catalogue lookup for this target did not return. This is not the same as the table being fine — it means nobody checked."
+                      >
+                        target not checked
                       </span>
                     )}
                     {(r.consecutiveFailures ?? 0) > 0 && (
                       <span className="ml-2 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300">
                         {r.consecutiveFailures} failed run{r.consecutiveFailures === 1 ? "" : "s"} in a row
                       </span>
+                    )}
+                    {r.targetMissing && (
+                      <p className="mt-1 text-[10px] text-rose-300">
+                        {r.canCreateTarget
+                          ? "Redeploy (the cloud icon) recreates it, or use the table icon."
+                          : "Set up against an existing table, so its stored types are placeholders — open it, switch Destination to \u201cCreate a new table\u201d and deploy."}
+                      </p>
                     )}
                     {r.stale && (
                       <span

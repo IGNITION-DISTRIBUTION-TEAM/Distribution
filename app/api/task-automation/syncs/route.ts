@@ -4,7 +4,9 @@ import { requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   listSyncs,
   forgetSync,
-  findMissingTargets,
+  checkTargets,
+  statusBlamesMissingTarget,
+  type TargetHealth,
   consecutiveFailures,
   CONFIGS_TABLE,
   REGISTRY_SF,
@@ -101,9 +103,9 @@ export async function GET(request: NextRequest) {
     // Does each target table still exist? One query for the whole schema.
     // A sync whose table has been dropped deploys clean and then fails at its
     // scheduled hour, which is the least useful moment to find out.
-    let missing = new Set<string>()
+    let health = new Map<string, TargetHealth>()
     try {
-      missing = await findMissingTargets(
+      health = await checkTargets(
         registry.map((r) => ({
           db: r.config.targetDb,
           schema: r.config.targetSchema,
@@ -111,7 +113,7 @@ export async function GET(request: NextRequest) {
         }))
       )
     } catch {
-      missing = new Set()
+      health = new Map()
     }
     let failures = new Map<string, number>()
     try {
@@ -134,19 +136,34 @@ export async function GET(request: NextRequest) {
     const syncs = registry.map((r) => {
       const name = r.config.syncName.toUpperCase()
       const task = taskByName.get(objectNames(name).task.toUpperCase()) ?? null
-      const target = `${r.config.targetDb}.${r.config.targetSchema}.${r.config.targetTable}`.toUpperCase()
+      const target = `${r.config.targetDb}.${r.config.targetSchema}.${r.config.targetTable}`
+      const control = controlByName.get(name) ?? null
+      const looked = health.get(target.toUpperCase()) ?? "unknown"
+
+      // Two independent signals. The catalogue lookup needs a privilege and can
+      // fail; the recorded failure needs nothing and is Snowflake's own words.
+      // Either one is enough to call the target missing.
+      const blamed = statusBlamesMissingTarget(
+        control?.STATUS == null ? null : String(control.STATUS),
+        target
+      )
+      const targetHealth: TargetHealth = blamed ? "missing" : looked
+      const targetMissing = targetHealth === "missing"
+
       return {
         ...r,
         source: "registry" as const,
         taskState: task?.state ?? null,
         taskSchedule: task?.schedule ?? null,
-        control: controlByName.get(name) ?? null,
-        targetMissing: missing.has(target),
+        control,
+        target,
+        targetHealth,
+        targetMissing,
         // Only offer to build it when the stored types are real ones. A job
         // configured against an existing table carries VARCHAR(1000)
         // placeholders, and creating a wrongly-typed table out of a typo would
         // be worse than the failure it replaces.
-        canCreateTarget: missing.has(target) && r.config.createTable,
+        canCreateTarget: targetMissing && r.config.createTable,
         consecutiveFailures: failures.get(name) ?? null,
       }
     })

@@ -347,24 +347,31 @@ export function densify(
 /* ----------------------------------------------------- target table health */
 
 /**
- * Which of these target tables do not exist?
+ * Does the target table exist?
  *
- * One INFORMATION_SCHEMA query per distinct database, not one per sync — a job
- * list of twenty should cost one round trip, not twenty.
+ * THREE ANSWERS, NOT TWO. An earlier version returned only "missing" and
+ * swallowed a failed lookup as "present" — fail-safe, and the wrong instinct:
+ * a clean row that actually means "the check did not run" is the same quiet
+ * wrongness as a chart that renders zero because its buckets never matched.
  *
- * A caveat worth stating rather than hiding: INFORMATION_SCHEMA lists only what
- * the role has privileges on, so "missing" here means absent OR invisible.
- * Snowflake words both failures identically at run time too, so the distinction
- * is not one this app can make — the UI says so instead of asserting the table
- * is gone.
+ * One INFORMATION_SCHEMA query per distinct database, not one per sync, so a
+ * job list of twenty costs one round trip.
+ *
+ * Note that INFORMATION_SCHEMA lists only what the role has privileges on, so
+ * "missing" means ABSENT OR INVISIBLE. Snowflake words both the same way at run
+ * time too, so it is not a distinction this app can make — the UI keeps saying
+ * both rather than asserting the table is gone.
  */
-export async function findMissingTargets(
+export type TargetHealth = "present" | "missing" | "unknown"
+
+export async function checkTargets(
   targets: { db: string; schema: string; table: string }[]
-): Promise<Set<string>> {
+): Promise<Map<string, TargetHealth>> {
   const key = (t: { db: string; schema: string; table: string }) =>
     `${t.db}.${t.schema}.${t.table}`.toUpperCase()
-  const missing = new Set(targets.map(key))
-  if (targets.length === 0) return missing
+  const out = new Map<string, TargetHealth>()
+  for (const t of targets) out.set(key(t), "unknown")
+  if (targets.length === 0) return out
 
   const byDb = new Map<string, typeof targets>()
   for (const t of targets) {
@@ -373,7 +380,7 @@ export async function findMissingTargets(
   }
 
   for (const [db, list] of byDb) {
-    if (!/^[A-Za-z0-9_]+$/.test(db)) continue
+    if (!/^[A-Za-z0-9_]+$/.test(db)) continue // stays unknown
     const schemas = [...new Set(list.map((t) => t.schema.toUpperCase()))].filter((x) =>
       /^[A-Za-z0-9_]+$/.test(x)
     )
@@ -385,16 +392,39 @@ export async function findMissingTargets(
           WHERE TABLE_SCHEMA IN (${schemas.map((x) => `'${x}'`).join(", ")})`,
         { database: db, schema: schemas[0] }
       )
-      for (const r of rows) {
-        missing.delete(`${db}.${String(r.TABLE_SCHEMA)}.${String(r.TABLE_NAME)}`.toUpperCase())
-      }
+      const present = new Set(
+        rows.map((r) => `${db}.${String(r.TABLE_SCHEMA)}.${String(r.TABLE_NAME)}`.toUpperCase())
+      )
+      // The query answered, so every target in this database now has a real
+      // answer either way.
+      for (const t of list) out.set(key(t), present.has(key(t)) ? "present" : "missing")
     } catch {
-      // Could not check. Report nothing as missing rather than badging every
-      // job red on the strength of a failed lookup.
-      for (const t of list) missing.delete(key(t))
+      // Leave them "unknown". Reporting them present would be a claim the
+      // lookup did not support; reporting them missing would badge working
+      // jobs red on the strength of a failed query.
     }
   }
-  return missing
+  return out
+}
+
+/**
+ * Does this run status say the target table is not there?
+ *
+ * A second signal, independent of the privilege the INFORMATION_SCHEMA check
+ * needs: Snowflake already told us, in the failure the job recorded. Pure, so
+ * it is testable without a warehouse.
+ *
+ *   Table 'SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES3' does not exist or not authorized.
+ */
+export function statusBlamesMissingTarget(status: string | null | undefined, target: string): boolean {
+  if (!status || !target) return false
+  const s = String(status)
+  if (!/does not exist or not authorized/i.test(s)) return false
+  // Match the qualified name or the bare table, since the message quotes
+  // whichever form the failing statement used.
+  const bare = target.split(".").pop() ?? target
+  const hay = s.toUpperCase()
+  return hay.includes(target.toUpperCase()) || hay.includes(bare.toUpperCase())
 }
 
 /**
