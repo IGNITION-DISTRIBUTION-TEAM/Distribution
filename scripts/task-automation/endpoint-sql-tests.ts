@@ -151,6 +151,7 @@ console.log("Registry round trip")
       scheduleCron: "0 7 * * *",
       scheduleTz: "Africa/Johannesburg",
       onError: "ABORT_STATEMENT",
+      onlyWhenChanged: false,
     },
     // The tab is the case that would break a naive JSON round trip.
     {
@@ -171,6 +172,7 @@ console.log("Registry round trip")
       scheduleCron: "30 5 * * 1-5",
       scheduleTz: "Africa/Johannesburg",
       onError: "CONTINUE",
+      onlyWhenChanged: true,
     },
   ]
 
@@ -191,6 +193,7 @@ console.log("Registry round trip")
       DELIMITER: cfg.delimiter === "\t" ? "\\t" : cfg.delimiter,
       SKIP_HEADER: cfg.skipHeader ? "true" : "false",
       ON_ERROR: cfg.onError,
+      ONLY_WHEN_CHANGED: cfg.onlyWhenChanged ? "true" : "false",
       SCHEDULE_CRON: cfg.scheduleCron,
       SCHEDULE_TZ: cfg.scheduleTz,
       WAREHOUSE: cfg.warehouse,
