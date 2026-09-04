@@ -112,6 +112,13 @@ import {
 } from "lucide-react"
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { cn } from "@/lib/utils"
+import {
+  SKIP_VALUE,
+  ALLOWED_SQL_TYPES,
+  sanitizeColumnName,
+  autoMatchColumn,
+  type TargetColumn as SharedTargetColumn,
+} from "@/lib/column-mapping"
 
 type NavItem = {
   id: string
@@ -714,40 +721,10 @@ type FilePreview = {
   sample: string[][]
 }
 
-type TargetColumn = {
-  COLUMN_NAME: string
-  DATA_TYPE: string
-  IS_NULLABLE: "YES" | "NO"
-  COLUMN_DEFAULT: string | null
-}
-
-const SKIP_VALUE = "__skip__"
-
-const ALLOWED_SQL_TYPES = [
-  "VARCHAR(500)",
-  "VARCHAR(1000)",
-  "VARCHAR(4000)",
-  "NUMBER",
-  "NUMBER(38,0)",
-  "FLOAT",
-  "BOOLEAN",
-  "DATE",
-  "TIMESTAMP_NTZ",
-] as const
-
-function sanitizeColumnName(raw: string): string {
-  let s = raw.toUpperCase().replace(/[^A-Z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "")
-  if (!s) s = "COL"
-  if (/^[0-9]/.test(s)) s = `C_${s}`
-  return s
-}
-
-function autoMatchColumn(sourceHeader: string, targets: TargetColumn[]): string {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
-  const src = norm(sourceHeader)
-  const exact = targets.find((t) => norm(t.COLUMN_NAME) === src)
-  return exact ? exact.COLUMN_NAME : SKIP_VALUE
-}
+// Shared with the Task Automation SFTP wizard — see lib/column-mapping.ts.
+// Kept in one place rather than copied: this file is ~9,500 lines and a second
+// copy of autoMatchColumn would drift from the first the moment either changed.
+type TargetColumn = SharedTargetColumn
 
 type CreateColSpec = { sourceHeader: string; name: string; type: string }
 

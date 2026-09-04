@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   ArrowLeft,
@@ -14,9 +16,21 @@ import {
   Loader2,
   LogOut,
   RefreshCw,
+  Table2,
   Workflow,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  SKIP_VALUE,
+  ALLOWED_SQL_TYPES,
+  DELIMITERS,
+  sniffDelimiter,
+  splitDelimited,
+  sanitizeHeaderRow,
+  autoMatchColumn,
+  type TargetColumn,
+  type Delimiter,
+} from "@/lib/column-mapping"
 
 type SftpEndpoint = { name: string; label: string; allowedRoot: string; enabled: boolean }
 type SftpEntry = {
@@ -90,6 +104,21 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const [peek, setPeek] = useState<string[] | null>(null)
   const [peeking, setPeeking] = useState(false)
 
+  // ---- step 2: how to read the file, and where it lands
+  const [delimiter, setDelimiter] = useState<Delimiter>(",")
+  const [hasHeader, setHasHeader] = useState(true)
+  const [destMode, setDestMode] = useState<"existing" | "new">("existing")
+  const [destTable, setDestTable] = useState("")
+  const [destCols, setDestCols] = useState<TargetColumn[] | null>(null)
+  const [destError, setDestError] = useState<string | null>(null)
+  const [destLoading, setDestLoading] = useState(false)
+  /** source ordinal -> target column name, or SKIP_VALUE */
+  const [mapping, setMapping] = useState<Record<number, string>>({})
+  /** target column name -> chosen SQL type, when creating the table */
+  const [newTypes, setNewTypes] = useState<Record<string, string>>({})
+  const [mergeKeys, setMergeKeys] = useState<string[]>([])
+  const [loadMode, setLoadMode] = useState<"truncate_insert" | "merge">("truncate_insert")
+
   // Endpoints come from the secure view; the app never sees host or key.
   useEffect(() => {
     let cancelled = false
@@ -158,6 +187,79 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
       setPeeking(false)
     }
   }
+
+  // The delimiter is guessed from the peeked lines the moment a file is opened,
+  // then left alone — re-guessing on every render would fight the operator the
+  // second they override it.
+  useEffect(() => {
+    if (peek && peek.length > 0) setDelimiter(sniffDelimiter(peek))
+  }, [peek])
+
+  const sourceHeaders = useMemo(() => {
+    if (!peek || peek.length === 0) return []
+    const first = splitDelimited(peek[0], delimiter)
+    // No header row means the columns have no names, so they get positional
+    // ones. COL1..COLn matches how COPY INTO addresses them ($1..$n), which is
+    // the thing the generator has to line up with.
+    return hasHeader ? first : first.map((_, i) => `COL${i + 1}`)
+  }, [peek, delimiter, hasHeader])
+
+  const sampleRows = useMemo(() => {
+    if (!peek) return []
+    return peek.slice(hasHeader ? 1 : 0, hasHeader ? 4 : 3).map((l) => splitDelimited(l, delimiter))
+  }, [peek, delimiter, hasHeader])
+
+  /** Target columns: read from Snowflake, or derived from the header. */
+  const targetColumns: TargetColumn[] = useMemo(() => {
+    if (destMode === "existing") return destCols ?? []
+    return sanitizeHeaderRow(sourceHeaders).map((name) => ({
+      COLUMN_NAME: name,
+      DATA_TYPE: newTypes[name] ?? "VARCHAR(1000)",
+      IS_NULLABLE: "YES" as const,
+      COLUMN_DEFAULT: null,
+    }))
+  }, [destMode, destCols, sourceHeaders, newTypes])
+
+  // Auto-map by name whenever either side changes. Only fills blanks, so a
+  // hand-made choice is never overwritten by a later re-read of the table.
+  useEffect(() => {
+    if (sourceHeaders.length === 0 || targetColumns.length === 0) return
+    setMapping((prev) => {
+      const next = { ...prev }
+      sourceHeaders.forEach((h, i) => {
+        if (next[i] && next[i] !== SKIP_VALUE) return
+        next[i] = autoMatchColumn(h, targetColumns)
+      })
+      return next
+    })
+  }, [sourceHeaders, targetColumns])
+
+  const loadDestColumns = async () => {
+    const t = destTable.trim()
+    if (!t) return
+    setDestLoading(true)
+    setDestError(null)
+    setDestCols(null)
+    try {
+      const res = await fetch("/api/snowflake/table-columns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: t }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+      setDestCols(d.columns ?? [])
+    } catch (e) {
+      setDestError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDestLoading(false)
+    }
+  }
+
+  const mappedCount = useMemo(
+    () => Object.values(mapping).filter((v) => v && v !== SKIP_VALUE).length,
+    [mapping]
+  )
 
   // Breadcrumbs stop at the floor: there is nothing above it to click to.
   const crumbs = useMemo(() => {
@@ -359,10 +461,269 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                 ) : (
                   <p className="text-xs text-muted-foreground">Nothing read back.</p>
                 )}
-                <p className="mt-2 text-xs text-muted-foreground">
-                  The header row becomes the source columns for the mapping step.
-                </p>
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <div className="w-40">
+                    <label className="mb-1 block text-xs text-muted-foreground">Delimiter</label>
+                    <Select value={delimiter} onValueChange={(v) => setDelimiter(v as Delimiter)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {DELIMITERS.map((d) => (
+                          <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2 pb-2">
+                    <Checkbox
+                      id="ta-has-header"
+                      checked={hasHeader}
+                      onCheckedChange={(v) => setHasHeader(v === true)}
+                    />
+                    <Label htmlFor="ta-has-header" className="text-xs text-muted-foreground">
+                      First row is a header
+                    </Label>
+                  </div>
+                  <p className="pb-2 text-xs text-muted-foreground">
+                    Guessed from the sample — {sourceHeaders.length} column
+                    {sourceHeaders.length === 1 ? "" : "s"}. Override if it looks wrong.
+                  </p>
+                </div>
               </div>
+            </div>
+          )}
+
+          {selected && sourceHeaders.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  3
+                </span>
+                <h2 className="font-medium text-foreground">Destination</h2>
+              </div>
+
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Button
+                  variant={destMode === "existing" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setDestMode("existing")}
+                >
+                  <Table2 className="mr-2 h-4 w-4" /> Existing table
+                </Button>
+                <Button
+                  variant={destMode === "new" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setDestMode("new")}
+                >
+                  Create a new table
+                </Button>
+              </div>
+
+              {destMode === "existing" ? (
+                <>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-96 flex-1">
+                      <label className="mb-1 block text-xs text-muted-foreground">
+                        Target table (DATABASE.SCHEMA.NAME)
+                      </label>
+                      <Input
+                        value={destTable}
+                        onChange={(e) => setDestTable(e.target.value)}
+                        placeholder="e.g. SPOT_DW.SPOT_SFTP.RATES"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => void loadDestColumns()} disabled={destLoading}>
+                      {destLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Read columns
+                    </Button>
+                  </div>
+                  {destError && (
+                    <div className="mt-3 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                      {destError}
+                    </div>
+                  )}
+                  {destCols && destCols.length === 0 && !destError && (
+                    <p className="mt-2 text-xs text-amber-300">
+                      No columns came back. Snowflake reports a missing table and a missing
+                      privilege the same way, so this means one or the other — not necessarily
+                      that the table is absent.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="max-w-lg">
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      New table name (DATABASE.SCHEMA.NAME)
+                    </label>
+                    <Input
+                      value={destTable}
+                      onChange={(e) => setDestTable(e.target.value)}
+                      placeholder="e.g. SPOT_DW.SPOT_SFTP.RATES"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Columns come from the header, uppercased and stripped to A-Z, 0-9 and
+                    underscore. The four metadata columns the standard requires —
+                    <code className="mx-1 text-foreground">_FILE</code>
+                    <code className="mr-1 text-foreground">_LINE</code>
+                    <code className="mr-1 text-foreground">_MODIFIED</code>
+                    <code className="mr-1 text-foreground">_UPDATED</code>
+                    — are added by the generator, not mapped here.
+                  </p>
+                </>
+              )}
+
+              {targetColumns.length > 0 && (
+                <div className="mt-5">
+                  <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Column mapping
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {mappedCount} of {sourceHeaders.length} source column
+                      {sourceHeaders.length === 1 ? "" : "s"} mapped
+                    </span>
+                  </div>
+
+                  <div className="max-h-96 overflow-auto rounded-md border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card">
+                        <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                          <th className="px-3 py-2 font-medium">#</th>
+                          <th className="px-3 py-2 font-medium">Source column</th>
+                          <th className="px-3 py-2 font-medium">Sample</th>
+                          <th className="px-3 py-2 font-medium">Target</th>
+                          {destMode === "new" && <th className="px-3 py-2 font-medium">Type</th>}
+                          <th className="px-3 py-2 text-center font-medium">Merge key</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sourceHeaders.map((h, i) => {
+                          const target = mapping[i] ?? SKIP_VALUE
+                          const isKey = target !== SKIP_VALUE && mergeKeys.includes(target)
+                          return (
+                            <tr key={i} className="border-t border-border">
+                              {/* The ordinal is not decoration: COPY INTO addresses
+                                  source fields as $1..$n, so this is the number the
+                                  generated statement uses. */}
+                              <td className="px-3 py-2 tabular-nums text-muted-foreground">${i + 1}</td>
+                              <td className="px-3 py-2 text-foreground">{h}</td>
+                              <td className="max-w-40 truncate px-3 py-2 text-muted-foreground">
+                                {sampleRows[0]?.[i] ?? "—"}
+                              </td>
+                              <td className="px-3 py-2">
+                                {destMode === "new" ? (
+                                  <span className="font-mono text-foreground">
+                                    {targetColumns[i]?.COLUMN_NAME ?? "—"}
+                                  </span>
+                                ) : (
+                                  <Select
+                                    value={target}
+                                    onValueChange={(v) => setMapping((m) => ({ ...m, [i]: v }))}
+                                  >
+                                    <SelectTrigger className="h-8 w-56"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={SKIP_VALUE}>— skip —</SelectItem>
+                                      {targetColumns.map((c) => (
+                                        <SelectItem key={c.COLUMN_NAME} value={c.COLUMN_NAME}>
+                                          {c.COLUMN_NAME}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
+                              </td>
+                              {destMode === "new" && (
+                                <td className="px-3 py-2">
+                                  <Select
+                                    value={newTypes[targetColumns[i]?.COLUMN_NAME ?? ""] ?? "VARCHAR(1000)"}
+                                    onValueChange={(v) =>
+                                      setNewTypes((t) => ({ ...t, [targetColumns[i].COLUMN_NAME]: v }))
+                                    }
+                                  >
+                                    <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      {ALLOWED_SQL_TYPES.map((t) => (
+                                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              )}
+                              <td className="px-3 py-2 text-center">
+                                <Checkbox
+                                  checked={isKey}
+                                  disabled={destMode === "existing" && target === SKIP_VALUE}
+                                  onCheckedChange={(v) => {
+                                    const col = destMode === "new" ? targetColumns[i]?.COLUMN_NAME : target
+                                    if (!col || col === SKIP_VALUE) return
+                                    setMergeKeys((k) =>
+                                      v === true ? [...new Set([...k, col])] : k.filter((x) => x !== col)
+                                    )
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {selected && targetColumns.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  4
+                </span>
+                <h2 className="font-medium text-foreground">How the load runs</h2>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={loadMode === "truncate_insert" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setLoadMode("truncate_insert")}
+                >
+                  Truncate and insert
+                </Button>
+                <Button
+                  variant={loadMode === "merge" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setLoadMode("merge")}
+                >
+                  Merge
+                </Button>
+              </div>
+
+              {loadMode === "merge" ? (
+                mergeKeys.length > 0 ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Merging on{" "}
+                    <span className="font-mono text-foreground">{mergeKeys.join(", ")}</span>. A row
+                    whose key already exists is updated; a new key is inserted.
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-amber-300">
+                    No merge key chosen. Without one the merge falls back to
+                    <code className="mx-1 text-foreground">(_FILE, _LINE)</code>, which is a
+                    file-position key — re-running the same file is safe, but the same record
+                    arriving in tomorrow&apos;s differently-named file inserts a duplicate. Tick a
+                    business key above.
+                  </p>
+                )
+              ) : (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  The target is emptied and refilled on every run. Right for a full snapshot;
+                  wrong for a feed that only sends the day&apos;s changes.
+                </p>
+              )}
             </div>
           )}
         </div>
