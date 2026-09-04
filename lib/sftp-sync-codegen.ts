@@ -201,30 +201,129 @@ function businessColumns(cfg: SyncConfig): { target: string; ordinal: number; ty
     .map((c) => ({ target: ident(c.target, "column"), ordinal: c.ordinal, type: c.type }))
 }
 
-export function buildSyncScript(cfg: SyncConfig): BuildResult {
-  const warnings = validate(cfg)
+/**
+ * The fully-qualified object names for a config, and its column list.
+ *
+ * Exported because the test-load route needs exactly the same names the deploy
+ * will use — if it computed its own, a passing test would say nothing about
+ * the sync that gets created.
+ */
+export function resolveSync(cfg: SyncConfig) {
   const o = objectNames(cfg.syncName)
   const db = ident(cfg.targetDb, "Target database")
   const schema = ident(cfg.targetSchema, "Target schema")
   const table = ident(cfg.targetTable, "Target table")
-
   const q = (n: string) => `${db}.${schema}.${n}`
-  const target = q(table)
-  const stage = q(o.stage)
-  const staging = q(o.staging)
-  const proc = q(o.proc)
-  const task = q(o.task)
+  return {
+    db,
+    schema,
+    names: o,
+    target: q(table),
+    table,
+    stage: q(o.stage),
+    staging: q(o.staging),
+    proc: q(o.proc),
+    task: q(o.task),
+    cols: businessColumns(cfg),
+  }
+}
 
-  const cols = businessColumns(cfg)
-  const colNames = cols.map((c) => c.target)
+/** Statement 1 of the script. Same text whether it is a test or a deploy. */
+export function buildStageStatement(cfg: SyncConfig): { label: string; sql: string } {
+  const r = resolveSync(cfg)
+  return {
+    label: `Stage ${r.names.stage}`,
+    sql: `CREATE STAGE IF NOT EXISTS ${r.stage}
+  COMMENT = 'Landing stage for the ${r.names.name} SFTP sync.';`,
+  }
+}
+
+/**
+ * Statement 3 of the script.
+ *
+ * `replace` exists for one case: a test run against a staging table that
+ * already exists with a different column list, because the mapping changed
+ * since the last test. IF NOT EXISTS would leave the old shape in place and
+ * the COPY would fail on a column that is not there, which reads as a file
+ * problem when it is not one. The table is transient and truncated every run,
+ * so replacing it loses nothing.
+ */
+export function buildStagingStatement(
+  cfg: SyncConfig,
+  opts: { replace?: boolean } = {}
+): { label: string; sql: string } {
+  const r = resolveSync(cfg)
+  const verb = opts.replace
+    ? "CREATE OR REPLACE TRANSIENT TABLE"
+    : "CREATE TRANSIENT TABLE IF NOT EXISTS"
+  return {
+    label: `Staging table ${r.names.staging}`,
+    sql: `${verb} ${r.staging} (
+    _FILE      VARCHAR(512)   NOT NULL,
+    _LINE      NUMBER(38,0)   NOT NULL,
+    _MODIFIED  TIMESTAMP_TZ(9),
+    _UPDATED   TIMESTAMP_TZ(9),
+${r.cols.map((c) => `    ${c.target.padEnd(10)} VARCHAR`).join(",\n")}
+);
+/* TRANSIENT: no Time Travel or Fail-safe cost on a table truncated every run.
+   Business columns are VARCHAR here whatever the target's types are — the file
+   is text, and casting on the way in would fail the whole load for one bad
+   value instead of one bad row. */`,
+  }
+}
+
+/**
+ * The COPY INTO, as one statement with no trailing semicolon and no indent.
+ *
+ * THIS IS THE POINT OF THE TEST STEP. The test route and the generated
+ * procedure both call this, with `purge` as the only difference, so a test that
+ * parses the file correctly is evidence about the sync rather than about a
+ * second COPY that merely looks similar. There is a unit test asserting the two
+ * differ in nothing but the PURGE line.
+ *
+ * The test passes `purge: false`: purging would delete the staged file that the
+ * first real run is about to want.
+ */
+export function buildCopyStatement(cfg: SyncConfig, opts: { purge: boolean }): string {
+  const r = resolveSync(cfg)
+  const names = r.cols.map((c) => c.target)
+  const selects = r.cols.map((c) => `$${c.ordinal}`)
+  return `COPY INTO ${r.staging}
+    (_FILE, _LINE, _MODIFIED, _UPDATED, ${names.join(", ")})
+FROM (
+    SELECT METADATA$FILENAME,
+           METADATA$FILE_ROW_NUMBER,
+           NULL::TIMESTAMP_TZ,
+           CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
+           ${selects.join(", ")}
+      FROM ${r.stage}
+)
+FILE_FORMAT = (TYPE = CSV
+               FIELD_DELIMITER = ${delimiterLiteral(cfg.delimiter)}
+               FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+               SKIP_HEADER = ${cfg.skipHeader ? 1 : 0}
+               EMPTY_FIELD_AS_NULL = TRUE)
+ON_ERROR = ${cfg.onError}
+PURGE = ${opts.purge ? "TRUE" : "FALSE"}`
+}
+
+/** Indent every line of a block, so a shared fragment sits inside a procedure. */
+function indentBlock(sql: string, pad: string): string {
+  return sql
+    .split("\n")
+    .map((l) => (l.length > 0 ? pad + l : l))
+    .join("\n")
+}
+
+export function buildSyncScript(cfg: SyncConfig): BuildResult {
+  const warnings = validate(cfg)
+  const r = resolveSync(cfg)
+  const { names: o, target, staging, stage, proc, task, table, cols } = r
+
   const statements: { label: string; sql: string }[] = []
 
   /* 1 — stage */
-  statements.push({
-    label: `Stage ${o.stage}`,
-    sql: `CREATE STAGE IF NOT EXISTS ${stage}
-  COMMENT = 'Landing stage for the ${o.name} SFTP sync.';`,
-  })
+  statements.push(buildStageStatement(cfg))
 
   /* 2 — target table */
   if (cfg.createTable) {
@@ -244,20 +343,7 @@ ${cols.map((c) => `    ${c.target.padEnd(10)} ${c.type}`).join(",\n")},
   }
 
   /* 3 — transient staging table, business columns all VARCHAR */
-  statements.push({
-    label: `Staging table ${o.staging}`,
-    sql: `CREATE TRANSIENT TABLE IF NOT EXISTS ${staging} (
-    _FILE      VARCHAR(512)   NOT NULL,
-    _LINE      NUMBER(38,0)   NOT NULL,
-    _MODIFIED  TIMESTAMP_TZ(9),
-    _UPDATED   TIMESTAMP_TZ(9),
-${cols.map((c) => `    ${c.target.padEnd(10)} VARCHAR`).join(",\n")}
-);
-/* TRANSIENT: no Time Travel or Fail-safe cost on a table truncated every run.
-   Business columns are VARCHAR here whatever the target's types are — the file
-   is text, and casting on the way in would fail the whole load for one bad
-   value instead of one bad row. */`,
-  })
+  statements.push(buildStagingStatement(cfg))
 
   /* 4 — control row */
   statements.push({
@@ -303,7 +389,6 @@ function buildProcedure(
 ): string {
   const { target, staging, stage, proc, cols, sourceName } = ctx
   const names = cols.map((c) => c.target)
-  const selects = cols.map((c) => `$${c.ordinal}`)
 
   const mergeOn =
     cfg.mergeKeys.length > 0
@@ -389,23 +474,7 @@ BEGIN
 
     TRUNCATE TABLE ${staging};
 
-    COPY INTO ${staging}
-        (_FILE, _LINE, _MODIFIED, _UPDATED, ${names.join(", ")})
-    FROM (
-        SELECT METADATA$FILENAME,
-               METADATA$FILE_ROW_NUMBER,
-               NULL::TIMESTAMP_TZ,
-               CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
-               ${selects.join(", ")}
-          FROM ${stage}
-    )
-    FILE_FORMAT = (TYPE = CSV
-                   FIELD_DELIMITER = ${delimiterLiteral(cfg.delimiter)}
-                   FIELD_OPTIONALLY_ENCLOSED_BY = '"'
-                   SKIP_HEADER = ${cfg.skipHeader ? 1 : 0}
-                   EMPTY_FIELD_AS_NULL = TRUE)
-    ON_ERROR = ${cfg.onError}
-    PURGE = TRUE;
+${indentBlock(buildCopyStatement(cfg, { purge: true }), "    ")};
 
     /* _MODIFIED cannot come from COPY INTO — stage metadata has no SFTP mtime —
        so it is backfilled from what the fetch reported, matched per file. */

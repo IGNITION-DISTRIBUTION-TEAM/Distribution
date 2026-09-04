@@ -22,6 +22,7 @@ import {
   Pause,
   Play,
   PlayCircle,
+  FlaskConical,
   Table2,
   Workflow,
 } from "lucide-react"
@@ -40,6 +41,16 @@ import {
 } from "@/lib/column-mapping"
 
 type SftpEndpoint = { name: string; label: string; allowedRoot: string; enabled: boolean }
+type TestLoadResult = {
+  ok: boolean
+  error?: string
+  failedAt?: string
+  steps?: { label: string; ok: boolean; detail?: string }[]
+  rowCount?: number
+  columns?: string[]
+  rows?: (string | number | null)[][]
+  file?: { name?: string; size?: number; mtime_epoch?: number } | null
+}
 type SftpEntry = {
   name: string
   is_dir: boolean
@@ -184,8 +195,12 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const [mergeKeys, setMergeKeys] = useState<string[]>([])
   const [loadMode, setLoadMode] = useState<"truncate_insert" | "merge">("truncate_insert")
 
-  // ---- step 5: schedule and deploy
+  // ---- step 5: test the load before anything permanent exists
   const [syncName, setSyncName] = useState("")
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<TestLoadResult | null>(null)
+
+  // ---- step 6: schedule and deploy
   const [cron, setCron] = useState("0 7 * * *")
   const [warehouse, setWarehouse] = useState("SPOT_WH")
   const [deploying, setDeploying] = useState(false)
@@ -404,6 +419,32 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
       return { statements: [], warnings: [], error: e instanceof Error ? e.message : String(e) }
     }
   }, [syncConfig])
+
+  /**
+   * Load one file into the staging table and show what Snowflake made of it.
+   *
+   * Nothing permanent is created — no target table, no procedure, no task —
+   * and the control table is not touched, so the first real run still sees the
+   * file as new. See app/api/task-automation/test-load/route.ts.
+   */
+  const testLoad = async () => {
+    if (!syncConfig) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await fetch("/api/task-automation/test-load", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: syncConfig }),
+      })
+      const d = await res.json()
+      setTestResult(d)
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const deploy = async () => {
     if (!syncConfig) return
@@ -992,21 +1033,121 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
                   5
                 </span>
-                <h2 className="font-medium text-foreground">Name it, schedule it, create it</h2>
+                <h2 className="font-medium text-foreground">Name it, then test the load</h2>
+              </div>
+
+              <div className="w-64">
+                <label className="mb-1 block text-xs text-muted-foreground">Sync name</label>
+                <Input
+                  value={syncName}
+                  onChange={(e) => setSyncName(e.target.value)}
+                  placeholder="ARPU_FEES"
+                  className="font-mono text-sm"
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                The name drives every object created — stage, staging table, procedure, task —
+                and the key this sync reports under in SFTP_SYNC_CONTROL.
+              </p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => void testLoad()}
+                  disabled={!syncConfig || testing || Boolean(preview?.error)}
+                >
+                  {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FlaskConical className="mr-2 h-4 w-4" />}
+                  {testing ? "Loading one file..." : "Test load"}
+                </Button>
+                {!syncConfig && (
+                  <p className="text-xs text-muted-foreground">
+                    Needs a sync name, a target table and at least one mapped column.
+                  </p>
+                )}
+              </div>
+
+              <p className="mt-3 text-xs text-muted-foreground">
+                Pulls <strong className="text-foreground">one</strong> matching file and runs the
+                real COPY INTO against a staging table, so you can see the file as Snowflake parses
+                it rather than as the browser splits it. It creates the stage and that staging
+                table and nothing else — no target table, no procedure, no task — and it leaves
+                SFTP_SYNC_CONTROL alone, so the first real run still treats the file as new.
+              </p>
+
+              {testResult && !testResult.ok && (
+                <div className="mt-4 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                  {testResult.failedAt ? `${testResult.failedAt}: ` : ""}
+                  {testResult.error ?? "The test load failed."}
+                </div>
+              )}
+
+              {testResult?.steps && testResult.steps.length > 0 && (
+                <ul className="mt-4 flex flex-col gap-1">
+                  {testResult.steps.map((st, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs">
+                      <span className={st.ok ? "text-emerald-400" : "text-rose-400"}>
+                        {st.ok ? "\u2713" : "\u2717"}
+                      </span>
+                      <span className="text-foreground">{st.label}</span>
+                      {st.detail && <span className="text-muted-foreground">— {st.detail}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {testResult?.ok && testResult.columns && (
+                <div className="mt-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-emerald-300">
+                      {testResult.rowCount ?? 0} row(s) loaded from {testResult.file?.name ?? "the file"}
+                    </span>
+                    <span className="text-muted-foreground">
+                      First {testResult.rows?.length ?? 0}, under the columns they map to. If the
+                      values sit under the wrong heading, or everything landed in one column, the
+                      delimiter or the ordinals are wrong — fix step 2 and test again.
+                    </span>
+                  </div>
+                  <div className="max-h-80 overflow-auto rounded-md border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/60">
+                        <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {testResult.columns.map((c) => (
+                            <th key={c} className="whitespace-nowrap px-3 py-2 font-medium">{c}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(testResult.rows ?? []).map((r, i) => (
+                          <tr key={i} className="border-t border-border">
+                            {r.map((v, j) => (
+                              <td key={j} className="whitespace-nowrap px-3 py-1.5 font-mono text-foreground">
+                                {v === null || v === "" ? (
+                                  <span className="text-muted-foreground">null</span>
+                                ) : (
+                                  String(v)
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {selected && targetColumns.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  6
+                </span>
+                <h2 className="font-medium text-foreground">Schedule it, create it</h2>
               </div>
 
               <div className="flex flex-wrap items-end gap-3">
-                <div className="w-64">
-                  <label className="mb-1 block text-xs text-muted-foreground">
-                    Sync name
-                  </label>
-                  <Input
-                    value={syncName}
-                    onChange={(e) => setSyncName(e.target.value)}
-                    placeholder="ARPU_FEES"
-                    className="font-mono text-sm"
-                  />
-                </div>
                 <div className="w-40">
                   <label className="mb-1 block text-xs text-muted-foreground">Warehouse</label>
                   <Input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="font-mono text-sm" />
@@ -1025,11 +1166,6 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                 </div>
                 <p className="pb-2 text-xs text-muted-foreground">Africa/Johannesburg</p>
               </div>
-
-              <p className="mt-2 text-xs text-muted-foreground">
-                The name drives every object created — stage, staging table, procedure, task —
-                and the key this sync reports under in SFTP_SYNC_CONTROL.
-              </p>
 
               {preview?.error && (
                 <div className="mt-4 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
@@ -1072,11 +1208,16 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                   {deploying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
                   {deploying ? "Creating..." : "Create in Snowflake"}
                 </Button>
-                {!syncConfig && (
+                {!syncConfig ? (
                   <p className="text-xs text-muted-foreground">
                     Needs a sync name, a target table and at least one mapped column.
                   </p>
-                )}
+                ) : !testResult?.ok ? (
+                  <p className="text-xs text-amber-300">
+                    Not tested yet. Step 5 loads one file first, so a wrong delimiter or ordinal
+                    shows up before six objects and a schedule exist.
+                  </p>
+                ) : null}
               </div>
 
               {deployResult && (
@@ -1102,7 +1243,7 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                     )}
                   >
                     {deployResult.deployed
-                      ? "Created. Test it below before resuming the schedule."
+                      ? "Created. Run it below before resuming the schedule."
                       : deployResult.error ?? "Failed."}
                   </div>
                 </div>
@@ -1114,9 +1255,9 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
             <div className="rounded-xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center gap-2">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                  6
+                  7
                 </span>
-                <h2 className="font-medium text-foreground">Test it, then arm the schedule</h2>
+                <h2 className="font-medium text-foreground">Run it, then arm the schedule</h2>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
