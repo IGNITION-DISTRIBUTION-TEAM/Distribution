@@ -32,6 +32,7 @@ import {
   PlayCircle,
   FlaskConical,
   Table2,
+  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { buildSyncScript, type SyncConfig } from "@/lib/sftp-sync-codegen"
@@ -181,12 +182,15 @@ export function CreateJobSection({
   loadConfig,
   loadToken,
   onEditingChange,
+  onExitEdit,
 }: {
   /** A config handed over from Current jobs, read once per loadToken change. */
   loadConfig?: RefObject<SyncConfig | null>
   loadToken?: number
   /** Tells the shell which job is open, so the sidebar can say so. */
   onEditingChange?: (syncName: string | null) => void
+  /** Where "Cancel" goes — the shell sends it back to the job list. */
+  onExitEdit?: () => void
 }) {
 
   const [endpoints, setEndpoints] = useState<SftpEndpoint[]>([])
@@ -659,6 +663,21 @@ export function CreateJobSection({
     onEditingChange?.(null)
   }
 
+  /**
+   * Back out of an edit.
+   *
+   * Distinct from "Start a new job": both discard, but this one LEAVES. Only
+   * offering the second meant the way out of an edit was to land in a blank
+   * create form, which is not what anyone means by cancel.
+   *
+   * No confirmation. Nothing here is unrecoverable — the job is untouched in
+   * the registry until Update is pressed, and reopening it is two clicks.
+   */
+  const cancelEdit = () => {
+    startNewJob()
+    onExitEdit?.()
+  }
+
   const deploy = async () => {
     if (!syncConfig) return
     setDeploying(true)
@@ -781,11 +800,21 @@ export function CreateJobSection({
               Deploying updates this job in place — the name is fixed, so nothing is duplicated.
               The mapping and schedule came from the registry rather than from the file, so
               fields you skipped last time are still skipped and the positions are unchanged.
+              <br />
+              <span className="text-muted-foreground">
+                Cancel goes back to the job list and changes nothing. Start a new job clears the
+                form and stays here. Neither touches {openedFrom} — only Update does.
+              </span>
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={startNewJob}>
-            Start a new job instead
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={cancelEdit}>
+              <X className="mr-2 h-4 w-4" /> Cancel
+            </Button>
+            <Button variant="ghost" size="sm" onClick={startNewJob}>
+              Start a new job instead
+            </Button>
+          </div>
         </div>
       )}
       <div className="rounded-xl border border-border bg-card p-6">

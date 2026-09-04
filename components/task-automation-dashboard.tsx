@@ -186,6 +186,7 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                 loadConfig={pending}
                 loadToken={loadToken}
                 onEditingChange={setEditingName}
+                onExitEdit={() => setActiveNav("jobs")}
               />
             </div>
             {activeNav === "jobs" && <CurrentJobsSection onOpen={openInWizard} />}
