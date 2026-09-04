@@ -167,7 +167,7 @@ for (const n of [1, 3, 60]) {
   const proc = script.statements.find((s) => s.label.startsWith("Procedure"))!.sql
   const create = script.statements.find((s) => s.label.startsWith("Target table"))!.sql
   const expected = columns.map((x) => x.target)
-  const listRe = new RegExp(`\\(_FILE, _LINE, _MODIFIED, _UPDATED, ([^)]*)\\)`, "g")
+  const listRe = new RegExp(`\\(([^)]*?), _FILE, _LINE, _MODIFIED, _UPDATED\\)`, "g")
   const lists = [...proc.matchAll(listRe)].map((m) => m[1].split(",").map((x) => x.trim()))
   check(
     `${n} cols: every column list in the procedure matches, in order`,
@@ -177,6 +177,19 @@ for (const n of [1, 3, 60]) {
   check(
     `${n} cols: CREATE TABLE has every column`,
     expected.every((e) => new RegExp(`\\n    ${e}\\s`).test(create))
+  )
+  // Layout: business columns first, the four metadata columns last.
+  check(
+    `${n} cols: metadata columns come after the business ones`,
+    create.indexOf(`\n    ${expected[expected.length - 1]} `) < create.indexOf("\n    _FILE "),
+    "CREATE TABLE still leads with the metadata columns"
+  )
+  check(
+    `${n} cols: staging table has the same layout`,
+    (() => {
+      const stg = script.statements.find((s) => s.label.startsWith("Staging table"))!.sql
+      return stg.indexOf(`\n    ${expected[expected.length - 1]} `) < stg.indexOf("\n    _FILE ")
+    })()
   )
   check(
     `${n} cols: ordinals are $1..$${n} in order`,

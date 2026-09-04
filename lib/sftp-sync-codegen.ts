@@ -22,8 +22,20 @@ const IDENT = /^[A-Za-z0-9_]+$/
 /** The only schema the app may create objects in. Mirrors 00-grants.sql §2. */
 export const ALLOWED_TARGET_SCHEMAS = ["SPOT_DW.SPOT_SFTP"]
 
-/** Metadata columns the standard requires, in the order it requires them. */
+/**
+ * The four metadata columns the standards document requires.
+ *
+ * They are placed AFTER the business columns, not before them. The template
+ * leads with them; that makes `SELECT *` open on four columns of plumbing
+ * before the first column anyone came to read. The set, the names and the
+ * (_FILE, _LINE) key are unchanged, so this is a layout difference and worth
+ * mentioning to Justin rather than hiding — but nothing depends on position:
+ * every INSERT, MERGE and COPY in the generated objects names its columns.
+ */
 export const META_COLUMNS = ["_FILE", "_LINE", "_MODIFIED", "_UPDATED"] as const
+
+/** The metadata column list as it appears in an explicit column list. */
+const META_LIST = META_COLUMNS.join(", ")
 
 export type ColumnMap = {
   /** Header text as it appears in the file. Informational. */
@@ -258,6 +270,18 @@ export function resolveSync(cfg: SyncConfig) {
   }
 }
 
+/**
+ * The staging table's columns, in the order the CREATE puts them.
+ *
+ * Exported so the test-load route can tell whether an existing staging table
+ * still matches — including the metadata columns, which moved to the end. A
+ * check that only compared business columns would leave a table built by an
+ * older version in place with its metadata still at the front.
+ */
+export function stagingColumnNames(cfg: SyncConfig): string[] {
+  return [...resolveSync(cfg).cols.map((c) => c.target), ...META_COLUMNS]
+}
+
 /** Statement 1 of the script. Same text whether it is a test or a deploy. */
 export function buildStageStatement(cfg: SyncConfig): { label: string; sql: string } {
   const r = resolveSync(cfg)
@@ -289,11 +313,11 @@ export function buildStagingStatement(
   return {
     label: `Staging table ${r.names.staging}`,
     sql: `${verb} ${r.staging} (
+${r.cols.map((c) => `    ${c.target.padEnd(10)} VARCHAR`).join(",\n")},
     _FILE      VARCHAR(512)   NOT NULL,
     _LINE      NUMBER(38,0)   NOT NULL,
     _MODIFIED  TIMESTAMP_TZ(9),
-    _UPDATED   TIMESTAMP_TZ(9),
-${r.cols.map((c) => `    ${c.target.padEnd(10)} VARCHAR`).join(",\n")}
+    _UPDATED   TIMESTAMP_TZ(9)
 );
 /* TRANSIENT: no Time Travel or Fail-safe cost on a table truncated every run.
    Business columns are VARCHAR here whatever the target's types are — the file
@@ -319,13 +343,13 @@ export function buildCopyStatement(cfg: SyncConfig, opts: { purge: boolean }): s
   const names = r.cols.map((c) => c.target)
   const selects = r.cols.map((c) => `$${c.ordinal}`)
   return `COPY INTO ${r.staging}
-    (_FILE, _LINE, _MODIFIED, _UPDATED, ${names.join(", ")})
+    (${names.join(", ")}, ${META_LIST})
 FROM (
-    SELECT METADATA$FILENAME,
+    SELECT ${selects.join(", ")},
+           METADATA$FILENAME,
            METADATA$FILE_ROW_NUMBER,
            NULL::TIMESTAMP_TZ,
-           CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
-           ${selects.join(", ")}
+           CURRENT_TIMESTAMP()::TIMESTAMP_TZ
       FROM ${r.stageRef}
 )
 FILE_FORMAT = (TYPE = CSV
@@ -360,11 +384,11 @@ export function buildSyncScript(cfg: SyncConfig): BuildResult {
     statements.push({
       label: `Target table ${table}`,
       sql: `CREATE TABLE IF NOT EXISTS ${target} (
+${cols.map((c) => `    ${c.target.padEnd(10)} ${c.type}`).join(",\n")},
     _FILE      VARCHAR(512)   NOT NULL COMMENT 'Source filename (METADATA$FILENAME)',
     _LINE      NUMBER(38,0)   NOT NULL COMMENT 'Row number in file (METADATA$FILE_ROW_NUMBER)',
     _MODIFIED  TIMESTAMP_TZ(9)         COMMENT 'File mtime from the SFTP stat',
     _UPDATED   TIMESTAMP_TZ(9)         COMMENT 'When last upserted here',
-${cols.map((c) => `    ${c.target.padEnd(10)} ${c.type}`).join(",\n")},
     CONSTRAINT PK_${table} PRIMARY KEY (_FILE, _LINE)
 );
 /* That PRIMARY KEY is metadata only — Snowflake does not enforce it, so it
@@ -439,21 +463,21 @@ function buildProcedure(
     USING ${staging} s
        ON ${mergeOn}
      WHEN MATCHED THEN UPDATE SET
+${names.map((n) => `          t.${n} = s.${n}`).join(",\n")},
           t._FILE = s._FILE,
           t._LINE = s._LINE,
           t._MODIFIED = s._MODIFIED,
-          t._UPDATED = CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
-${names.map((n) => `          t.${n} = s.${n}`).join(",\n")}
+          t._UPDATED = CURRENT_TIMESTAMP()::TIMESTAMP_TZ
      WHEN NOT MATCHED THEN INSERT
-          (_FILE, _LINE, _MODIFIED, _UPDATED, ${names.join(", ")})
-          VALUES (s._FILE, s._LINE, s._MODIFIED, CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
-                  ${names.map((n) => `s.${n}`).join(", ")});
+          (${names.join(", ")}, ${META_LIST})
+          VALUES (${names.map((n) => `s.${n}`).join(", ")},
+                  s._FILE, s._LINE, s._MODIFIED, CURRENT_TIMESTAMP()::TIMESTAMP_TZ);
     n_loaded := SQLROWCOUNT;`
       : `    TRUNCATE TABLE ${target};
     INSERT INTO ${target}
-        (_FILE, _LINE, _MODIFIED, _UPDATED, ${names.join(", ")})
-    SELECT _FILE, _LINE, _MODIFIED, CURRENT_TIMESTAMP()::TIMESTAMP_TZ,
-           ${names.join(", ")}
+        (${names.join(", ")}, ${META_LIST})
+    SELECT ${names.join(", ")},
+           _FILE, _LINE, _MODIFIED, CURRENT_TIMESTAMP()::TIMESTAMP_TZ
       FROM ${staging};
     n_loaded := SQLROWCOUNT;`
 

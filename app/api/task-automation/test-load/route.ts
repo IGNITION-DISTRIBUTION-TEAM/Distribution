@@ -7,6 +7,7 @@ import {
   buildStagingStatement,
   buildCopyStatement,
   resolveSync,
+  stagingColumnNames,
   type SyncConfig,
 } from "@/lib/sftp-sync-codegen"
 
@@ -118,10 +119,12 @@ export async function POST(request: NextRequest) {
         `DESCRIBE TABLE ${resolved.staging}`,
         sf
       )
-      const existing = desc
-        .map((r) => String(r.name ?? r.NAME ?? "").toUpperCase())
-        .filter((n) => n && !n.startsWith("_"))
-      const wanted = colNames.map((c) => c.toUpperCase())
+      // Compare EVERY column, in order, metadata included. A check that looked
+      // only at the business columns would leave a table built by an older
+      // version of the generator in place with its metadata columns still at
+      // the front, and the operator would keep seeing the old layout.
+      const existing = desc.map((r) => String(r.name ?? r.NAME ?? "").toUpperCase()).filter(Boolean)
+      const wanted = stagingColumnNames(config).map((c) => c.toUpperCase())
       if (existing.join("|") !== wanted.join("|")) {
         await executeSnowflakeQuery(buildStagingStatement(config, { replace: true }).sql, sf)
         replaced = true
@@ -134,7 +137,7 @@ export async function POST(request: NextRequest) {
       label: stagingStmt.label,
       ok: true,
       detail: replaced
-        ? "Rebuilt: the existing staging table did not match the current column mapping."
+        ? "Rebuilt: the existing staging table did not match the current columns or their order."
         : undefined,
     })
 
