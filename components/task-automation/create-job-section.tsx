@@ -226,6 +226,18 @@ export function CreateJobSection({
   const [syncName, setSyncName] = useState("")
   const [reopened, setReopened] = useState(false)
   /**
+   * The job this wizard was opened from, if any.
+   *
+   * The sync name is the identity of everything: the stage, the staging table,
+   * the procedure, the task, the control row and the registry key all derive
+   * from it. So deploying the same name UPDATES a job and deploying a changed
+   * name makes a SECOND one, leaving the first running. That is not obvious
+   * from a button that always says "Create in Snowflake".
+   */
+  const [openedFrom, setOpenedFrom] = useState<string | null>(null)
+  /** Names already in the registry, so a fresh job cannot silently replace one. */
+  const [existingNames, setExistingNames] = useState<string[] | null>(null)
+  /**
    * Source headers restored from a saved job, by POSITION.
    *
    * Preferred over deriving them from the peeked file, because a reopened job
@@ -302,6 +314,7 @@ export function CreateJobSection({
       path: `${cfg.remoteDir}/${cfg.filePattern}`,
     })
     setReopened(true)
+    setOpenedFrom(cfg.syncName.toUpperCase())
 
     // An existing-table job needs the real target columns before anything below
     // step 3 will render — `targetColumns` is `destCols ?? []` in that mode, so
@@ -346,6 +359,15 @@ export function CreateJobSection({
         setEndpoints(list)
       })
       .catch((e) => { if (!cancelled) setEndpointsError(String(e)) })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/task-automation/syncs?names=1", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setExistingNames(d.names ?? []) })
+      .catch(() => { if (!cancelled) setExistingNames(null) })
     return () => { cancelled = true }
   }, [])
 
@@ -557,6 +579,24 @@ export function CreateJobSection({
       setTesting(false)
     }
   }
+
+  /**
+   * What will pressing the button actually do?
+   *
+   * Everything keys off the sync name — stage, staging table, procedure, task,
+   * control row and registry key are all derived from it, and every statement
+   * is IF NOT EXISTS or CREATE OR REPLACE. So the same name updates a job in
+   * place, and a changed name builds a second, complete set of objects while
+   * the first carries on running to its own schedule.
+   */
+  const deployMode = useMemo(() => {
+    const name = syncName.trim().toUpperCase()
+    if (!name) return "create" as const
+    if (openedFrom && name === openedFrom) return "update" as const
+    if (openedFrom && name !== openedFrom) return "rename" as const
+    if (existingNames?.some((n) => n.toUpperCase() === name)) return "replace" as const
+    return "create" as const
+  }, [syncName, openedFrom, existingNames])
 
   const deploy = async () => {
     if (!syncConfig) return
@@ -1337,14 +1377,55 @@ export function CreateJobSection({
             </div>
           )}
 
+          {deployMode === "rename" && (
+            <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
+              <p>
+                You opened <span className="font-mono text-foreground">{openedFrom}</span> and the
+                name now reads <span className="font-mono text-foreground">{syncName.trim().toUpperCase()}</span>.
+                The name is the identity of the whole job, so this creates a{" "}
+                <strong>second</strong> sync — its own stage, staging table, procedure and task —
+                and leaves <span className="font-mono text-foreground">{openedFrom}</span> in place,
+                still on its schedule.
+              </p>
+              <button
+                type="button"
+                className="mt-2 underline underline-offset-2 hover:text-foreground"
+                onClick={() => setSyncName(openedFrom ?? "")}
+              >
+                Put the name back to {openedFrom} and update that job instead
+              </button>
+            </div>
+          )}
+
+          {deployMode === "replace" && (
+            <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
+              A job called <span className="font-mono text-foreground">{syncName.trim().toUpperCase()}</span>{" "}
+              already exists. Deploying replaces its procedure, task and configuration. Pick a
+              different name if you meant a new sync.
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={() => void deploy()} disabled={!syncConfig || deploying || Boolean(preview?.error)}>
               {deploying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
-              {deploying ? "Creating..." : "Create in Snowflake"}
+              {deploying
+                ? deployMode === "update" ? "Updating..." : "Creating..."
+                : deployMode === "update"
+                  ? `Update ${openedFrom} in Snowflake`
+                  : deployMode === "replace"
+                    ? "Replace the existing job"
+                    : deployMode === "rename"
+                      ? "Create as a new job"
+                      : "Create in Snowflake"}
             </Button>
             {!syncConfig ? (
               <p className="text-xs text-muted-foreground">
                 Needs a sync name, a target table and at least one mapped column.
+              </p>
+            ) : deployMode === "update" ? (
+              <p className="text-xs text-muted-foreground">
+                Updates {openedFrom} in place — every statement is IF NOT EXISTS or CREATE OR
+                REPLACE, so nothing is duplicated and the loaded data is untouched.
               </p>
             ) : !testResult?.ok ? (
               <p className="text-xs text-amber-300">

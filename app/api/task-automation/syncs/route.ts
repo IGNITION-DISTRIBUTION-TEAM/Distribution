@@ -50,6 +50,25 @@ export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "task-automation")
   if (guard instanceof NextResponse) return guard
 
+  // ?names=1 returns just the registry's sync names. The wizard uses it to say
+  // whether pressing the button will update a job or make a second one, so it
+  // has to be cheap — one column, one table, no SHOW TASKS, no target checks.
+  if (request.nextUrl.searchParams.get("names")) {
+    try {
+      const rows = await executeSnowflakeQuery<{ SYNC_NAME: unknown }>(
+        `SELECT SYNC_NAME FROM ${CONFIGS_TABLE} ORDER BY SYNC_NAME`,
+        REGISTRY_SF
+      )
+      return NextResponse.json({ names: rows.map((r) => String(r.SYNC_NAME ?? "")).filter(Boolean) })
+    } catch (error) {
+      // Not fatal: the wizard degrades to not knowing, and says so.
+      return NextResponse.json(
+        { names: [], error: error instanceof Error ? error.message : String(error) },
+        { status: 200 }
+      )
+    }
+  }
+
   // ?sql=NAME returns one job's deployed SQL, on demand. It is up to 60KB per
   // job, so it is deliberately not part of the list payload.
   const wantSql = (request.nextUrl.searchParams.get("sql") ?? "").trim().toUpperCase()
