@@ -273,16 +273,16 @@ for (const mode of ["merge", "truncate_insert"] as const) {
   const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
   const inserts = proc.match(new RegExp(`INSERT INTO ${RUN_LOG_TABLE.replace(/\./g, "\\.")}`, "g")) ?? []
 
-  // Six ways out: fetch FAILED, the repair re-fetch failing, NO_CHANGE, the
-  // loaded-but-empty self-check, SUCCESS, and the exception handler.
-  check(`${mode}: all six exit paths log`, inserts.length === 6, `found ${inserts.length}`)
+  // Default: fetch FAILED, NO_FILES, the loaded-but-empty self-check, SUCCESS,
+  // and the exception handler. The two change-detection branches are gone.
+  check(`${mode}: all five exit paths log`, inserts.length === 5, `found ${inserts.length}`)
 
   // Each write is wrapped in its own handler. Without that, a failure to write
   // the log falls through to the procedure's own handler and reports a load
   // that succeeded as FAILED — the record of the work breaking the work.
   check(
     `${mode}: every log write is guarded`,
-    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 6,
+    (proc.match(/WHEN OTHER THEN NULL;/g) ?? []).length === 5,
     "a log insert is not inside its own exception block"
   )
   check(`${mode}: the run is timed`, proc.includes("started_at := CURRENT_TIMESTAMP();"))
@@ -320,11 +320,53 @@ for (const mode of ["merge", "truncate_insert"] as const) {
   )
 }
 
-/* ---- 4c2. An empty target repairs itself, guarded ------------------------ */
+/* ---- 4c1. The load mode runs on EVERY run by default --------------------- */
 
-console.log("Empty-target repair")
+console.log("Always load")
 for (const mode of ["merge", "truncate_insert"] as const) {
   const c = cfg({ loadMode: mode, mergeKeys: mode === "merge" ? ["TXN_DATE"] : [] })
+  const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+
+  // The default must not consult the watermark at all: pick a load mode and it
+  // happens, every run. This is the behaviour the whole NO_CHANGE confusion
+  // came from.
+  check(
+    `${mode}: does not read the watermark`,
+    !proc.includes("DATE_PART('EPOCH_SECOND', LAST_MODIFIED)") && proc.includes("last_seen := 0;"),
+    "the default still gates the load on change detection"
+  )
+  check(`${mode}: never returns NO_CHANGE`, !proc.includes("NO_CHANGE"))
+  check(
+    `${mode}: an empty fetch is NO_FILES, which is a problem not a no-op`,
+    proc.includes("'NO_FILES'") && proc.includes("matched"),
+    "an empty fetch is not reported as a missing file"
+  )
+  check(
+    `${mode}: the load still happens`,
+    mode === "merge" ? proc.includes("MERGE INTO") : /TRUNCATE TABLE SPOT_DW\.SPOT_SFTP\.SPOT_FEES;/.test(proc)
+  )
+  // Nothing to repair when every run reloads anyway.
+  check(`${mode}: no empty-target repair branch`, !proc.includes("prev_rows > 0"))
+}
+
+console.log("Change detection, opted in")
+{
+  const c = cfg({ onlyWhenChanged: true })
+  const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
+  check("reads the watermark", proc.includes("DATE_PART('EPOCH_SECOND', LAST_MODIFIED)"))
+  check("can return NO_CHANGE", proc.includes("NO_CHANGE"))
+  check("keeps the empty-target repair", proc.includes("IF (n_total = 0 AND prev_rows > 0) THEN"))
+}
+
+/* ---- 4c2. An empty target repairs itself, guarded ------------------------ */
+
+console.log("Empty-target repair (only relevant with change detection on)")
+for (const mode of ["merge", "truncate_insert"] as const) {
+  const c = cfg({
+    loadMode: mode,
+    mergeKeys: mode === "merge" ? ["TXN_DATE"] : [],
+    onlyWhenChanged: true,
+  })
   const proc = buildSyncScript(c).statements.find((s) => s.label.startsWith("Procedure"))!.sql
 
   // NO_CHANGE used to log NULL here, which is why an empty target looked

@@ -33,8 +33,11 @@ export const ALLOWED_TARGET_SCHEMAS = ["SPOT_DW.SPOT_SFTP"]
  * 3 — it verifies its own load: reporting SUCCESS while the target is empty is
  *     the worst failure this thing has, and it happened.
  * 4 — it repairs an empty target instead of reporting NO_CHANGE at it forever.
+ * 5 — THE LOAD MODE MEANS WHAT IT SAYS. Every run fetches and loads: pick
+ *     truncate-and-insert and the target is rebuilt every run; pick merge and
+ *     the merge runs every run. Change detection is opt-in, not the default.
  */
-export const GENERATOR_VERSION = 4
+export const GENERATOR_VERSION = 5
 
 /**
  * The app-owned run log. One row per run of any generated sync.
@@ -94,6 +97,16 @@ export type SyncConfig = {
   scheduleCron: string
   scheduleTz: string
   onError: "ABORT_STATEMENT" | "CONTINUE"
+  /**
+   * Skip the load when no file is newer than the last successful run.
+   *
+   * OFF by default, because the load mode should mean what it says: choose
+   * truncate-and-insert and the target is rebuilt every run, choose merge and
+   * the merge runs every run. With this on, a run whose source file has not
+   * moved returns before reaching either — which is cheaper on a directory
+   * that accumulates hundreds of files, and confusing everywhere else.
+   */
+  onlyWhenChanged?: boolean
   /**
    * Set by the test load when it measured the merge key against the whole file
    * and found duplicates. Evidence, not a guess — so `validate()` refuses on it.
@@ -579,13 +592,22 @@ DECLARE
     started_at  TIMESTAMP_LTZ;
 BEGIN
     started_at := CURRENT_TIMESTAMP();
-    /* Change detection: only files newer than the last successful run. The
-       watermark is the max mtime the fetch reported, not "now" — a file that
-       lands while this runs is picked up next time rather than skipped. */
+${
+  cfg.onlyWhenChanged
+    ? `    /* Change detection is ON for this sync: only files newer than the last
+       successful run. The watermark is the max mtime the fetch reported, not
+       "now" — a file that lands while this runs is picked up next time rather
+       than skipped. */
     SELECT COALESCE(DATE_PART('EPOCH_SECOND', LAST_MODIFIED), 0)
       INTO :last_seen
       FROM DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
-     WHERE SOURCE_NAME = ${lit(sourceName)};
+     WHERE SOURCE_NAME = ${lit(sourceName)};`
+    : `    /* EVERY RUN FETCHES AND LOADS. since_epoch stays 0, so the load mode is
+       what decides what happens to the target: truncate-and-insert rebuilds it
+       every run, merge merges every run. Nothing returns early because a file
+       has not moved. */
+    last_seen := 0;`
+}
 
     /* All SFTP access goes through the shared downloader. This procedure holds
        no credentials and never sees the host key. */
@@ -610,21 +632,18 @@ ${logRun("'FAILED'", "0", "0", "NULL", ":errmsg")}
         RETURN 'FAILED: ' || :errmsg;
     END IF;
 
-    IF (n_files = 0) THEN
+${
+  cfg.onlyWhenChanged
+    ? `    IF (n_files = 0) THEN
         /* Nothing newer than the watermark. Before accepting that, look at the
            target — a NO_CHANGE against an EMPTY table is not a no-op, it is a
-           sync that will never deliver anything again. The watermark sits at
-           the file's mtime, the file does not move, and so every run from here
-           reports the same nothing. */
+           sync that will never deliver anything again. */
         SELECT COUNT(*) INTO :n_total FROM ${target};
         SELECT COALESCE(ROW_COUNT, 0) INTO :prev_rows
           FROM DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
          WHERE SOURCE_NAME = ${lit(sourceName)};
 
-        /* Repair it, but only where this sync is restoring ITS OWN work:
-           prev_rows > 0 is the control table's record that a previous run put
-           rows in this table. Without that guard a target that is empty because
-           the source file is empty would re-fetch on every single run. */
+        /* Repair it, but only where this sync is restoring ITS OWN work. */
         IF (n_total = 0 AND prev_rows > 0) THEN
             reloaded := TRUE;
             CALL SPOT_DW.SFTP_ADMIN.SP_SFTP_FETCH(
@@ -644,10 +663,6 @@ ${logRun("'FAILED'", "0", "0", ":n_total", ":errmsg")}
             END IF;
         END IF;
 
-        /* Still nothing to load: either the target was fine, or the re-fetch
-           found no files at all. Record the target count either way, so
-           "nothing new" and "nothing new AND the table is empty" stop looking
-           identical in the run log. */
         IF (n_files = 0) THEN
             UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
                SET STATUS = 'NO_CHANGE', LAST_SYNCED = CURRENT_TIMESTAMP()
@@ -655,7 +670,20 @@ ${logRun("'FAILED'", "0", "0", ":n_total", ":errmsg")}
 ${logRun("'NO_CHANGE'", "0", "0", ":n_total", "'Nothing newer than the last run.'")}
             RETURN 'NO_CHANGE: nothing newer than the last run.';
         END IF;
-    END IF;
+    END IF;`
+    : `    IF (n_files = 0) THEN
+        /* Not "nothing new" — NOTHING AT ALL. Every run fetches from scratch,
+           so an empty result means the pattern matched no file in the
+           directory, which is a real problem and not a quiet no-op. The target
+           is left exactly as it was rather than truncated against nothing. */
+        SELECT COUNT(*) INTO :n_total FROM ${target};
+        UPDATE DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL
+           SET STATUS = 'NO_FILES', LAST_SYNCED = CURRENT_TIMESTAMP()
+         WHERE SOURCE_NAME = ${lit(sourceName)};
+${logRun("'NO_FILES'", "0", "0", ":n_total", `'Nothing in ${cfg.remoteDir} matched ${cfg.filePattern}.'`)}
+        RETURN 'NO_FILES: nothing in ${cfg.remoteDir} matched ${cfg.filePattern}.';
+    END IF;`
+}
 
     TRUNCATE TABLE ${staging};
 

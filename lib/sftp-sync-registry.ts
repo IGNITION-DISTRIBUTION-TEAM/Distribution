@@ -45,6 +45,7 @@ const CONFIG_COLUMNS: [string, string][] = [
   ["DELIMITER", "VARCHAR"],
   ["SKIP_HEADER", "BOOLEAN"],
   ["ON_ERROR", "VARCHAR"],
+  ["ONLY_WHEN_CHANGED", "BOOLEAN"],
   ["SCHEDULE_CRON", "VARCHAR"],
   ["SCHEDULE_TZ", "VARCHAR"],
   ["WAREHOUSE", "VARCHAR"],
@@ -161,6 +162,7 @@ export function rowToConfig(r: Record<string, unknown>): SyncConfig {
     scheduleCron: str("SCHEDULE_CRON"),
     scheduleTz: str("SCHEDULE_TZ"),
     onError: (str("ON_ERROR", "ABORT_STATEMENT") as SyncConfig["onError"]) ?? "ABORT_STATEMENT",
+    onlyWhenChanged: bool("ONLY_WHEN_CHANGED"),
   }
 }
 
@@ -240,6 +242,7 @@ export async function recordDeploy(
     lit(cfg.delimiter === "\t" ? "\\t" : cfg.delimiter),
     blit(cfg.skipHeader),
     lit(cfg.onError),
+    blit(Boolean(cfg.onlyWhenChanged)),
     lit(cfg.scheduleCron),
     lit(cfg.scheduleTz),
     lit(cfg.warehouse),

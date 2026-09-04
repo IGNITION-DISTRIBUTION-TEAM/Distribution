@@ -235,6 +235,8 @@ export function CreateJobSection({
   const [newTypes, setNewTypes] = useState<Record<string, string>>({})
   const [mergeKeys, setMergeKeys] = useState<string[]>([])
   const [loadMode, setLoadMode] = useState<"truncate_insert" | "merge">("truncate_insert")
+  /** Opt-in. Off means the load mode runs every time — see step 4. */
+  const [onlyWhenChanged, setOnlyWhenChanged] = useState(false)
 
   // ---- step 5: test the load before anything permanent exists
   const [syncName, setSyncName] = useState("")
@@ -303,6 +305,7 @@ export function CreateJobSection({
     setDelimiter(cfg.delimiter as Delimiter)
     setHasHeader(cfg.skipHeader)
     setLoadMode(cfg.loadMode)
+    setOnlyWhenChanged(Boolean(cfg.onlyWhenChanged))
     setMergeKeys(cfg.mergeKeys)
     setSyncName(cfg.syncName)
     setCron(cfg.scheduleCron)
@@ -554,6 +557,7 @@ export function CreateJobSection({
       scheduleCron: cron.trim(),
       scheduleTz: SCHEDULE_TZ,
       onError: "ABORT_STATEMENT",
+      onlyWhenChanged,
       // Evidence from the test load, so the generator can refuse a merge on a
       // key measured non-unique rather than warn about one it guessed at.
       mergeKeyProvenNonUnique:
@@ -569,7 +573,7 @@ export function CreateJobSection({
           : undefined,
     }
   }, [selected, syncName, destTable, sourceHeaders, destMode, targetColumns, mapping, testResult,
-      newTypes, endpoint, path, pattern, loadMode, mergeKeys, delimiter, hasHeader,
+      newTypes, endpoint, path, pattern, loadMode, mergeKeys, delimiter, hasHeader, onlyWhenChanged,
       warehouse, cron])
 
   /** Preview is generated client-side by the same pure function the server uses. */
@@ -646,6 +650,7 @@ export function CreateJobSection({
     setNewTypes({})
     setMergeKeys([])
     setLoadMode("truncate_insert")
+    setOnlyWhenChanged(false)
     setDestMode("existing")
     setDestTable("")
     setDestCols(null)
@@ -1260,6 +1265,11 @@ export function CreateJobSection({
             file → staging table <span className="text-foreground">(always emptied and refilled)</span>
             {" → "}target table <span className="text-foreground">(your choice, below)</span>
           </p>
+          <p className="mb-3 text-xs text-muted-foreground">
+            This happens on <strong className="text-foreground">every run</strong>: pick truncate
+            and insert and the target is rebuilt each time, pick merge and the merge runs each
+            time.
+          </p>
 
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1277,6 +1287,22 @@ export function CreateJobSection({
               Merge
             </Button>
           </div>
+
+          <label className="mt-4 flex cursor-pointer items-start gap-2">
+            <Checkbox
+              checked={onlyWhenChanged}
+              onCheckedChange={(v) => setOnlyWhenChanged(v === true)}
+              className="mt-0.5"
+            />
+            <span className="text-xs text-muted-foreground">
+              <span className="text-foreground">Skip the run when the file has not changed</span>
+              <br />
+              Off by default, so the choice above happens every time. Turn it on for a directory
+              that accumulates hundreds of files, where re-fetching everything nightly is the
+              expensive part — the cost is that a changed mapping or load mode then sits dormant
+              until a new file arrives.
+            </span>
+          </label>
 
           {loadMode === "merge" ? (
             mergeKeys.length > 0 ? (
