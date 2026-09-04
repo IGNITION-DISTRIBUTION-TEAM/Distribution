@@ -19,6 +19,8 @@ import {
   LogOut,
   ChevronsUpDown,
   RefreshCw,
+  Pause,
+  Play,
   PlayCircle,
   Table2,
   Workflow,
@@ -190,6 +192,15 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const [deployResult, setDeployResult] = useState<
     { deployed: boolean; results?: { label: string; ok: boolean; error?: string }[]; error?: string } | null
   >(null)
+
+  // ---- after deploy: run it, and control the task
+  const [running, setRunning] = useState(false)
+  const [runResult, setRunResult] = useState<{ ok: boolean; text: string } | null>(null)
+  /** Counts completed runs so the UI can say when the NO_CHANGE check is due. */
+  const [runCount, setRunCount] = useState(0)
+  const [taskState, setTaskState] = useState<string | null>(null)
+  const [control, setControl] = useState<Record<string, unknown> | null>(null)
+  const [taskBusy, setTaskBusy] = useState(false)
 
   // Endpoints come from the secure view; the app never sees host or key.
   useEffect(() => {
@@ -412,6 +423,79 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
       setDeploying(false)
     }
   }
+
+  const syncTarget = useMemo(() => {
+    if (!syncConfig) return null
+    return { db: syncConfig.targetDb, schema: syncConfig.targetSchema, syncName: syncConfig.syncName }
+  }, [syncConfig])
+
+  const refreshStatus = useCallback(async () => {
+    if (!syncTarget) return
+    try {
+      const res = await fetch("/api/task-automation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "status", ...syncTarget }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+      setTaskState(d.taskState ?? null)
+      setControl(d.control ?? null)
+    } catch {
+      // Status is informational; a failure here must not look like a run failure.
+    }
+  }, [syncTarget])
+
+  const runNow = async () => {
+    if (!syncTarget) return
+    setRunning(true)
+    setRunResult(null)
+    try {
+      const res = await fetch("/api/task-automation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run", ...syncTarget }),
+      })
+      const sub = await res.json()
+      if (!res.ok || !sub.handle) throw new Error(sub.error || "No statement handle returned")
+
+      // Submitted, not awaited — a backlog of files can outlast one request.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2500))
+        const pr = await fetch(`/api/task-automation/run?handle=${encodeURIComponent(sub.handle)}`, { cache: "no-store" })
+        const ps = (await pr.json()) as { status?: string; error?: string; result?: string }
+        if (ps.status === "running") continue
+        if (ps.status === "error") { setRunResult({ ok: false, text: ps.error || "Run failed" }); break }
+        // `result` is the procedure's own SUCCESS / NO_CHANGE / FAILED line.
+        const text = ps.result || "Completed, but the procedure returned nothing."
+        setRunResult({ ok: !/^\s*(FAILED|.*: FAILED)/i.test(text), text })
+        setRunCount((n) => n + 1)
+        break
+      }
+    } catch (e) {
+      setRunResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setRunning(false)
+      void refreshStatus()
+    }
+  }
+
+  const setTask = async (action: "resume" | "suspend") => {
+    if (!syncTarget) return
+    setTaskBusy(true)
+    try {
+      await fetch("/api/task-automation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...syncTarget }),
+      })
+    } finally {
+      setTaskBusy(false)
+      void refreshStatus()
+    }
+  }
+
+  useEffect(() => { if (deployResult?.deployed) void refreshStatus() }, [deployResult, refreshStatus])
 
   // Breadcrumbs stop at the floor: there is nothing above it to click to.
   const crumbs = useMemo(() => {
@@ -1018,11 +1102,93 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                     )}
                   >
                     {deployResult.deployed
-                      ? `Created. The task exists but is SUSPENDED — nothing runs on a schedule until it is resumed. Test it first with:\n\n  CALL ${syncConfig?.targetDb}.${syncConfig?.targetSchema}.SP_SFTP_SYNC_${syncConfig?.syncName}();\n\nRun it twice: the second call should return NO_CHANGE, which is what proves change detection works.`
+                      ? "Created. Test it below before resuming the schedule."
                       : deployResult.error ?? "Failed."}
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {deployResult?.deployed && syncTarget && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  6
+                </span>
+                <h2 className="font-medium text-foreground">Test it, then arm the schedule</h2>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={() => void runNow()} disabled={running}>
+                  {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+                  {running ? "Running..." : "Run now"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void refreshStatus()}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Refresh status
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Task:{" "}
+                  <span className={cn("font-medium",
+                    taskState?.toLowerCase() === "started" ? "text-emerald-300" : "text-amber-300")}>
+                    {taskState ?? "unknown"}
+                  </span>
+                </span>
+                {taskState?.toLowerCase() === "started" ? (
+                  <Button variant="outline" size="sm" disabled={taskBusy} onClick={() => void setTask("suspend")}>
+                    <Pause className="mr-2 h-4 w-4" /> Suspend
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled={taskBusy} onClick={() => void setTask("resume")}>
+                    <Play className="mr-2 h-4 w-4" /> Resume schedule
+                  </Button>
+                )}
+              </div>
+
+              {/* Running once proves it loads. Running twice proves it will not
+                  re-load the same file tomorrow, which is the part that actually
+                  breaks in production. */}
+              <p className="mt-3 text-xs text-muted-foreground">
+                {runCount === 0
+                  ? "Run it once to load the file."
+                  : runCount === 1
+                    ? "Now run it again — the second run must say NO_CHANGE. That is what proves change detection works, and it is the only check that catches a sync which would re-load the same file every night."
+                    : "Two runs done. If the second said NO_CHANGE, change detection is working and the schedule is safe to arm."}
+              </p>
+
+              {runResult && (
+                <div
+                  className={cn(
+                    "mt-3 whitespace-pre-wrap rounded-md border p-3 text-xs",
+                    runResult.ok
+                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+                      : "border-rose-500/30 bg-rose-500/5 text-rose-300"
+                  )}
+                >
+                  {runResult.text}
+                </div>
+              )}
+
+              {control && (
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {([
+                    ["Status", control.STATUS],
+                    ["Rows in target", control.ROW_COUNT],
+                    ["Last synced", control.LAST_SYNCED],
+                    ["Watermark", control.LAST_MODIFIED],
+                  ] as [string, unknown][]).map(([label, v]) => (
+                    <div key={label} className="rounded-lg border border-border bg-background/40 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+                      <p className="mt-1 truncate text-sm text-foreground">{v == null ? "—" : String(v)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Straight from DATAWAREHOUSE.DW.SFTP_SYNC_CONTROL — the same row every other sync in
+                the account reports into. &quot;Watermark&quot; is the newest file mtime seen; only
+                files newer than it are fetched next run.
+              </p>
             </div>
           )}
         </div>
