@@ -50,6 +50,9 @@ type TestLoadResult = {
   columns?: string[]
   rows?: (string | number | null)[][]
   file?: { name?: string; size?: number; mtime_epoch?: number } | null
+  staging?: string
+  target?: string
+  targetExists?: boolean
 }
 type SftpEntry = {
   name: string
@@ -1097,14 +1100,27 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
 
               {testResult?.ok && testResult.columns && (
                 <div className="mt-4">
-                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-emerald-300">
-                      {testResult.rowCount ?? 0} row(s) loaded from {testResult.file?.name ?? "the file"}
+                  <div className="mb-2 flex flex-col gap-2 text-xs">
+                    <span className="w-fit rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-emerald-300">
+                      {testResult.rowCount ?? 0} row(s) parsed from{" "}
+                      {testResult.file?.name ?? "the file"} into{" "}
+                      <span className="font-mono">{testResult.staging ?? "the staging table"}</span>
+                    </span>
+                    <span className="text-amber-300">
+                      Staging only.{" "}
+                      <span className="font-mono text-foreground">
+                        {testResult.target ?? "The target table"}
+                      </span>{" "}
+                      {testResult.targetExists
+                        ? "has not been written to"
+                        : "has not been created"}
+                      . Step 6 creates the remaining objects and step 7 runs the sync that fills
+                      it.
                     </span>
                     <span className="text-muted-foreground">
-                      First {testResult.rows?.length ?? 0}, under the columns they map to. If the
-                      values sit under the wrong heading, or everything landed in one column, the
-                      delimiter or the ordinals are wrong — fix step 2 and test again.
+                      First {testResult.rows?.length ?? 0} rows, under the columns they map to. If
+                      the values sit under the wrong heading, or everything landed in one column,
+                      the delimiter or the ordinals are wrong — fix step 2 and test again.
                     </span>
                   </div>
                   <div className="max-h-80 overflow-auto rounded-md border border-border">

@@ -205,6 +205,9 @@ export async function POST(request: NextRequest) {
       file: staged ?? null,
       stage: resolved.stage,
       staging: resolved.staging,
+      // Named so the UI can say where the rows went, and where they did not.
+      target: resolved.target,
+      targetExists: !config.createTable,
       copySql,
     })
   } catch (error) {
