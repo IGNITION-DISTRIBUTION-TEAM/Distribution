@@ -8,13 +8,16 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ChevronRight,
   File as FileIcon,
   Folder,
   Home,
   Loader2,
   LogOut,
+  ChevronsUpDown,
   RefreshCw,
   Table2,
   Workflow,
@@ -84,6 +87,61 @@ export function suggestPattern(filename: string): string {
   return out
 }
 
+export type SortKey = "name" | "size" | "mtime"
+export type SortDir = "asc" | "desc"
+
+/**
+ * Sort a directory listing.
+ *
+ * Folders stay first whatever the column, the way every file browser behaves —
+ * a listing that reshuffles folders in among the files when you click a header
+ * makes navigation harder, and it costs nothing here because a folder-only
+ * directory sorts exactly as if the rule were not there.
+ *
+ * Missing values always sink, in BOTH directions. Folders have no size and
+ * several Spot directories report no modification time at all; letting those
+ * float to the top on a descending sort would put a column of em dashes above
+ * the answer you clicked for.
+ */
+export function sortEntries(entries: SftpEntry[], key: SortKey, dir: SortDir): SftpEntry[] {
+  const sign = dir === "asc" ? 1 : -1
+  const value = (e: SftpEntry): number | string | null =>
+    key === "name" ? e.name.toLowerCase() : key === "size" ? e.size : e.mtime_epoch || null
+
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
+
+    const av = value(a)
+    const bv = value(b)
+    if (av == null && bv == null) return byName(a, b)
+    if (av == null) return 1          // missing sinks regardless of direction
+    if (bv == null) return -1
+
+    if (typeof av === "string" && typeof bv === "string") {
+      return av === bv ? 0 : (av < bv ? -1 : 1) * sign
+    }
+    const c = (av as number) - (bv as number)
+    // Ties fall back to name so the order is stable and reproducible rather
+    // than dependent on what the server happened to return.
+    return c !== 0 ? c * sign : byName(a, b)
+  })
+}
+
+/**
+ * Codepoint order on the lowercased name — NOT localeCompare.
+ *
+ * The procedure already sorts its listing with Python's `name.lower()`, which
+ * is codepoint order, so "spot-arpu" comes before "spot_flash" ('-' is 0x2D,
+ * '_' is 0x5F). localeCompare deprioritises punctuation and reverses that pair,
+ * which would mean clicking "Name ascending" reshuffled the list away from the
+ * order it arrived in — indistinguishable from a bug.
+ */
+function byName(a: SftpEntry, b: SftpEntry): number {
+  const x = a.name.toLowerCase()
+  const y = b.name.toLowerCase()
+  return x === y ? 0 : x < y ? -1 : 1
+}
+
 export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const { user, logout } = useAuth()
 
@@ -98,6 +156,9 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const [sortKey, setSortKey] = useState<SortKey>("name")
+  const [sortDir, setSortDir] = useState<SortDir>("asc")
 
   const [selected, setSelected] = useState<SftpEntry | null>(null)
   const [pattern, setPattern] = useState<string>("")
@@ -186,6 +247,20 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
     } finally {
       setPeeking(false)
     }
+  }
+
+  const sortedEntries = useMemo(
+    () => sortEntries(entries, sortKey, sortDir),
+    [entries, sortKey, sortDir]
+  )
+
+  // First click on a new column picks the direction that answers the question
+  // being asked: names read A-Z, but "size" and "modified" are almost always
+  // clicked to find the biggest or the newest, so those start descending.
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) { setSortDir((d) => (d === "asc" ? "desc" : "asc")); return }
+    setSortKey(key)
+    setSortDir(key === "name" ? "asc" : "desc")
   }
 
   // The delimiter is guessed from the peeked lines the moment a file is opened,
@@ -373,9 +448,32 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-card">
                       <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-                        <th className="px-3 py-2 font-medium">Name</th>
-                        <th className="px-3 py-2 text-right font-medium">Size</th>
-                        <th className="px-3 py-2 font-medium">Modified</th>
+                        {([
+                          { key: "name" as SortKey, label: "Name", align: "" },
+                          { key: "size" as SortKey, label: "Size", align: "text-right" },
+                          { key: "mtime" as SortKey, label: "Modified", align: "" },
+                        ]).map((col) => (
+                          <th key={col.key} className={cn("px-3 py-2 font-medium", col.align)}>
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(col.key)}
+                              className={cn(
+                                "inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground",
+                                sortKey === col.key && "text-foreground",
+                                col.align === "text-right" && "flex-row-reverse"
+                              )}
+                            >
+                              {col.label}
+                              {sortKey !== col.key ? (
+                                <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                              ) : sortDir === "asc" ? (
+                                <ArrowUp className="h-3 w-3" />
+                              ) : (
+                                <ArrowDown className="h-3 w-3" />
+                              )}
+                            </button>
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -388,7 +486,7 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
                           </td>
                         </tr>
                       )}
-                      {entries.map((e) => (
+                      {sortedEntries.map((e) => (
                         <tr
                           key={e.path}
                           className={cn(
