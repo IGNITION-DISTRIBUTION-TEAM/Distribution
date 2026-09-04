@@ -262,6 +262,25 @@ export async function recordDeploy(
   )
 }
 
+/**
+ * Record a schedule changed from the Tasks screen.
+ *
+ * Without this the registry keeps the old cron, so reopening the job in the
+ * wizard would show a schedule the task is not running on — and redeploying
+ * would quietly put the old one back.
+ */
+export async function updateSchedule(syncName: string, cron: string, actor: string): Promise<void> {
+  await ensureRegistryTables()
+  await executeSnowflakeQuery(
+    `UPDATE ${CONFIGS_TABLE}
+        SET SCHEDULE_CRON = ${lit(cron)},
+            UPDATED_AT = CURRENT_TIMESTAMP(),
+            UPDATED_BY = ${lit(actor)}
+      WHERE SYNC_NAME = ${lit(syncName.toUpperCase())}`,
+    REGISTRY_SF
+  )
+}
+
 /** Forget a sync. The Snowflake objects are deliberately left alone. */
 export async function forgetSync(syncName: string): Promise<void> {
   await ensureRegistryTables()

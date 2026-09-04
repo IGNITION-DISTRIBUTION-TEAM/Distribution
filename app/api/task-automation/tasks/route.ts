@@ -31,10 +31,16 @@ export async function GET(request: NextRequest) {
     const series = densify(runs, days)
     const syncs = await listSyncs()
 
+    const failed = runs.filter((r) => /^FAILED/i.test(r.status)).length
+    const noChange = runs.filter((r) => r.status === "NO_CHANGE").length
     const totals = {
+      // `runs` is EVERY run, whatever the outcome. Succeeded is reported
+      // explicitly rather than left to be worked out as runs - failed -
+      // noChange, which is how "Runs 3" got read as "3 runs passed".
       runs: runs.length,
-      failed: runs.filter((r) => /^FAILED/i.test(r.status)).length,
-      noChange: runs.filter((r) => r.status === "NO_CHANGE").length,
+      succeeded: runs.filter((r) => r.status === "SUCCESS").length,
+      failed,
+      noChange,
       rowsLoaded: runs.reduce((n, r) => n + r.rowsLoaded, 0),
       filesFetched: runs.reduce((n, r) => n + r.files, 0),
       // How much of the picture is missing, stated rather than implied.

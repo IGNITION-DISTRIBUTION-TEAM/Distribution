@@ -285,6 +285,14 @@ for (const mode of ["merge", "truncate_insert"] as const) {
     "a log insert is not inside its own exception block"
   )
   check(`${mode}: the run is timed`, proc.includes("started_at := CURRENT_TIMESTAMP();"))
+  // A double-quoted JS string where a template literal was needed put the
+  // characters ${target} into the SQL, so every SUCCESS row read
+  // "Loaded into ${target}" instead of naming the table.
+  check(
+    `${mode}: the success message names the real table`,
+    proc.includes("'Loaded into SPOT_DW.SPOT_SFTP.SPOT_FEES'") && !proc.includes("Loaded into $" + "{"),
+    proc.split("\n").find((l) => l.includes("Loaded into")) ?? "no message line"
+  )
   check(
     `${mode}: SUCCESS records rows loaded, not just the table total`,
     /:n_loaded, :n_total/.test(proc),

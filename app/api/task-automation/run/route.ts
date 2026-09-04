@@ -6,6 +6,8 @@ import {
 } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { objectNames } from "@/lib/sftp-sync-codegen"
+import { checkSchedule, SCHEDULE_TZ } from "@/lib/cron-schedule"
+import { updateSchedule } from "@/lib/sftp-sync-registry"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -42,7 +44,7 @@ export async function POST(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "task-automation")
   if (guard instanceof NextResponse) return guard
 
-  let body: { action?: unknown; db?: unknown; schema?: unknown; syncName?: unknown }
+  let body: { action?: unknown; db?: unknown; schema?: unknown; syncName?: unknown; cron?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -68,6 +70,67 @@ export async function POST(request: NextRequest) {
       const verb = action === "resume" ? "RESUME" : "SUSPEND"
       await executeSnowflakeQuery(`ALTER TASK ${p.task} ${verb}`, sf)
       return NextResponse.json({ ok: true, task: p.task, state: verb })
+    }
+
+    if (action === "reschedule") {
+      // Snowflake will not ALTER a running task, so this suspends, changes the
+      // schedule and puts the task back the way it was found. Leaving a task
+      // suspended as a side effect of editing its schedule would switch a sync
+      // off without saying so.
+      const { canonical } = checkSchedule(String(body.cron ?? ""), SCHEDULE_TZ)
+
+      let wasStarted = false
+      try {
+        const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+          `SHOW TASKS LIKE '${objectNames(String(body.syncName)).task}' IN SCHEMA ${p.db}.${p.schema}`,
+          sf
+        )
+        const r = rows[0]
+        const k = r && Object.keys(r).find((c) => c.toLowerCase() === "state")
+        wasStarted = Boolean(k && r && String(r[k]).toLowerCase() === "started")
+      } catch {
+        wasStarted = false
+      }
+
+      if (wasStarted) await executeSnowflakeQuery(`ALTER TASK ${p.task} SUSPEND`, sf)
+      await executeSnowflakeQuery(
+        `ALTER TASK ${p.task} SET SCHEDULE = 'USING CRON ${canonical} ${SCHEDULE_TZ}'`,
+        sf
+      )
+      if (wasStarted) await executeSnowflakeQuery(`ALTER TASK ${p.task} RESUME`, sf)
+
+      // Keep the registry in step, or reopening the job would show the old
+      // schedule and redeploying would put it back.
+      let registered = true
+      try {
+        await updateSchedule(p.sourceName, canonical, guard.email)
+      } catch {
+        registered = false
+      }
+
+      return NextResponse.json({
+        ok: true,
+        cron: canonical,
+        rearmed: wasStarted,
+        registered,
+        note: wasStarted
+          ? "Schedule changed and the task put back to running."
+          : "Schedule changed. The task is still suspended.",
+      })
+    }
+
+    if (action === "drop") {
+      // Drops the SCHEDULE only. The procedure, the tables and the loaded data
+      // all stay, the sync is still runnable by hand, and Redeploy recreates
+      // the task — so this is reversible, which "delete" usually is not.
+      await executeSnowflakeQuery(`DROP TASK IF EXISTS ${p.task}`, sf)
+      return NextResponse.json({
+        ok: true,
+        dropped: p.task,
+        note:
+          `Removed the schedule. The sync itself is untouched — you can still Run now, and ` +
+          `Redeploy recreates the task.`,
+      })
     }
 
     if (action === "status") {

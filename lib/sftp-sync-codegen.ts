@@ -615,7 +615,7 @@ ${loadBlock}
            STATUS        = 'SUCCESS'
      WHERE SOURCE_NAME = ${lit(sourceName)};
 
-${logRun("'SUCCESS'", ":n_files", ":n_loaded", ":n_total", "'Loaded into ${target}'", "    ")}
+${logRun("'SUCCESS'", ":n_files", ":n_loaded", ":n_total", `'Loaded into ${target}'`, "    ")}
 
     RETURN 'SUCCESS: ' || n_files || ' file(s), ' || n_loaded
         || ' row(s) into ${target}, ' || n_total || ' total.';
