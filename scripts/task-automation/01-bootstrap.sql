@@ -210,15 +210,18 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'paramiko')
 HANDLER = 'run'
 EXTERNAL_ACCESS_INTEGRATIONS = (SPOT_SFTP_ACCESS)
-SECRETS = ('pkey' = SPOT_SFTP_PRIVATE_KEY, 'passphrase' = SPOT_SFTP_KEY_PASSPHRASE)
+SECRETS = ('pkey'       = DATAWAREHOUSE.SPOT.SPOT_SFTP_PRIVATE_KEY
+         , 'passphrase' = DATAWAREHOUSE.SPOT.SPOT_SFTP_KEY_PASSPHRASE)
 EXECUTE AS OWNER
 AS
 $$
 import base64
+import binascii
 import io
 import posixpath
 import re
 import stat as statmod
+import struct
 import traceback
 
 import paramiko
@@ -369,12 +372,87 @@ def _load_private_key(ep):
     )
 
 
-def _connect(ep):
-    expected = KEY_CLASSES[ep['HOST_KEY_TYPE']](
-        data=base64.b64decode(ep['HOST_KEY_B64'])
+def _parse_host_key(ep):
+    """Turn the stored pin into (key_type, PKey), accepting what people paste.
+
+    ssh-keyscan emits three whitespace-separated fields:
+        host  keytype  base64
+    Operators paste all three, or the last two, or just the base64. All are
+    accepted here — the alternative is that the wrong shape reaches paramiko and
+    surfaces as a UnicodeDecodeError three frames deep inside its wire-format
+    parser, which says nothing about what to fix.
+
+    Everything else is refused BY NAME, and the message says what a correct
+    value looks like: a real ssh-rsa pin always starts AAAAB3NzaC1yc2E, because
+    the blob begins with a length-prefixed literal "ssh-rsa".
+    """
+    raw = (ep['HOST_KEY_B64'] or '').strip()
+    if not raw:
+        raise ValueError(
+            'Endpoint {!r} has an empty HOST_KEY_B64. Refusing to connect '
+            'without host key verification.'.format(ep['ENDPOINT_NAME'])
+        )
+
+    parts = raw.split()
+    if len(parts) >= 3:
+        ktype, b64 = parts[-2], parts[-1]          # full ssh-keyscan line
+    elif len(parts) == 2:
+        ktype, b64 = parts                          # 'ssh-rsa AAAA...'
+    else:
+        ktype, b64 = (ep['HOST_KEY_TYPE'] or '').strip(), parts[0]
+
+    # validate=True so a fingerprint or stray punctuation is rejected here
+    # rather than silently decoding to garbage.
+    try:
+        blob = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError(
+            'HOST_KEY_B64 for {!r} is not valid base64. Paste the THIRD field '
+            'of the ssh-keyscan line; a valid ssh-rsa pin starts '
+            'AAAAB3NzaC1yc2E. Got: {!r}...'.format(ep['ENDPOINT_NAME'], raw[:40])
+        )
+
+    # SSH wire format: 4-byte big-endian length, then the key type as text.
+    if len(blob) < 8:
+        raise ValueError(
+            'HOST_KEY_B64 for {!r} decodes to {} bytes — too short to be a host '
+            'key.'.format(ep['ENDPOINT_NAME'], len(blob))
+        )
+    n = struct.unpack('>I', blob[:4])[0]
+    bad_blob = (
+        'HOST_KEY_B64 for {!r} is valid base64 but is not an SSH public key '
+        'blob. A real ssh-rsa pin starts AAAAB3NzaC1yc2E; ed25519 starts '
+        'AAAAC3NzaC1lZDI1NTE5. Got: {!r}...'.format(ep['ENDPOINT_NAME'], raw[:40])
     )
+    if n <= 0 or n > 64 or len(blob) < 4 + n:
+        raise ValueError(bad_blob)
+    try:
+        embedded = blob[4:4 + n].decode('ascii')
+    except UnicodeDecodeError:
+        raise ValueError(bad_blob)
+
+    if embedded not in KEY_CLASSES:
+        raise ValueError(
+            'Host key for {!r} is of type {!r}, which this procedure cannot '
+            'parse. Known types: {}.'
+            .format(ep['ENDPOINT_NAME'], embedded, ', '.join(sorted(KEY_CLASSES)))
+        )
+    # A type column that disagrees with the key means one of them is stale, and
+    # pinning against the wrong one is worse than not pinning.
+    if ktype and ktype != embedded:
+        raise ValueError(
+            'Endpoint {!r} declares HOST_KEY_TYPE {!r} but the stored key is '
+            '{!r}. Fix the row rather than trusting either.'
+            .format(ep['ENDPOINT_NAME'], ktype, embedded)
+        )
+
+    return embedded, KEY_CLASSES[embedded](data=blob)
+
+
+def _connect(ep):
+    ktype, expected = _parse_host_key(ep)
     client = paramiko.SSHClient()
-    client.get_host_keys().add(ep['HOST'], ep['HOST_KEY_TYPE'], expected)
+    client.get_host_keys().add(ep['HOST'], ktype, expected)
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
     client.connect(
         hostname=ep['HOST'], port=int(ep['PORT']), username=ep['SFTP_USER'],

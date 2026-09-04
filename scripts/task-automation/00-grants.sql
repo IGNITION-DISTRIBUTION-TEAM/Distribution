@@ -135,13 +135,20 @@ GRANT EXECUTE MANAGED TASK ON ACCOUNT TO ROLE SVC_VERCEL_APP_ROLE;
 
 GRANT USAGE ON INTEGRATION SPOT_SFTP_ACCESS TO ROLE SVC_VERCEL_APP_ROLE;
 
-GRANT USAGE ON SCHEMA <<SECRET_DB>>.<<SECRET_SCHEMA>> TO ROLE SVC_VERCEL_APP_ROLE;
+GRANT USAGE ON SCHEMA DATAWAREHOUSE.SPOT TO ROLE SVC_VERCEL_APP_ROLE;
 
-GRANT READ ON SECRET <<SECRET_DB>>.<<SECRET_SCHEMA>>.SPOT_SFTP_PRIVATE_KEY
+GRANT READ ON SECRET DATAWAREHOUSE.SPOT.SPOT_SFTP_PRIVATE_KEY
   TO ROLE SVC_VERCEL_APP_ROLE;
 
-GRANT READ ON SECRET <<SECRET_DB>>.<<SECRET_SCHEMA>>.SPOT_SFTP_KEY_PASSPHRASE
+GRANT READ ON SECRET DATAWAREHOUSE.SPOT.SPOT_SFTP_KEY_PASSPHRASE
   TO ROLE SVC_VERCEL_APP_ROLE;
+
+/* Both secrets live in DATAWAREHOUSE.SPOT — confirmed, not guessed. They must
+   be FULLY QUALIFIED here and in the procedure's SECRETS clause. An unqualified
+   name in a SECRETS clause resolves against the SESSION's current database and
+   schema, not the procedure's, so the same text works from one worksheet and
+   fails from another with "does not exist or operation not authorized" — which
+   reads like a privilege problem and is not one. */
 
 /* READ on a secret does NOT let the app read the key. The role can name the
    secret in a procedure definition; only the procedure body, running inside
