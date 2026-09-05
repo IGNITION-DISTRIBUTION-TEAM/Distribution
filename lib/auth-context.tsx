@@ -13,6 +13,8 @@ type User = {
 type AuthContextType = {
   user: User | null
   isAuthenticated: boolean
+  /** False until the session check has settled, success or failure. */
+  ready: boolean
   loginWithAzure: () => void
   logout: () => void
 }
@@ -30,7 +32,10 @@ export function useAuth() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [, setIsInitialized] = useState(false)
+  // Exposed, not discarded: without it the route pages could not tell "still
+  // checking the session" from "logged out" and flashed the login screen on
+  // every hard load.
+  const [ready, setReady] = useState(false)
 
   // Initialize auth state from cookie on mount
   useEffect(() => {
@@ -53,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         console.error("Failed to check session:", error)
       } finally {
-        setIsInitialized(true)
+        setReady(true)
       }
     }
 
@@ -99,6 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
+        ready,
         loginWithAzure,
         logout,
       }}

@@ -4,6 +4,7 @@ import { use } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { LoginScreen } from "@/components/login-screen"
+import { AppLoading } from "@/components/app-loading"
 import { DistributionDashboard } from "@/components/distribution-dashboard"
 import { DiallerDashboard } from "@/components/dialler-dashboard"
 import { SpotDashboard } from "@/components/spot-dashboard"
@@ -20,9 +21,12 @@ import { isDepartmentId } from "@/lib/departments"
 // the user has no grant for.
 export default function DepartmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { user, isAuthenticated } = useAuth()
+  const { user, isAuthenticated, ready } = useAuth()
   const router = useRouter()
 
+  // Session still being checked: neither the login card nor a Forbidden page
+  // is the truth yet.
+  if (!ready) return <AppLoading />
   if (!isAuthenticated) {
     return <LoginScreen />
   }

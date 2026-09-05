@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { Card } from "@/components/ui/card"
 import { SectionHeading } from "@/components/kit/heading"
+import { SkeletonChart } from "@/components/kit/skeleton"
 import { cn } from "@/lib/utils"
 
 /** A chart's frame: dense card, title, optional subtitle. Three copies existed. */
@@ -9,11 +10,20 @@ export function ChartCard({
   subtitle,
   children,
   className,
+  loading = false,
+  height = 256,
 }: {
   title: ReactNode
   subtitle?: ReactNode
   children: ReactNode
   className?: string
+  /**
+   * Show a chart-shaped skeleton in place of the children. The card keeps its
+   * title and size, so a refresh does not unmount the chart and collapse the
+   * page. Pass the chart's real pixel height so nothing moves when it lands.
+   */
+  loading?: boolean
+  height?: number
 }) {
   return (
     <Card padding="dense" className={className}>
@@ -21,7 +31,7 @@ export function ChartCard({
         <SectionHeading>{title}</SectionHeading>
         {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
       </div>
-      {children}
+      {loading ? <SkeletonChart height={height} /> : children}
     </Card>
   )
 }
