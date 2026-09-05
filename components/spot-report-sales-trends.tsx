@@ -164,7 +164,7 @@ function GroupFilter({
               <button
                 key={g}
                 onClick={() => toggle(g)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent/40"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
               >
                 <span
                   className={`flex h-4 w-4 items-center justify-center rounded border ${

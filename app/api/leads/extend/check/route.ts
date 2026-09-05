@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import {
-  executeSnowflakeQuery,
   executeSnowflakeQueryWithMeta,
   formatSnowflakeRows,
 } from "@/lib/snowflake"

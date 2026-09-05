@@ -6,6 +6,8 @@
 // stay visually consistent with the app.
 
 import { useCallback, useEffect, useState } from "react"
+import { StatTile as KitStatTile } from "@/components/kit/stat-tile"
+import { ChartCard as KitChartCard, ChartTip as KitChartTip } from "@/components/kit/chart"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Check, ChevronsUpDown, Search } from "lucide-react"
@@ -81,57 +83,29 @@ export function MonthRangeControl({
   )
 }
 
+/**
+ * StatTile / ChartCard / ChartTip live in components/kit now, shared by every
+ * department. These are thin adapters preserving this kit's original
+ * signatures — `accent` here always styled the SUB-LINE (a raw class string),
+ * and this kit's tooltip always rounded — so the twenty-odd report files that
+ * import them are unchanged in what they render.
+ */
 export function StatTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-2xl font-semibold text-foreground">{value}</p>
-      {sub && <p className={`mt-0.5 text-xs ${accent ?? "text-muted-foreground"}`}>{sub}</p>}
-    </div>
-  )
+  return <KitStatTile label={label} value={value} sub={sub} subClassName={accent} />
 }
 
 export function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <div className="mb-2">
-        <h3 className="font-medium text-foreground">{title}</h3>
-        {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
-      </div>
-      {children}
-    </div>
-  )
+  return <KitChartCard title={title} subtitle={subtitle}>{children}</KitChartCard>
 }
 
-export function ChartTip({
-  active,
-  payload,
-  label,
-  fmtLabel,
-  suffix,
-}: {
+export function ChartTip(props: {
   active?: boolean
   payload?: { dataKey?: string | number; value?: number | string; color?: string }[]
   label?: string | number
   fmtLabel?: (s: string) => string
   suffix?: string
 }) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-medium text-foreground">{fmtLabel ? fmtLabel(String(label)) : String(label)}</p>
-      {payload.map((p) => (
-        <div key={String(p.dataKey)} className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: String(p.color) }} />
-          <span className="text-muted-foreground">{String(p.dataKey)}</span>
-          <span className="ml-auto pl-3 font-mono text-foreground">
-            {typeof p.value === "number" ? Math.round(p.value).toLocaleString() : String(p.value)}
-            {suffix ?? ""}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
+  return <KitChartTip {...props} format={(n) => Math.round(n).toLocaleString()} />
 }
 
 export function Legend({ items }: { items: { label: string; color: string }[] }) {
@@ -197,7 +171,7 @@ export function MultiSelect({
           {shown.map((g) => {
             const on = selected.has(g)
             return (
-              <button key={g} onClick={() => toggle(g)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent/40">
+              <button key={g} onClick={() => toggle(g)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent">
                 <span className={`flex h-4 w-4 items-center justify-center rounded border ${on ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>
                   {on && <Check className="h-3 w-3" />}
                 </span>

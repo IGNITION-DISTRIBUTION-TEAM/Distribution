@@ -30,7 +30,7 @@ export function useAuth() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [isInitialized, setIsInitialized] = useState(false)
+  const [, setIsInitialized] = useState(false)
 
   // Initialize auth state from cookie on mount
   useEffect(() => {

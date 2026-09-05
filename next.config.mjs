@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   env: {
     // Vercel exposes the commit as VERCEL_GIT_COMMIT_SHA, which is server-only.
     // Mapping it here inlines it into the client bundle at build time, so the

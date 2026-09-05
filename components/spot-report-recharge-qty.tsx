@@ -34,7 +34,7 @@ export function SpotReportRechargeQty({ override }: { override?: Payload } = {})
       mVal: stack(monthly, "month", "value", monthLabel),
       wQty: (() => { const s = stack(weekly, "week", "qty", shortDay); return { data: s.data.slice(-26), types: s.types } })(),
     }
-  }, [data, inRange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, inRange])
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   if (error || !data || !m) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
   const k = data.kpis

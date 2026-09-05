@@ -19,8 +19,6 @@ import {
 } from "@/components/ui/select"
 import {
   ResponsiveContainer,
-  BarChart,
-  Bar,
   LineChart,
   Line,
   XAxis,
@@ -101,7 +99,6 @@ import {
   Database,
   Settings as SettingsIcon,
   DatabaseZap,
-  LayoutDashboard,
   Mail,
   TrendingUp,
   Recycle,
@@ -119,6 +116,7 @@ import {
   autoMatchColumn,
   type TargetColumn as SharedTargetColumn,
 } from "@/lib/column-mapping"
+import type { TaskRow } from "@/app/api/distribution/tasks/route"
 
 type NavItem = {
   id: string
@@ -735,6 +733,7 @@ type CreateColSpec = { sourceHeader: string; name: string; type: string }
  * body is plain text, and a bare res.json() throws an opaque "Unexpected token"
  * error. This surfaces an actionable message instead.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a JSON envelope of unknown shape; callers narrow it
 async function parseJsonResponse(res: Response): Promise<any> {
   const text = await res.text()
   try {
@@ -3024,29 +3023,15 @@ function SnowflakeSourcePanel({ configId, configName, campaignId }: { configId: 
   )
 }
 
-type AutomationTask = {
-  ID: number | string
-  NAME: string
-  DESCRIPTION: string | null
-  TASK_TYPE: string
-  TARGET: string | null
-  STATUS: string
-  SCHEDULE: string | null
-  CAMPAIGN_ID: string | null
-  CAMPAIGN_TITLE: string | null
-  PROC_KIND: string | null
-  SOURCE_KIND: string | null
-  SOURCE_OBJECT: string | null
-  SOURCE_TABLE: string | null
-  MAPPING_JSON: string | null
-  STANDALONE_PROC: string | null
-  LAST_RUN_AT: string | null
-  LAST_RUN_STATUS: string | null
-  LAST_RUN_MESSAGE: string | null
-  CREATED_BY: string | null
-  CREATED_AT: string | null
-  UPDATED_AT: string | null
-}
+/**
+ * The server's row type, not a copy of it. The previous hand-copied version
+ * drifted: it lacked SCHEDULE_FREQUENCY / SCHEDULE_DOW / SCHEDULE_TIME, which the
+ * API selects and this component reads, and only `ignoreBuildErrors` hid the
+ * nine resulting type errors. A type-only import is erased at compile time, so
+ * nothing server-side reaches the client bundle (lib/distribution-steps.ts
+ * already imports from this route file the same way).
+ */
+type AutomationTask = TaskRow
 type ConfiguredCampaign = { id: string; title: string }
 type ColInfo = { name: string; type: string }
 const SOURCE_KIND_OPTIONS: { value: string; label: string }[] = [
@@ -7838,7 +7823,7 @@ function CampaignSettingsPanel() {
   const [privateKey, setPrivateKey] = useState("")
   const [remotePath, setRemotePath] = useState("")
   const [targetTable, setTargetTable] = useState("")
-  const [loadHistoryProc, setLoadHistoryProc] = useState("")
+  const [, setLoadHistoryProc] = useState("")
   const [updateHllProcs, setUpdateHllProcs] = useState<string[]>([])
   const [syncProcedure, setSyncProcedure] = useState("")
   // Structured sync (SP_SYNC_TO_SQLSERVER_LARGE): the source view is interchangeable.
@@ -9083,144 +9068,6 @@ function CampaignSettingsPanel() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-// CRUD for the master list of update-HLL procedures (TSK_HLL_UPDATE_PROCEDURES).
-function HllProceduresPanel() {
-  const [rows, setRows] = useState<HllProc[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [newName, setNewName] = useState("")
-  const [adding, setAdding] = useState(false)
-  const [deleting, setDeleting] = useState<string | number | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch("/api/hll-procedures", { cache: "no-store" })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Failed to load procedures (${res.status})`)
-      setRows(data.rows as HllProc[])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const handleAdd = async () => {
-    const name = newName.trim()
-    if (!name) return
-    setAdding(true)
-    try {
-      const nextIndex =
-        rows && rows.length > 0 ? Math.max(...rows.map((r) => Number(r.PROC_INDEX))) + 1 : 1
-      const res = await fetch("/api/hll-procedures", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ procIndex: nextIndex, procName: name }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`)
-      toast.success("Procedure added")
-      setNewName("")
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  const handleDelete = async (idx: string | number) => {
-    setDeleting(idx)
-    try {
-      const res = await fetch(`/api/hll-procedures/${idx}`, { method: "DELETE" })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Delete failed (${res.status})`)
-      toast.success("Procedure removed")
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    } finally {
-      setDeleting(null)
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="font-medium text-foreground">HLL update procedures</h3>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Procedures available for step 4 (<span className="font-mono">CALL proc(campaignid)</span>),
-        stored in <span className="font-mono">TSK_HLL_UPDATE_PROCEDURES</span>. Assign one to a
-        campaign above, or override it in step 4.
-      </p>
-
-      <div className="mt-4 flex gap-2">
-        <Input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="DATABASE.SCHEMA.PROC"
-          className="max-w-md font-mono text-sm"
-        />
-        <Button onClick={handleAdd} disabled={adding || !newName.trim()}>
-          {adding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Add
-        </Button>
-      </div>
-      {error && <p className="mt-2 text-xs text-rose-400">{error}</p>}
-
-      <div className="mt-4 overflow-hidden rounded-lg border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-20">Index</TableHead>
-              <TableHead>Procedure</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : rows && rows.length > 0 ? (
-              rows.map((r) => (
-                <TableRow key={String(r.PROC_INDEX)}>
-                  <TableCell className="font-mono text-sm">{String(r.PROC_INDEX)}</TableCell>
-                  <TableCell className="font-mono text-sm">{r.PROC_NAME}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(r.PROC_INDEX)}
-                      disabled={deleting === r.PROC_INDEX}
-                      className="text-muted-foreground hover:text-rose-300"
-                    >
-                      Remove
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
-                  No procedures yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
     </div>
   )
 }

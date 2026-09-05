@@ -42,8 +42,8 @@ export type ParsedUpload = {
  * stops and complains beats one that quietly stores a different number.
  *
  * No comma stripping and no number "cleaning" anywhere: cleanNumber() in the
- * financials upload route and lib/excel-parser.ts:240 both treat commas as
- * thousands separators and would turn 2,50% into 250.
+ * financials upload route treats commas as thousands separators and would
+ * turn 2,50% into 250.
  */
 export function parseWorkbook(buffer: Buffer): ParsedUpload {
   const workbook = XLSX.read(buffer, { type: "buffer", raw: true })

@@ -5,7 +5,7 @@ import { AuthProvider } from '@/lib/auth-context'
 
 import './globals.css'
 
-const _inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
   title: 'Data Platform',
@@ -22,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`dark ${inter.variable}`}>
       <body className="font-sans antialiased">
         <AuthProvider>{children}</AuthProvider>
         <Toaster richColors position="top-right" />

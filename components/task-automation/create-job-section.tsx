@@ -240,7 +240,7 @@ export function CreateJobSection({
 
   // ---- step 5: test the load before anything permanent exists
   const [syncName, setSyncName] = useState("")
-  const [reopened, setReopened] = useState(false)
+  const [, setReopened] = useState(false)
   /**
    * The job this wizard was opened from, if any.
    *

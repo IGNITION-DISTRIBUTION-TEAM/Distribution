@@ -94,18 +94,6 @@ const numOrNull = (v: unknown): number | null => {
 }
 const rate = (a: number, b: number): number | null => (b > 0 ? a / b : null)
 
-// Ordering for the derived bands so the UI doesn't have to know about them.
-const BAND_ORDER = [
-  "<600",
-  "600-649",
-  "650-699",
-  "700-749",
-  "750-799",
-  "800-849",
-  "850-899",
-  "900+",
-  "unknown",
-]
 
 /**
  * The account's score as a number, with 0 and non-numeric treated as missing so

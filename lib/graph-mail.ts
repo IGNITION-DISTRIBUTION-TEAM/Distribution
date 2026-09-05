@@ -199,6 +199,7 @@ export function inspectGraphMailPrivateKey(): PrivateKeyStatus {
   }
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose: node:crypto must not be bundled for any importer that only wants this module's types or constants
     const crypto = require("crypto") as typeof import("crypto")
     const key = crypto.createPrivateKey(
       passphraseSet ? { key: pem, passphrase } : pem
@@ -300,6 +301,7 @@ function buildClientAssertion(config: {
   clientId: string
   thumbprint: string
 }): string {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose: node:crypto must not be bundled for any importer that only wants this module's types or constants
   const crypto = require("crypto") as typeof import("crypto")
   const pem = readPrivateKeyPem()
   const passphrase = (process.env.GRAPH_MAIL_KEY_PASSPHRASE ?? "").trim()

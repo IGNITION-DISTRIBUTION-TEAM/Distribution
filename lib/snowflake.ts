@@ -52,6 +52,7 @@ export function getSnowflakeConfig(): SnowflakeConfig {
  * Exactly mirrors the Python implementation using PyJWT and cryptography library.
  */
 export function generateSnowflakeJWT(config: SnowflakeConfig): string {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose: node:crypto must not be bundled for any importer that only wants this module's types or constants
   const crypto = require("crypto")
 
   console.log("[JWT] ========== JWT Generation Start ==========")
@@ -72,7 +73,7 @@ export function generateSnowflakeJWT(config: SnowflakeConfig): string {
         privateKeyPem = decoded
         console.log("[JWT] Successfully decoded from base64")
       }
-    } catch (e) {
+    } catch {
       console.log("[JWT] Base64 decode failed, using as-is")
     }
   }

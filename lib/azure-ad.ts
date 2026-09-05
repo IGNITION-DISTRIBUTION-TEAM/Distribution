@@ -91,7 +91,7 @@ export async function generateCodeChallenge(codeVerifier: string): Promise<strin
 
   // Convert to base64url
   const hashArray = Array.from(new Uint8Array(hashBuffer))
-  const hashString = String.fromCharCode.apply(null, hashArray as any)
+  const hashString = String.fromCharCode(...hashArray)
   const base64 = btoa(hashString)
 
   // Convert to base64url (replace +, / with -, _  and remove =)

@@ -509,7 +509,7 @@ function MapUserCard() {
                 <button
                   type="button"
                   key={emp.email}
-                  className="block w-full px-3 py-2 text-left text-sm hover:bg-accent/40"
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-accent"
                   onClick={() => {
                     setEmployeeEmail(emp.email)
                     setQuery("")
@@ -1087,7 +1087,7 @@ function SuperAdminsPanel() {
                 <button
                   type="button"
                   key={emp.email}
-                  className="block w-full px-3 py-2 text-left text-sm hover:bg-accent/40"
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-accent"
                   onClick={() => {
                     setAdEmail(emp.email)
                     setQuery("")

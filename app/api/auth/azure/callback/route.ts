@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
     const code = searchParams.get("code")
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- read but never validated: the OAuth state round-trip is not checked here (flagged in the audit)
     const state = searchParams.get("state")
     const error = searchParams.get("error")
     const errorDescription = searchParams.get("error_description")

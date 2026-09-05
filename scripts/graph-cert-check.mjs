@@ -22,7 +22,7 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs"
-import { X509Certificate, createPrivateKey, createHash } from "node:crypto"
+import { X509Certificate, createPrivateKey } from "node:crypto"
 
 const [keyPath, certPath, passphraseArg] = process.argv.slice(2)
 
