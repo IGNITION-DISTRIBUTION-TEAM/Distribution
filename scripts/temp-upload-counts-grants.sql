@@ -1,4 +1,5 @@
--- Grants for the Distribution dashboard's Silver Surfer tab, which runs:
+-- Grants for the Distribution dashboard's Temp Upload -> Batch counts tab,
+-- which runs (via /api/distribution/temp-upload):
 --   TRUNCATE TABLE DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.TEMP_UPLOAD;
 --   CALL DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SP_SYNC_BATCH_COUNTS_TODAY();
 --   SELECT * FROM DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.TEMP_UPLOAD;

@@ -85,7 +85,6 @@ import {
   Mail,
   TrendingUp,
   Recycle,
-  Waves,
   Plus,
   Pencil,
   Trash2,
@@ -120,7 +119,6 @@ const navItems: NavItem[] = [
   { id: "daily-files", label: "Daily Files", icon: <Files className="h-4 w-4" /> },
   { id: "temp-upload", label: "Temp Upload", icon: <DatabaseZap className="h-4 w-4" /> },
   { id: "recycle", label: "Recycle", icon: <Recycle className="h-4 w-4" /> },
-  { id: "silver-surfer", label: "Silver Surfer", icon: <Waves className="h-4 w-4" /> },
   { id: "forecasting", label: "Forecasting", icon: <TrendingUp className="h-4 w-4" /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon className="h-4 w-4" /> },
 ]
@@ -3806,7 +3804,6 @@ function ExtendExpiredContent() {
         </p>
       </div>
 
-
       {/* Step 1 — Campaign */}
       <Card>
         <div className="mb-4 flex items-center gap-2">
@@ -4194,8 +4191,6 @@ function formatRand(n: number): string {
   return `R ${Math.round(n).toLocaleString()}`
 }
 
-
-
 function parseSyncSummary(raw: string) {
   const get = (re: RegExp): string | null => {
     const m = raw.match(re)
@@ -4317,7 +4312,6 @@ function SyncResultPanel({
     </div>
   )
 }
-
 
 function DetailRow({
   label,
@@ -8981,117 +8975,6 @@ function StatusBadge({ ok }: { ok: boolean }) {
   )
 }
 
-function SilverSurferContent() {
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ columns: string[]; rows: string[][] } | null>(null)
-  const [lastRun, setLastRun] = useState<string | null>(null)
-
-  const run = useCallback(async () => {
-    setRunning(true)
-    setError(null)
-    try {
-      const res = await fetch("/api/silver-surfer/run", { method: "POST" })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Sync failed (${res.status})`)
-      setResult({ columns: data.columns ?? [], rows: data.rows ?? [] })
-      setLastRun(new Date().toLocaleString())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRunning(false)
-    }
-  }, [])
-
-  return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <PageHeading>Silver Surfer</PageHeading>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Refreshes today&apos;s batch counts (truncate{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">TEMP_UPLOAD</code>, run{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">SP_SYNC_BATCH_COUNTS_TODAY</code>)
-          and shows the results.
-        </p>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Button onClick={run} disabled={running}>
-          {running ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Running sync…
-            </>
-          ) : (
-            <>
-              <PlayCircle className="mr-2 h-4 w-4" /> Run sync
-            </>
-          )}
-        </Button>
-        {result && !running && (
-          <span className="text-sm text-muted-foreground">
-            {result.rows.length.toLocaleString()} row{result.rows.length === 1 ? "" : "s"}
-            {lastRun ? ` · last run ${lastRun}` : ""}
-          </span>
-        )}
-        {result && (
-          <Button variant="outline" size="sm" onClick={run} disabled={running}>
-            <RefreshCw className={cn("mr-2 h-4 w-4", running && "animate-spin")} />
-            Re-run
-          </Button>
-        )}
-      </div>
-
-      {error && (
-        <Banner tone="error">
-          <span className="break-words">{error}</span>
-        </Banner>
-      )}
-
-      {result && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {result.columns.map((c) => (
-                  <TableHead key={c} className="whitespace-nowrap">
-                    {c}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {result.rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={Math.max(result.columns.length, 1)} className="py-8 text-center text-muted-foreground">
-                    The sync returned no rows.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                result.rows.map((row, i) => (
-                  <TableRow key={i}>
-                    {row.map((v, j) => (
-                      <TableCell key={j} className="whitespace-nowrap text-muted-foreground">
-                        {v === "" ? "—" : v}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-
-      {!result && !error && !running && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-          Click <span className="font-medium text-foreground">Run sync</span> to refresh and view
-          today&apos;s batch counts.
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) {
   const [activeNav, setActiveNav] = useState("manual")
 
@@ -9109,8 +8992,6 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
         return <TempUploadContent />
       case "recycle":
         return <RecycleContent />
-      case "silver-surfer":
-        return <SilverSurferContent />
       case "forecasting":
         return <ForecastingContent />
       case "settings":
