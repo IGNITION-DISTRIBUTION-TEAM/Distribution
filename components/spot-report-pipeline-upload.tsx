@@ -107,7 +107,7 @@ export function SpotReportPipelineUpload() {
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files?.[0] ?? null) }}
         className={[
-          "rounded-xl border-2 border-dashed p-10 text-center transition",
+          "rounded-xl border-2 border-dashed p-10 text-center transition-colors duration-150",
           dragging ? "border-primary bg-primary/5" : "border-border bg-card",
         ].join(" ")}
       >

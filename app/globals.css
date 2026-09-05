@@ -79,3 +79,33 @@
     opacity: 1;
   }
 }
+
+/* Reduced motion, in one place.
+ *
+ * Before this, the OS preference was honoured by exactly one component. Every
+ * dialog, dropdown and sheet animation and all ~70 loading spinners ignored it.
+ * A blanket rule covers the vendored Radix wrappers too, which is the only way
+ * to cover them without editing generated code. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The one carve-out. A spinner here is a status signal, not decoration:
+     ~70 sites use animate-spin as the only sign a request is in flight, and
+     several of them replace a button's label while it runs. Frozen, it is a
+     static broken ring that reads as a fault and tells the user nothing. The
+     preference exists for large-area movement, not a 16px glyph — so it keeps
+     turning, at two thirds the speed. Skeletons still stop pulsing, which is
+     where the loading affordance actually lives. */
+  .animate-spin {
+    animation: spin 1.5s linear infinite !important;
+  }
+}

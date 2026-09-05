@@ -98,7 +98,7 @@ export function DepartmentPicker({
     : DEPARTMENTS.filter((d) => (user?.departments ?? []).includes(d.id))
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-screen flex-col bg-background animate-in fade-in-0 duration-200 ease-out">
       <header className="flex h-16 items-center justify-between border-b border-border px-6">
         <div className="flex items-center gap-3">
           <img
@@ -162,7 +162,7 @@ export function DepartmentPicker({
                 disabled={!interactive}
                 onClick={interactive ? () => onSelect(dept.id) : undefined}
                 className={[
-                  "group relative flex flex-col items-start gap-3 rounded-xl border bg-card p-6 text-left transition",
+                  "group relative flex flex-col items-start gap-3 rounded-xl border bg-card p-6 text-left transition-colors duration-150",
                   interactive
                     ? "border-border hover:border-primary/60 hover:bg-card/80 cursor-pointer"
                     : "border-dashed border-border opacity-60 cursor-not-allowed",
@@ -170,7 +170,7 @@ export function DepartmentPicker({
               >
                 <div
                   className={[
-                    "rounded-lg p-2",
+                    "rounded-lg p-2 transition-colors duration-150",
                     interactive
                       ? "bg-primary/10 text-primary group-hover:bg-primary/20"
                       : "bg-muted text-muted-foreground",

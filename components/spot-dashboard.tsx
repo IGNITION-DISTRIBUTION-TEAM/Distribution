@@ -153,7 +153,7 @@ function ArpuFileContent() {
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         className={[
-          "rounded-xl border-2 border-dashed p-10 text-center transition",
+          "rounded-xl border-2 border-dashed p-10 text-center transition-colors duration-150",
           dragging ? "border-primary bg-primary/5" : "border-border bg-card",
         ].join(" ")}
       >
