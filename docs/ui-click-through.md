@@ -66,6 +66,32 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Distribution | Extend Expired, Temp Upload, Daily Files tables | Shared table style; the five scrollable preview grids keep sticky headers | |
 | Distribution | Daily Files summary tiles | Compact tile style; "Lead rows by batch" value in green | |
 
+## Loading states (added with the skeleton release)
+
+Run with DevTools → Network → **Slow 3G** so the loading frame is visible.
+
+| # | Step | Expected | OK? |
+|---|---|---|---|
+| L1 | Hard-reload any department URL, signed in | A centred "Ignition Group" mark and one pulsing bar, then the dashboard. **No login screen flash.** | |
+| L2 | Same, signed out | The mark and bar, then the login card | |
+| L3 | Login URL with `?auth_error=access_denied&reason=unmapped` | The mark and bar, then the login card **with its error banner** | |
+| L4 | Open each department | First paint is a shaped skeleton — grey pulsing rows under a real table header, tiles, chart boxes — never a spinner in a table cell, a blank area, or "No data" | |
+| L5 | Spot Report → five different pages | Skeleton has a heading bar, a controls row, tiles and chart cards at roughly the loaded heights; the page does not jump when data lands | |
+| L6 | Spot Report → any page → **Reload** | The data **stays on screen**; only the button spins. (Before: the whole page collapsed to one line.) | |
+| L7 | EngAIge → Monitoring → Batch history | Skeleton rows while loading, not "No processing history for these filters" | |
+| L8 | EngAIge → Monitoring → Analytics | Chart cards keep their titles with a skeleton plot, not "No data for this range" | |
+| L9 | Reporting → Quality mix (auto-runs on open) | A report skeleton under the controls, not an empty area | |
+| L10 | Distribution → Manual / Extend Expired / Daily Files tables | Skeleton rows under each table header while loading | |
+| L11 | Distribution → Dashboard panels (Reporting → Distributed / Sales / Dialler) | Card with its real title, tile row and chart box while loading | |
+| L12 | Task Automation → Create job → pick an endpoint and browse | Six skeleton rows in the file browser until the listing arrives | |
+| L13 | Task Automation → Current jobs → `</>` on a job | Skeleton lines in the SQL panel while it fetches | |
+| L14 | Settings (super admin) → each table | Skeleton rows, not plain "Loading…" text | |
+| L15 | OS **Reduce motion** on (macOS Accessibility / Windows Animation effects) | Skeleton bars are static grey — no pulse | |
+| L16 | Screen reader on any loading page | "Loading" announced once per region, not once per bar | |
+
+Kept as spinners on purpose: buttons ("Saving…", "Uploading…") and the disabled
+campaign / job-title dropdown triggers that read "Loading campaigns…".
+
 ## Known and deliberate
 
 - EngAIge still uses emoji status glyphs (✅ ⏳ ❌ ⏹️ ❔ 🟢 🔴). Left by decision.

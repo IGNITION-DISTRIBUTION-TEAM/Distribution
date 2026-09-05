@@ -80,6 +80,7 @@ import { StatTile } from "@/components/kit/stat-tile"
 import { Banner } from "@/components/kit/banner"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { SkeletonChart, SkeletonRows, SkeletonText } from "@/components/kit/skeleton"
 
 type DailyTask = {
   TASK_INDEX: number | string
@@ -239,9 +240,7 @@ function TrendChart() {
 
       <div className="h-64 w-full">
         {loading && !series ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-          </div>
+          <SkeletonChart />
         ) : series && series.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series} margin={{ top: 10, right: 16, bottom: 0, left: -10 }}>
@@ -576,9 +575,7 @@ function UploadedToSSPanel() {
           }}
         >
           {loading && !filteredByBatch ? (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
+            <SkeletonChart />
           ) : filteredByBatch && filteredByBatch.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -623,8 +620,8 @@ function UploadedToSSPanel() {
           <SectionHeading>Summary rows</SectionHeading>
         </div>
         {loading && !filteredSummary ? (
-          <div className="flex h-24 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
+          <div className="rounded-lg border border-border bg-card p-3">
+            <SkeletonText lines={3} />
           </div>
         ) : filteredSummary && filteredSummary.length === 0 ? (
           <div className="flex h-24 items-center justify-center rounded-lg border border-border bg-card text-sm text-muted-foreground">
@@ -849,9 +846,7 @@ function SSCheckPanel() {
           }}
         >
           {loading && !filteredRows ? (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
+            <SkeletonChart />
           ) : filteredRows && filteredRows.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -905,11 +900,7 @@ function SSCheckPanel() {
             </TableHeader>
             <TableBody>
               {loading && !filteredRows ? (
-                <TableRow>
-                  <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={2} rows={3} />
               ) : filteredRows && filteredRows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
@@ -1159,9 +1150,7 @@ function HistoryPanel() {
           }}
         >
           {loading && !items ? (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
+            <SkeletonChart />
           ) : chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -1221,11 +1210,7 @@ function HistoryPanel() {
             </TableHeader>
             <TableBody>
               {loading && !items ? (
-                <TableRow>
-                  <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={3} rows={3} />
               ) : filteredItems.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
@@ -1350,11 +1335,7 @@ function TaskRunsPanel() {
           </TableHeader>
           <TableBody>
             {loading && !runs ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={4} rows={3} />
             ) : runs && runs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
@@ -1629,11 +1610,7 @@ function FilesPanel() {
           </TableHeader>
           <TableBody>
             {loadingViews && !views ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={4} rows={3} />
             ) : filteredViews.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
@@ -1865,11 +1842,7 @@ function DiallerViewsPanel() {
           </TableHeader>
           <TableBody>
             {loading && !rows ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={4} rows={3} />
             ) : rows && rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
@@ -2129,11 +2102,7 @@ function RunningTasksPanel() {
           </TableHeader>
           <TableBody>
             {loading && !tasks ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={4} rows={3} />
             ) : tasks && tasks.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">

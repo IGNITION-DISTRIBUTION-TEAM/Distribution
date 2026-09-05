@@ -11,6 +11,7 @@ import {
   type TicketFormConfig,
 } from "@/lib/tickets-shared"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonForm } from "@/components/kit/skeleton"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-60"
@@ -171,9 +172,7 @@ export function TicketForm({
   }
   if (!config) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
-      </div>
+      <SkeletonForm fields={6} />
     )
   }
 

@@ -45,6 +45,7 @@ import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonRows } from "@/components/kit/skeleton"
 
 type Endpoint = {
   name: string
@@ -414,11 +415,7 @@ export function EndpointsSection() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={6} rows={5} />
             ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">

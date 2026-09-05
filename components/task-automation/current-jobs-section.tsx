@@ -31,6 +31,7 @@ import type { SyncConfig } from "@/lib/sftp-sync-codegen"
 import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonRows, SkeletonText } from "@/components/kit/skeleton"
 
 type SyncRow = {
   config: SyncConfig
@@ -296,11 +297,7 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={8} rows={5} />
             ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
@@ -522,9 +519,11 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
               Close
             </Button>
           </div>
-          <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/40 p-3 text-[11px] leading-relaxed text-muted-foreground">
-            {showSql}
-          </pre>
+          {showSql === "Loading…" ? (
+              <SkeletonText lines={10} />
+            ) : (
+              <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/40 p-3 text-[11px] leading-relaxed text-muted-foreground">{showSql}</pre>
+            )}
         </div>
       )}
 

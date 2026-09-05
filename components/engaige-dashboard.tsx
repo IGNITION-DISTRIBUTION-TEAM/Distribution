@@ -61,6 +61,7 @@ import { Banner } from "@/components/kit/banner"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Card } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SkeletonPanel, SkeletonReport, SkeletonText } from "@/components/kit/skeleton"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -86,13 +87,6 @@ const STATUS_ICON: Record<string, string> = {
 
 
 
-function Spinner({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <Loader2 className="h-4 w-4 animate-spin" /> {label}
-    </div>
-  )
-}
 
 // Epoch ms → local date-time string in the viewer's timezone.
 function fmtLocal(ms: number | null | undefined): string {
@@ -168,7 +162,7 @@ function DashboardSection() {
     "Success %": Number(m.successRate.toFixed(1)),
   }))
 
-  if (loading) return <Spinner label="Loading dashboard…" />
+  if (loading) return <SkeletonReport header={false} tiles={4} charts={2} chartHeight={240} />
 
   return (
     <div className="flex flex-col gap-6">
@@ -303,7 +297,7 @@ function BatchErrorsDialog({ batchId, onClose }: { batchId: string; onClose: () 
           <DialogDescription className="font-mono text-xs">{batchId}</DialogDescription>
         </DialogHeader>
         {error && <Banner tone="error">{error}</Banner>}
-        {!data && !error && <Spinner label="Loading errors…" />}
+        {!data && !error && <SkeletonText lines={4} />}
         {empty && (
           <p className="text-sm text-muted-foreground">
             No error rows recorded for this batch in the retry queue or API logs. The failures may
@@ -632,7 +626,7 @@ function ConfigsSection() {
     }
   }
 
-  if (loading) return <Spinner label="Loading configurations…" />
+  if (loading) return <SkeletonText lines={8} />
 
   return (
     <div className="flex flex-col gap-6">
@@ -1183,7 +1177,7 @@ function MappingsSection() {
     }
   }
 
-  if (loading) return <Spinner label="Loading configurations…" />
+  if (loading) return <SkeletonText lines={8} />
 
   return (
     <div className="flex flex-col gap-6">
@@ -1680,7 +1674,7 @@ function AssignmentsSection() {
     </div>
   )
 
-  if (loading) return <Spinner label="Loading assignments…" />
+  if (loading) return <SkeletonText lines={8} />
 
   return (
     <div className="flex flex-col gap-6">
@@ -2038,7 +2032,7 @@ function MonHistory() {
     failedRecords: number
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     jsonFetch("/api/engaige/monitoring?view=config-names")
@@ -2109,7 +2103,9 @@ function MonHistory() {
           />
         </div>
       )}
-      {records.length === 0 ? (
+      {loading && records.length === 0 ? (
+        <SkeletonText lines={6} />
+      ) : records.length === 0 ? (
         <p className="text-sm text-muted-foreground">No processing history for these filters.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
@@ -2214,7 +2210,7 @@ function MonSchedule() {
     return `hsl(213 75% ${58 - t * 26}%)`
   }
 
-  if (loading) return <Spinner label="Loading schedule…" />
+  if (loading) return <SkeletonPanel height={240} />
   if (error) return <Banner tone="error">{error}</Banner>
 
   return (
@@ -2306,7 +2302,7 @@ function MonMetrics() {
     { date: string; successRate: number; processedRecords: number; failedRecords: number; avgDurationSeconds: number }[]
   >([])
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -2350,11 +2346,11 @@ function MonMetrics() {
         </Button>
       </div>
       {error && <Banner tone="error">{error}</Banner>}
-      {chartData.length === 0 ? (
+      {!loading && chartData.length === 0 ? (
         <p className="text-sm text-muted-foreground">No data for this range.</p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <ChartCard title="Daily success rate">
+          <ChartCard title="Daily success rate" loading={loading && chartData.length === 0} height={240}>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
                 <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -2368,7 +2364,7 @@ function MonMetrics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Average execution duration">
+          <ChartCard title="Average execution duration" loading={loading && chartData.length === 0} height={240}>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -16 }}>
                 <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -2383,7 +2379,7 @@ function MonMetrics() {
           </ChartCard>
 
           <div className="lg:col-span-2">
-            <ChartCard title="Records processed vs failed">
+            <ChartCard title="Records processed vs failed" loading={loading && chartData.length === 0} height={240}>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: -8 }}>
                   <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />

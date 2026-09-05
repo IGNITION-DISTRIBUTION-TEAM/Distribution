@@ -104,6 +104,7 @@ import { StatTile } from "@/components/kit/stat-tile"
 import { Banner } from "@/components/kit/banner"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { Skeleton, SkeletonPanel, SkeletonRows, SkeletonText } from "@/components/kit/skeleton"
 
 type NavItem = {
   id: string
@@ -2685,11 +2686,7 @@ function SftpSourcePanel() {
                 </TableHeader>
                 <TableBody>
                   {loading && !listing ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                        <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                      </TableCell>
-                    </TableRow>
+                    <SkeletonRows cols={5} rows={3} />
                   ) : filteredEntries.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
@@ -3441,7 +3438,7 @@ function AutomationContent() {
         {error ? (
           <Banner tone="error"><span>{error}</span></Banner>
         ) : loading ? (
-          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading tasks…</div>
+          <div className="py-2"><SkeletonText lines={5} /></div>
         ) : tasks.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">No distribution tasks yet. Create your first one with “New task”.</p>
         ) : (
@@ -5137,14 +5134,15 @@ function RemoveDuplicatesTab() {
             </TableHeader>
             <TableBody>
               {busy && (
+                deleting ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={Math.max(1, columns.length)}
-                    className="text-center text-sm text-muted-foreground"
-                  >
-                    {scanning ? "Scanning..." : deleting ? "Deleting..." : "Loading..."}
+                  <TableCell colSpan={Math.max(1, columns.length)} className="text-center text-sm text-muted-foreground">
+                    Deleting…
                   </TableCell>
                 </TableRow>
+              ) : (
+                <SkeletonRows cols={Math.max(1, columns.length)} rows={5} />
+              )
               )}
               {!busy && rows.length === 0 && (
                 <TableRow>
@@ -5440,14 +5438,7 @@ function TempUploadCountsTab() {
             </TableHeader>
             <TableBody>
               {(loading || running) && (
-                <TableRow>
-                  <TableCell
-                    colSpan={Math.max(1, columns.length)}
-                    className="text-center text-sm text-muted-foreground"
-                  >
-                    {running ? "Running refresh..." : "Loading..."}
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={Math.max(1, columns.length)} rows={5} />
               )}
               {!loading && !running && rows.length === 0 && (
                 <TableRow>
@@ -5774,10 +5765,7 @@ export function DistributedDashboardPanel() {
       )}
 
       {selectedCampaignIds.length > 0 && loading && !data && (
-        <div className="flex items-center justify-center rounded-xl border border-border bg-card p-10 text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading dashboard...
-        </div>
+        <SkeletonPanel title="Dashboard" tiles={4} height={256} />
       )}
 
       {selectedCampaignIds.length > 0 && data && (
@@ -6097,10 +6085,7 @@ export function DiallerDashboardPanel() {
       )}
 
       {selectedCampaigns.length > 0 && loading && !data && (
-        <div className="flex items-center justify-center rounded-xl border border-border bg-card p-10 text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading dialler stats...
-        </div>
+        <SkeletonPanel title="Dialler stats" tiles={4} height={256} />
       )}
 
       {selectedCampaigns.length > 0 && data && <DiallerSummary data={data} />}
@@ -6554,10 +6539,7 @@ export function SalesDashboardPanel() {
       )}
 
       {selectedCampaigns.length > 0 && loading && !data && (
-        <div className="flex items-center justify-center rounded-xl border border-border bg-card p-10 text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading sales stats...
-        </div>
+        <SkeletonPanel title="Sales stats" tiles={4} height={256} />
       )}
 
       {selectedCampaigns.length > 0 && data && <SalesSummary data={data} />}
@@ -8259,7 +8241,7 @@ function CampaignSettingsPanel() {
           <div className="mb-1 flex items-center justify-between">
             <SectionHeading>Automation config</SectionHeading>
             {configLoading ? (
-              <span className="text-xs text-muted-foreground">Loading…</span>
+              <Skeleton className="h-3 w-24" />
             ) : (
               <Badge variant="outline" className="text-xs">
                 {configExists ? "Saved" : "Not configured"}

@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { TicketForm } from "@/components/ticket-form"
-import { Loader2 } from "lucide-react"
+import { SkeletonForm } from "@/components/kit/skeleton"
 import type { TicketDepartment } from "@/lib/tickets-shared"
 
 // Per-department ticket capture link: /tickets/log/<slug>. PUBLIC by design —
@@ -46,9 +46,7 @@ export default function TicketCapturePage({ params }: { params: Promise<{ slug: 
 
       <main className="mx-auto w-full max-w-3xl px-6 py-10">
         {department === undefined ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </div>
+          <SkeletonForm fields={6} />
         ) : department === null ? (
           <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
             <h1 className="text-lg font-semibold text-foreground">

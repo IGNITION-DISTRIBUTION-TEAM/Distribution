@@ -37,6 +37,7 @@ import { DEPARTMENT_IDS, DEPARTMENT_LABELS } from "@/lib/departments"
 import { cn } from "@/lib/utils"
 import { SectionHeading } from "@/components/kit/heading"
 import { Card } from "@/components/ui/card"
+import { SkeletonRows } from "@/components/kit/skeleton"
 
 type EmailMapping = {
   adEmail: string
@@ -319,11 +320,7 @@ function UserDepartmentsPanel() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">
-                  Loading…
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={3} rows={4} />
             ) : grants.length > 0 ? (
               grants.map((g) => {
                 const key = `${g.adEmail}|${g.department}`
@@ -700,11 +697,7 @@ function EmailMapPanel() {
           </TableHeader>
           <TableBody>
             {loading && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
-                  Loading...
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={6} rows={4} />
             )}
             {!loading && mappings.length === 0 && (
               <TableRow>
@@ -939,11 +932,7 @@ function AllowedRolesPanel() {
             </TableHeader>
             <TableBody>
               {loading && (
-                <TableRow>
-                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
-                    Loading...
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={2} rows={4} />
               )}
               {!loading && roles.length === 0 && (
                 <TableRow>
@@ -1127,11 +1116,7 @@ function SuperAdminsPanel() {
             </TableHeader>
             <TableBody>
               {loading && (
-                <TableRow>
-                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground">
-                    Loading...
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={2} rows={4} />
               )}
               {!loading && admins.length === 0 && (
                 <TableRow>

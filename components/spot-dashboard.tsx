@@ -16,6 +16,7 @@ import { SPOT_UPLOADS, getSpotUpload } from "@/lib/spot-uploads"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SkeletonRows } from "@/components/kit/skeleton"
 
 const ARPU_TABLE = "SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES"
 
@@ -254,11 +255,7 @@ function ArpuFileContent() {
             </TableHeader>
             <TableBody>
               {historyLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">
-                    <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={6} rows={5} />
               ) : history.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">

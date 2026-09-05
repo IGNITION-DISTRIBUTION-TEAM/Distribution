@@ -60,6 +60,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 
 const isoDaysAgo = (days: number): string => {
@@ -943,6 +944,10 @@ function QualityMixReport() {
         <Banner tone="error" className="mt-4">
           {error}
         </Banner>
+      )}
+
+      {loading && !data && (
+        <SkeletonReport header={false} tiles={4} charts={2} chartHeight={288} className="mt-4" />
       )}
 
       {/* Connected, but the chosen window holds no sales. Say so plainly and
@@ -2432,10 +2437,7 @@ function PoolAllocationReport() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center rounded-xl border border-border bg-card p-12 text-muted-foreground">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-        Loading pool allocation…
-      </div>
+      <SkeletonReport header={false} tiles={5} charts={1} chartHeight={288} />
     )
   }
 

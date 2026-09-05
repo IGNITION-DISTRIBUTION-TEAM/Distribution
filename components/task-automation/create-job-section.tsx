@@ -52,6 +52,7 @@ import {
 } from "@/lib/column-mapping"
 import { Card } from "@/components/ui/card"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonRows } from "@/components/kit/skeleton"
 
 type SftpEndpoint = { name: string; label: string; allowedRoot: string; enabled: boolean }
 type TestLoadResult = {
@@ -961,6 +962,7 @@ export function CreateJobSection({
                         </td>
                       </tr>
                     )}
+                    {loading && sortedEntries.length === 0 && <SkeletonRows cols={3} rows={6} />}
                     {sortedEntries.map((e) => (
                       <tr
                         key={e.path}

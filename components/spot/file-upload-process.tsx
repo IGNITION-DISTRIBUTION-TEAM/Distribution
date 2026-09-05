@@ -35,6 +35,7 @@ import { fqTable, type SpotUploadProcess } from "@/lib/spot-uploads"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SkeletonRows } from "@/components/kit/skeleton"
 
 type UploadResult = {
   table?: string
@@ -304,11 +305,7 @@ export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
             </TableHeader>
             <TableBody>
               {historyLoading ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
-                    <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                  </TableCell>
-                </TableRow>
+                <SkeletonRows cols={5} rows={5} />
               ) : history.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">

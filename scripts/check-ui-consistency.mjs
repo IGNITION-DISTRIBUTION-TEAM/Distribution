@@ -26,7 +26,19 @@ const ALLOW = new Set([
   "components/kit/heading.tsx",
   "components/kit/stat-tile.tsx",
   "components/kit/chart.tsx",
+  "components/kit/skeleton.tsx",
+  "components/ui/skeleton.tsx",
+  "components/app-loading.tsx",
 ])
+
+/**
+ * Is this offset inside a <Button>/<button> that has not closed yet? A
+ * heuristic — an unclosed opening tag within the previous 800 characters — so
+ * a very long button body could escape it. The failure mode is a false
+ * positive at `npm test`, which is visible and cheap to fix.
+ */
+const inButton = (src, i) =>
+  /<[Bb]utton\b(?:(?!<\/[Bb]utton>)[\s\S])*$/.test(src.slice(Math.max(0, i - 800), i))
 
 const RULES = [
   {
@@ -68,9 +80,32 @@ const RULES = [
     re: /hover:bg-accent\/40/g,
   },
   {
-    name: "private stat tile copy (use <StatTile>)",
-    re: /function (?:CompactStat|SyncStat|SummaryCard|StatTile)\(/g,
+    name: "private stat tile or spinner copy (use <StatTile> / a kit skeleton)",
+    re: /function (?:CompactStat|SyncStat|SummaryCard|StatTile|Spinner)\(/g,
     allowIn: ["components/spot-report-kit.tsx"],
+  },
+  // ---- loading states: skeletons, not spinners or text ----
+  {
+    name: "spinner in a table cell (use <SkeletonRows>)",
+    re: /<(?:TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*>\s*<Loader2/g,
+  },
+  {
+    name: 'spinner + "Loading…" as a section state (use a kit skeleton)',
+    re: /animate-spin[^"]*"\s*\/>\s*Loading\b/g,
+    unless: inButton,
+  },
+  {
+    name: 'plain "Loading…" text node (use a kit skeleton)',
+    re: />\s*Loading(?:\s[\w\s]+)?(?:\.\.\.|…)\s*</g,
+    unless: inButton,
+  },
+  {
+    name: "hand-rolled loading box (use <SkeletonPanel>)",
+    re: /bg-card p-1[02] text-muted-foreground">\s*<Loader2/g,
+  },
+  {
+    name: "hand-rolled skeleton (import from @/components/kit/skeleton)",
+    re: /className="[^"]*\banimate-pulse\b/g,
   },
 ]
 
@@ -90,10 +125,10 @@ for (const root of ROOTS) {
     const src = readFileSync(file, "utf8")
     for (const rule of RULES) {
       if (rule.allowIn?.includes(rel)) continue
-      const found = src.match(rule.re)
-      if (found) {
+      const found = [...src.matchAll(rule.re)].filter((m) => !(rule.unless && rule.unless(src, m.index)))
+      if (found.length) {
         hits += found.length
-        const line = src.slice(0, src.search(rule.re)).split("\n").length
+        const line = src.slice(0, found[0].index).split("\n").length
         console.log(`  FAIL ${rel}:${line}  ${found.length}× ${rule.name}`)
       }
     }

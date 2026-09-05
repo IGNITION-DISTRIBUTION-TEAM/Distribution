@@ -38,6 +38,7 @@ import {
 } from "@/lib/tickets-shared"
 import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SkeletonForm, SkeletonReport, SkeletonRows } from "@/components/kit/skeleton"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -194,11 +195,7 @@ function DepartmentsContent() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={3} rows={5} />
             ) : departments.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
@@ -484,11 +481,7 @@ function TicketsListContent() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </TableCell>
-              </TableRow>
+              <SkeletonRows cols={8} rows={5} />
             ) : visible.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
@@ -736,9 +729,7 @@ function ReportingContent() {
   if (error) return <Banner tone="error">{error}</Banner>
   if (!data) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading report…
-      </div>
+      <SkeletonReport header={false} charts={1} chartHeight={260} />
     )
   }
 
@@ -871,9 +862,7 @@ function CustomizeFormContent() {
 
   if (!config && !error) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading config…
-      </div>
+      <SkeletonForm fields={6} />
     )
   }
 
