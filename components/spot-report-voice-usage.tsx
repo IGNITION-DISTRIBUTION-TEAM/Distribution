@@ -12,6 +12,8 @@ import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Row = { tenant: string; month: string; minutes: number; activeUsers: number }
 type Payload = { hasData: boolean; rows: Row[]; months: string[]; dataThrough: string | null; error?: string }
@@ -28,6 +30,7 @@ const cmin = (n: number) => {
 const TOP_N = 8
 
 export function SpotReportVoiceUsage() {
+  const chartMotion = useChartMotion()
   const [data, setData] = useState<Payload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -112,7 +115,7 @@ export function SpotReportVoiceUsage() {
   const tenantAxisWidth = 130
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -147,7 +150,7 @@ export function SpotReportVoiceUsage() {
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => cmin(Number(v))} />
               <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Voice minutes" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="Voice minutes" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -159,7 +162,7 @@ export function SpotReportVoiceUsage() {
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => cmin(Number(v))} />
               <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Active users" fill={SERIES[1]} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="Active users" fill={SERIES[1]} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -172,7 +175,7 @@ export function SpotReportVoiceUsage() {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => cmin(Number(v))} />
             <RTooltip content={<ChartTip />} />
-            <Line type="monotone" dataKey="Voice minutes" stroke={BLUE} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="Voice minutes" stroke={BLUE} strokeWidth={2} dot={false} {...chartMotion} />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -184,7 +187,7 @@ export function SpotReportVoiceUsage() {
             <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
             <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
             <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="Minutes / user" fill={SERIES[3]} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+            <Bar dataKey="Minutes / user" fill={SERIES[3]} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -193,6 +196,6 @@ export function SpotReportVoiceUsage() {
         Live from Snowflake (VW_UC_USAGE × UCONNECT_MAY_MERGE, MASTER_TENANT = uConnect). Active voice user = an account
         with any voice minutes in the month. Voice revenue isn&apos;t in the usage view, so it isn&apos;t shown.
       </p>
-    </div>
+    </ReportPage>
   )
 }

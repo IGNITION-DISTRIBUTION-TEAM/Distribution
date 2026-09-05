@@ -14,6 +14,8 @@ import {
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Payload = {
   kpis: { active_sims: number; act_mtd: number; act_lm: number; rev_mtd: number }
@@ -35,6 +37,7 @@ function rand(n: number): string {
 }
 
 export function SpotReportExco({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, live, loading, error, reload } = useReportData<Payload>(
     null, // activations/eNPS still snapshot; revenue is overlaid live below
     "/spot-report/data/33_exco_scorecard.json",
@@ -83,7 +86,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
   const deltaMtd = data.kpis.act_mtd - data.kpis.act_lm
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -129,7 +132,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -148,7 +151,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Revenue" fill={SERIES[1]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Revenue" fill={SERIES[1]} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -160,7 +163,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
               <XAxis type="number" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis type="category" dataKey="channel" tick={axisTick} tickLine={false} axisLine={false} width={80} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="SIMs" radius={[0, 3, 3, 0]} isAnimationActive={false}>
+              <Bar dataKey="SIMs" radius={[0, 3, 3, 0]} {...chartMotion}>
                 {channelData.map((_, i) => (
                   <Cell key={i} fill={SERIES[i % SERIES.length]} />
                 ))}
@@ -176,7 +179,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
               <XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} />
               <RTooltip content={<ChartTip />} />
-              <Line type="monotone" dataKey="eNPS" stroke={BLUE} strokeWidth={2} connectNulls dot={{ r: 3 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="eNPS" stroke={BLUE} strokeWidth={2} connectNulls dot={{ r: 3 }} {...chartMotion} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -190,7 +193,7 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
               <XAxis type="number" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis type="category" dataKey="reason" tick={axisTick} tickLine={false} axisLine={false} width={80} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Count" fill={SERIES[4]} radius={[0, 3, 3, 0]} isAnimationActive={false} />
+              <Bar dataKey="Count" fill={SERIES[4]} radius={[0, 3, 3, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -201,6 +204,6 @@ export function SpotReportExco({ override }: { override?: Payload } = {}) {
           ? "Revenue is live from the uploaded income statement (Revenue lines in the Format Is sheet). Activations, channel mix and eNPS are still from the snapshot."
           : "Showing the baked snapshot. Upload the income statement (Financials → Upload) to make revenue live; activations and eNPS remain snapshot until their sources are wired."}
       </p>
-    </div>
+    </ReportPage>
   )
 }

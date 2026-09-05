@@ -47,6 +47,7 @@ import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonRows } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 type Run = {
   syncName: string
@@ -77,6 +78,7 @@ function statusClass(status: string): string {
 }
 
 export function TasksSection() {
+  const chartMotion = useChartMotion()
   const [days, setDays] = useState(7)
   const [runs, setRuns] = useState<Run[]>([])
   const [series, setSeries] = useState<Series[]>([])
@@ -335,9 +337,9 @@ export function TasksSection() {
                 }}
               />
               <Legend wrapperStyle={{ fontSize: "0.875rem" }} />
-              <Bar yAxisId="rows" dataKey="rows" name="Rows loaded" fill="#10b981" opacity={0.35} />
-              <Line yAxisId="runs" type="monotone" dataKey="runs" name="Runs" stroke="#6366f1" strokeWidth={2} dot={false} />
-              <Line yAxisId="runs" type="monotone" dataKey="failed" name="Failed" stroke="#f43f5e" strokeWidth={2} dot={false} />
+              <Bar yAxisId="rows" dataKey="rows" name="Rows loaded" fill="#10b981" opacity={0.35} {...chartMotion} />
+              <Line yAxisId="runs" type="monotone" dataKey="runs" name="Runs" stroke="#6366f1" strokeWidth={2} dot={false} {...chartMotion} />
+              <Line yAxisId="runs" type="monotone" dataKey="failed" name="Failed" stroke="#f43f5e" strokeWidth={2} dot={false} {...chartMotion} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

@@ -10,10 +10,13 @@ import { BLUE, AMBER, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend } fro
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Channel = { channel: string; yesterday: number; last7avg: number }
 
 export function SpotReportOkr() {
+  const chartMotion = useChartMotion()
   const [channels, setChannels] = useState<Channel[] | null>(null)
   const [live, setLive] = useState(false)
   const [target, setTarget] = useState<number | null>(null)
@@ -45,7 +48,7 @@ export function SpotReportOkr() {
   const chartData = (channels ?? []).map((c) => ({ channel: c.channel, Yesterday: c.yesterday, "7-day avg": c.last7avg }))
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -113,8 +116,8 @@ export function SpotReportOkr() {
                 <XAxis dataKey="channel" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
                 <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-                <Bar dataKey="Yesterday" fill={BLUE} radius={[3, 3, 0, 0]} maxBarSize={40} isAnimationActive={false} />
-                <Bar dataKey="7-day avg" fill={AMBER} radius={[3, 3, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+                <Bar dataKey="Yesterday" fill={BLUE} radius={[3, 3, 0, 0]} maxBarSize={40} {...chartMotion} />
+                <Bar dataKey="7-day avg" fill={AMBER} radius={[3, 3, 0, 0]} maxBarSize={40} {...chartMotion} />
               </BarChart>
             </ResponsiveContainer>
             <Legend items={[{ label: "Yesterday", color: BLUE }, { label: "7-day avg", color: AMBER }]} />
@@ -125,6 +128,6 @@ export function SpotReportOkr() {
       {channels && channels.length === 0 && !error && (
         <p className="text-sm text-muted-foreground">No subscription sales returned for the last 7 days.</p>
       )}
-    </div>
+    </ReportPage>
   )
 }

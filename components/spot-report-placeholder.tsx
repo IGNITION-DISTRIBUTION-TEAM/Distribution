@@ -3,6 +3,7 @@
 import { BarChart3, Info } from "lucide-react"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { ReportPage } from "@/components/kit/page"
 
 // App-styled placeholder for reports that have no data source yet (parity with
 // the original static rebuild's placeholder pages, in the portal design).
@@ -20,7 +21,7 @@ export function SpotReportPlaceholder({
   charts?: string[]
 }) {
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div>
         <div className="flex items-center gap-2">
           <PageHeading>{title}</PageHeading>
@@ -61,6 +62,6 @@ export function SpotReportPlaceholder({
           ))}
         </div>
       )}
-    </div>
+    </ReportPage>
   )
 }

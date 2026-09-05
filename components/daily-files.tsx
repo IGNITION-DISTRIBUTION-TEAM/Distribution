@@ -81,6 +81,7 @@ import { Banner } from "@/components/kit/banner"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { SkeletonChart, SkeletonRows, SkeletonText } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 type DailyTask = {
   TASK_INDEX: number | string
@@ -339,6 +340,7 @@ function formatCellValue(v: unknown): string {
 }
 
 function UploadedToSSPanel() {
+  const chartMotion = useChartMotion()
   const [date, setDate] = useState<string>(todayIso())
   const [summary, setSummary] = useState<SyncSummaryRow[] | null>(null)
   const [byBatch, setByBatch] = useState<SyncBatchCount[] | null>(null)
@@ -603,7 +605,7 @@ function UploadedToSSPanel() {
                     fontSize: "0.875rem",
                   }}
                 />
-                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} {...chartMotion} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -654,6 +656,7 @@ function UploadedToSSPanel() {
 type SSCheckRow = { batchName: string; leads: number }
 
 function SSCheckPanel() {
+  const chartMotion = useChartMotion()
   const [rows, setRows] = useState<SSCheckRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -874,7 +877,7 @@ function SSCheckPanel() {
                     fontSize: "0.875rem",
                   }}
                 />
-                <Bar dataKey="leads" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="leads" fill="#10b981" radius={[0, 4, 4, 0]} {...chartMotion} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -926,6 +929,7 @@ function SSCheckPanel() {
 type HistoryItem = { batchName: string; campaignId: string | null; count: number }
 
 function HistoryPanel() {
+  const chartMotion = useChartMotion()
   const [date, setDate] = useState<string>(todayIso())
   const [items, setItems] = useState<HistoryItem[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1178,7 +1182,7 @@ function HistoryPanel() {
                     fontSize: "0.875rem",
                   }}
                 />
-                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} {...chartMotion} />
               </BarChart>
             </ResponsiveContainer>
           ) : (

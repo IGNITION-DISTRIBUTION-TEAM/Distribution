@@ -256,7 +256,10 @@ export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
       }
     >
       {active.native ? (
-        <div key={active.native} className="min-h-0 flex-1 overflow-auto">
+        <div
+          key={active.native}
+          className="min-h-0 flex-1 overflow-auto animate-in fade-in-0 duration-200 ease-out"
+        >
           {renderNative(active.native)}
         </div>
       ) : src ? (

@@ -8,6 +8,8 @@ import { SERIES, axisTick, MONTHS, ChartCard, ChartTip, Legend, useReportData, u
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type MonthRow = { month: string } & Record<string, number | string>
 type Payload = { monthly: MonthRow[] }
@@ -19,6 +21,7 @@ const STREAMS: { key: string; label: string }[] = [
 ]
 
 export function SpotReportRevenueComparisons({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, live, loading, error, reload } = useReportData<Payload>("/api/spot-report/recharge-revenue", "/spot-report/data/22_revenue_comparisons.json", override)
   const months = useMemo(() => (data ? Array.from(new Set(data.monthly.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(months)
@@ -38,7 +41,7 @@ export function SpotReportRevenueComparisons({ override }: { override?: Payload 
   if (loading && !data) return <SkeletonReport tiles={0} chartHeight={320} />
   if (error || !data || !m) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2"><PageHeading>Revenue Comparisons</PageHeading><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${live ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>{live ? "● Live · Snowflake" : "● Snapshot"}</span></div>
@@ -50,14 +53,14 @@ export function SpotReportRevenueComparisons({ override }: { override?: Payload 
         </div>
       </div>
       <ChartCard title="Revenue by stream — side by side" subtitle="Monthly · snapshot">
-        <ResponsiveContainer width="100%" height={320}><BarChart data={m.grouped} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.streams.map((s, i) => <Bar key={s.label} dataKey={s.label} fill={SERIES[i % SERIES.length]} isAnimationActive={false} />)}</BarChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={320}><BarChart data={m.grouped} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.streams.map((s, i) => <Bar key={s.label} dataKey={s.label} fill={SERIES[i % SERIES.length]} {...chartMotion} />)}</BarChart></ResponsiveContainer>
         <Legend items={m.streams.map((s, i) => ({ label: s.label, color: SERIES[i % SERIES.length] }))} />
       </ChartCard>
       <ChartCard title="Revenue share by stream" subtitle="% of monthly total (100% stacked) · snapshot">
-        <ResponsiveContainer width="100%" height={300}><BarChart data={m.share} stackOffset="expand" margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={44} tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} /><RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.streams.map((s, i) => <Bar key={s.label} dataKey={s.label} stackId="sh" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />)}</BarChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={300}><BarChart data={m.share} stackOffset="expand" margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={44} tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} /><RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.streams.map((s, i) => <Bar key={s.label} dataKey={s.label} stackId="sh" fill={SERIES[i % SERIES.length]} {...chartMotion} />)}</BarChart></ResponsiveContainer>
         <Legend items={m.streams.map((s, i) => ({ label: s.label, color: SERIES[i % SERIES.length] }))} />
       </ChartCard>
       <p className="text-xs text-muted-foreground">{live ? "Live from Snowflake (VW_TELCO_MONTHLY_REVENUE_L13MONTHS)." : "Baked snapshot."} Share chart normalises each month to 100%.</p>
-    </div>
+    </ReportPage>
   )
 }

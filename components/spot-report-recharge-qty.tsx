@@ -8,6 +8,8 @@ import { SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip,
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Row = { month?: string; week?: string; type: string; qty: number; value: number }
 type Payload = { kpis: { qty_mtd: number; value_mtd: number; qty_lm: number; value_lm: number }; monthly: Row[]; weekly: Row[] }
@@ -24,6 +26,7 @@ function stack(rows: Row[], key: "month" | "week", metric: "qty" | "value", labe
 }
 
 export function SpotReportRechargeQty({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/19_recharge_qty_dash.json", override)
   const months = useMemo(() => (data ? Array.from(new Set(data.monthly.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(months)
@@ -43,7 +46,7 @@ export function SpotReportRechargeQty({ override }: { override?: Payload } = {})
   const k = data.kpis
   const legend = (types: string[]) => types.map((t, i) => ({ label: t, color: SERIES[i % SERIES.length] }))
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2"><PageHeading>Recharge Qty Dash</PageHeading><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span></div>
@@ -62,19 +65,19 @@ export function SpotReportRechargeQty({ override }: { override?: Payload } = {})
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
         <ChartCard title="Monthly recharge qty by type" subtitle="Snapshot">
-          <ResponsiveContainer width="100%" height={280}><BarChart data={m.mQty.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.mQty.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />)}</BarChart></ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={280}><BarChart data={m.mQty.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.mQty.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} {...chartMotion} />)}</BarChart></ResponsiveContainer>
           <Legend items={legend(m.mQty.types)} />
         </ChartCard>
         <ChartCard title="Monthly recharge revenue by type" subtitle="Snapshot">
-          <ResponsiveContainer width="100%" height={280}><BarChart data={m.mVal.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.mVal.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />)}</BarChart></ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={280}><BarChart data={m.mVal.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.mVal.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} {...chartMotion} />)}</BarChart></ResponsiveContainer>
           <Legend items={legend(m.mVal.types)} />
         </ChartCard>
       </div>
       <ChartCard title="Weekly recharge qty by type" subtitle="Last 26 weeks · snapshot">
-        <ResponsiveContainer width="100%" height={280}><BarChart data={m.wQty.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.wQty.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />)}</BarChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={280}><BarChart data={m.wQty.data} margin={{ top: 6, right: 12, bottom: 0, left: 8 }}><CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} /><XAxis dataKey="period" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} /><YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} /><RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />{m.wQty.types.map((t, i) => <Bar key={t} dataKey={t} stackId="s" fill={SERIES[i % SERIES.length]} {...chartMotion} />)}</BarChart></ResponsiveContainer>
         <Legend items={legend(m.wQty.types)} />
       </ChartCard>
       <p className="text-xs text-muted-foreground">Baked snapshot of recharge transactions by type.</p>
-    </div>
+    </ReportPage>
   )
 }

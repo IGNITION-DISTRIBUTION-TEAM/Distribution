@@ -11,6 +11,8 @@ import { SERIES, BLUE, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, Cha
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Kpis = {
   book_size: number; ftc_pct: number | null; month2_pct?: number | null; active_users?: number
@@ -55,6 +57,7 @@ export function SpotReportSubscriptions({
   variant?: "billing" | "app"
   override?: Payload
 }) {
+  const chartMotion = useChartMotion()
   const { data: snap, loading, error, reload } = useReportData<Payload>(null, `/spot-report/data/${file}`, override)
 
   // Overlay live subscription SALES (trends + sales KPIs) when derivable for
@@ -142,7 +145,7 @@ export function SpotReportSubscriptions({
     )
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -183,7 +186,7 @@ export function SpotReportSubscriptions({
               <XAxis dataKey="label" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={48} />
               <RTooltip content={<ChartTip />} />
-              <Line type="monotone" dataKey="Sales" stroke={SERIES[1]} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Sales" stroke={SERIES[1]} strokeWidth={2} dot={false} {...chartMotion} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -195,7 +198,7 @@ export function SpotReportSubscriptions({
               <XAxis dataKey="label" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={48} />
               <RTooltip content={<ChartTip />} />
-              <Line type="monotone" dataKey="Sales" stroke={BLUE} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Sales" stroke={BLUE} strokeWidth={2} dot={false} {...chartMotion} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -209,7 +212,7 @@ export function SpotReportSubscriptions({
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
               <YAxis type="category" dataKey="deal" tick={axisTick} axisLine={false} tickLine={false} width={220} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="sales" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={20} isAnimationActive={false} />
+              <Bar dataKey="sales" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={20} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -224,7 +227,7 @@ export function SpotReportSubscriptions({
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
               {collected.series.map((d, i) => (
-                <Bar key={d} dataKey={d} stackId="c" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />
+                <Bar key={d} dataKey={d} stackId="c" fill={SERIES[i % SERIES.length]} {...chartMotion} />
               ))}
             </BarChart>
           </ResponsiveContainer>
@@ -256,6 +259,6 @@ export function SpotReportSubscriptions({
         (SMARTCONNECT_DBO.SUBSCRIBERBILLINGHISTORY) stay on the snapshot — the collected query is defined in the map but its
         schema isn&apos;t granted, and the book/FTC/Month-2 measures are PBI-defined.
       </p>
-    </div>
+    </ReportPage>
   )
 }

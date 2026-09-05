@@ -10,6 +10,8 @@ import { BLUE, AMBER, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartT
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Payload = {
   kpis: { this_month: number; last_month: number; last_7: number; early_churn: number }
@@ -20,6 +22,7 @@ type Payload = {
 const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTHS[Number(m) - 1]} ${y.slice(2)}` }
 
 export function SpotReportWastage({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/17_wastage.json", override)
   const months = useMemo(() => (data ? Array.from(new Set(data.monthly_churn.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(months)
@@ -33,7 +36,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
   const reasonsMeaningful = reasons.length > 1 || (reasons[0] && reasons[0].reason.toLowerCase() !== "unknown")
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -62,7 +65,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} />
             <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="Terminated" fill={SERIES[4]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="Terminated" fill={SERIES[4]} radius={[3, 3, 0, 0]} {...chartMotion} />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -75,7 +78,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
               <XAxis dataKey="band" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Count" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Count" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -88,7 +91,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
                 <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
                 <YAxis type="category" dataKey="reason" tick={axisTick} axisLine={false} tickLine={false} width={160} />
                 <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-                <Bar dataKey="Count" fill={AMBER} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+                <Bar dataKey="Count" fill={AMBER} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -101,6 +104,6 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
       </div>
 
       <p className="text-xs text-muted-foreground">Baked snapshot from the terminations/churn source. Churn-reason capture is largely &quot;Unknown&quot; in source, so that breakdown is limited.</p>
-    </div>
+    </ReportPage>
   )
 }

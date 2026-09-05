@@ -12,6 +12,8 @@ import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Row = { tenant: string; month: string; megs: number; activeUsers: number }
 type Payload = { hasData: boolean; rows: Row[]; months: string[]; dataThrough: string | null; error?: string }
@@ -32,6 +34,7 @@ const cgb = (gb: number) => {
 const TOP_N = 8
 
 export function SpotReportDataUsage() {
+  const chartMotion = useChartMotion()
   const [data, setData] = useState<Payload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -116,7 +119,7 @@ export function SpotReportDataUsage() {
   const tenantAxisWidth = 130
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -151,7 +154,7 @@ export function SpotReportDataUsage() {
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => cgb(Number(v))} />
               <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
               <RTooltip content={<ChartTip suffix=" GB" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Data (GB)" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="Data (GB)" fill={BLUE} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -163,7 +166,7 @@ export function SpotReportDataUsage() {
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
               <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Active users" fill={SERIES[1]} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="Active users" fill={SERIES[1]} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -176,7 +179,7 @@ export function SpotReportDataUsage() {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} width={64} tickFormatter={(v) => cgb(Number(v))} />
             <RTooltip content={<ChartTip suffix=" GB" />} />
-            <Line type="monotone" dataKey="Data (GB)" stroke={BLUE} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="Data (GB)" stroke={BLUE} strokeWidth={2} dot={false} {...chartMotion} />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -188,7 +191,7 @@ export function SpotReportDataUsage() {
             <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
             <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={tenantAxisWidth} />
             <RTooltip content={<ChartTip suffix=" GB" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="GB / user" fill={SERIES[3]} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false} />
+            <Bar dataKey="GB / user" fill={SERIES[3]} radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion} />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -197,6 +200,6 @@ export function SpotReportDataUsage() {
         Live from Snowflake (VW_UC_USAGE × UCONNECT_MAY_MERGE, MASTER_TENANT = uConnect). Active data user = an account
         with any data usage in the month. Volumes are MEGS_USED converted to GB (÷1024).
       </p>
-    </div>
+    </ReportPage>
   )
 }

@@ -11,6 +11,8 @@ import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Row = { month: string; actual: number | null; target: number | null }
 const monthLabel = (s: string) => {
@@ -20,6 +22,7 @@ const monthLabel = (s: string) => {
 const one = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 1 })
 
 export function SpotReportOkrTrends() {
+  const chartMotion = useChartMotion()
   const [series, setSeries] = useState<Row[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,7 +75,7 @@ export function SpotReportOkrTrends() {
   const latestTarget = [...fs].reverse().find((r) => r.target != null)?.target ?? null
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -110,12 +113,12 @@ export function SpotReportOkrTrends() {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={12} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} />
             <RTooltip content={<ChartTip />} />
-            <Line type="monotone" dataKey="Actual" stroke={BLUE} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-            <Line type="monotone" dataKey="Target" stroke={AMBER} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} />
+            <Line type="monotone" dataKey="Actual" stroke={BLUE} strokeWidth={2} dot={false} connectNulls {...chartMotion} />
+            <Line type="monotone" dataKey="Target" stroke={AMBER} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls {...chartMotion} />
           </LineChart>
         </ResponsiveContainer>
         <Legend items={[{ label: "Actual", color: BLUE }, { label: "Target", color: AMBER }]} />
       </ChartCard>
-    </div>
+    </ReportPage>
   )
 }

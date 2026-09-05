@@ -17,6 +17,8 @@ import {
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type GroupDaily = { date: string; activations: number; active1_pct: number }
 type Payload = { groups: { label: string; daily: GroupDaily[] }[] }
@@ -33,6 +35,7 @@ const selectCls =
   "h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
 
 export function SpotReportSimActivations({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const [partIdx, setPartIdx] = useState(0)
   const part = PARTS[partIdx]
   const { data, live, loading, error, reload } = useReportData<Payload>(
@@ -139,7 +142,7 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
   const legendItems = selGroups.map((g) => ({ label: g, color: colorFor(g) }))
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -199,7 +202,7 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
             <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
             <RTooltip content={<ChartTip fmtLabel={shortDay} />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
             {selGroups.map((g, i) => (
-              <Bar key={g} dataKey={g} stackId="a" fill={colorFor(g)} radius={i === selGroups.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} maxBarSize={16} isAnimationActive={false} />
+              <Bar key={g} dataKey={g} stackId="a" fill={colorFor(g)} radius={i === selGroups.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} maxBarSize={16} {...chartMotion} />
             ))}
           </BarChart>
         </ResponsiveContainer>
@@ -214,7 +217,7 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
             <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
             <RTooltip content={<ChartTip fmtLabel={shortDay} suffix="%" />} />
             {selGroups.map((g) => (
-              <Line key={g} type="monotone" dataKey={g} stroke={colorFor(g)} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line key={g} type="monotone" dataKey={g} stroke={colorFor(g)} strokeWidth={2} dot={false} {...chartMotion} />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -227,6 +230,6 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
           (see docs/telco-pbi-page-table-map.md) — the map lists its source but not the derived active-1 definition.
         </p>
       )}
-    </div>
+    </ReportPage>
   )
 }

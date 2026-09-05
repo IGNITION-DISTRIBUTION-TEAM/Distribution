@@ -10,6 +10,8 @@ import { BLUE, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, use
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Payload = {
   kpis: { total_sims: number; active_sims: number; ltm_revenue: number }
@@ -32,13 +34,14 @@ function rand(n: number): string {
 
 // Donut for a composition-of-a-whole mix, with a legend showing share.
 function MixDonut({ title, subtitle, data }: { title: string; subtitle: string; data: { name: string; value: number }[] }) {
+  const chartMotion = useChartMotion()
   const total = data.reduce((a, d) => a + d.value, 0)
   return (
     <ChartCard title={title} subtitle={subtitle}>
       <div className="flex items-center gap-4">
         <ResponsiveContainer width="50%" height={200}>
           <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={2} stroke="hsl(var(--card))" strokeWidth={2} isAnimationActive={false}>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={2} stroke="hsl(var(--card))" strokeWidth={2} {...chartMotion}>
               {data.map((_, i) => <Cell key={i} fill={SERIES[i % SERIES.length]} />)}
             </Pie>
             <RTooltip content={<ChartTip />} />
@@ -62,6 +65,7 @@ function MixDonut({ title, subtitle, data }: { title: string; subtitle: string; 
 }
 
 export function SpotReportConnectBook({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(
     null,
     "/spot-report/data/34_spot_connect_book.json",
@@ -100,7 +104,7 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
   const channelData = [...data.channel_mix].sort((a, b) => b.sims - a.sims).map((r) => ({ channel: r.channel, SIMs: r.sims }))
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -134,7 +138,7 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -146,7 +150,7 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Revenue" fill={SERIES[1]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Revenue" fill={SERIES[1]} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -168,6 +172,6 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
           Showing the baked snapshot. Upload the income statement (Financials → Upload) to make revenue &amp; LTM live.
         </p>
       )}
-    </div>
+    </ReportPage>
   )
 }

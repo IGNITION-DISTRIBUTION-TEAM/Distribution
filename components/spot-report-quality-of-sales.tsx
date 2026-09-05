@@ -11,6 +11,8 @@ import { SERIES, BLUE, axisTick, shortDay, fmt, StatTile, ChartCard, ChartTip, u
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Snap = {
   kpis: { active7_30_35_pct: number; still_using_pct: number; quality_indicator_pct: number }
@@ -24,6 +26,7 @@ const QOS_THRESHOLD = 0.5
 const TOP_N = 12
 
 export function SpotReportQualityOfSales({ override }: { override?: Snap } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Snap>(null, "/spot-report/data/02_quality_of_sales.json", override)
   const [live, setLive] = useState<Live | null>(null)
   useEffect(() => {
@@ -62,7 +65,7 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
   }
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -100,7 +103,7 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
               <XAxis type="number" domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
               <YAxis type="category" dataKey="tenant" tick={axisTick} axisLine={false} tickLine={false} width={140} />
               <RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="qosPct" radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false}>
+              <Bar dataKey="qosPct" radius={[0, 3, 3, 0]} maxBarSize={22} {...chartMotion}>
                 <LabelList dataKey="sales" position="right" formatter={(v: unknown) => `n=${fmt(Number(v))}`} style={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                 {tenantBars.map((t) => (
                   <Cell key={t.tenant} fill={t.flagged ? SERIES[2] : SERIES[1]} />
@@ -126,7 +129,7 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
               <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={48} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -138,7 +141,7 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
               <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
               <RTooltip content={<ChartTip suffix="%" />} />
-              <Line type="monotone" dataKey="Active 1%" stroke={SERIES[3]} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Active 1%" stroke={SERIES[3]} strokeWidth={2} dot={false} {...chartMotion} />
             </LineChart>
           </ResponsiveContainer>
           <p className="mt-2 text-xs text-muted-foreground">Recent days trend down because those activations haven&apos;t had a full 30 days to use yet (right-censored).</p>
@@ -150,6 +153,6 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
         (minutes/data/SMS/USSD/MMS) in that window. The map exposes only a tenant dimension — there&apos;s no per-store
         source — and the cohort KPIs/trend stay on the snapshot.
       </p>
-    </div>
+    </ReportPage>
   )
 }

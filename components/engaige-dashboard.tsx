@@ -62,6 +62,7 @@ import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Card } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SkeletonPanel, SkeletonReport, SkeletonText } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -117,6 +118,7 @@ type DailyMetric = {
 }
 
 function DashboardSection() {
+  const chartMotion = useChartMotion()
   const [configs, setConfigs] = useState<EngaigeConfig[]>([])
   const [metrics, setMetrics] = useState<DailyMetric[]>([])
   const [loading, setLoading] = useState(true)
@@ -209,9 +211,9 @@ function DashboardSection() {
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
                 <RechartsTooltip content={<ChartTip />} />
                 <Line type="monotone" dataKey="Processed" stroke={C_BLUE} strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} {...chartMotion} />
                 <Line type="monotone" dataKey="Failed" stroke={C_RED} strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} {...chartMotion} />
               </LineChart>
             </ResponsiveContainer>
             <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
@@ -233,7 +235,7 @@ function DashboardSection() {
                 <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
                 <RechartsTooltip content={<ChartTip suffix="%" />} />
                 <Line type="monotone" dataKey="Success %" stroke={C_AQUA} strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} {...chartMotion} />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -2296,6 +2298,7 @@ function MonSchedule() {
 }
 
 function MonMetrics() {
+  const chartMotion = useChartMotion()
   const [start, setStart] = useState(daysAgoISO(7))
   const [end, setEnd] = useState(todayISO())
   const [metrics, setMetrics] = useState<
@@ -2359,7 +2362,7 @@ function MonMetrics() {
                 <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
                 <RechartsTooltip content={<ChartTip suffix="%" />} />
                 <Line type="monotone" dataKey="Success %" stroke={C_BLUE} strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} {...chartMotion} />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -2373,7 +2376,7 @@ function MonMetrics() {
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} />
                 <RechartsTooltip content={<ChartTip suffix="s" />} />
                 <Line type="monotone" dataKey="Avg s" stroke={C_AQUA} strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} {...chartMotion} />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -2387,8 +2390,8 @@ function MonMetrics() {
                     axisLine={{ stroke: "hsl(var(--border))" }} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
                   <RechartsTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }} />
-                  <Bar dataKey="Processed" stackId="v" fill={C_BLUE} radius={[0, 0, 0, 0]} isAnimationActive={false} />
-                  <Bar dataKey="Failed" stackId="v" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                  <Bar dataKey="Processed" stackId="v" fill={C_BLUE} radius={[0, 0, 0, 0]} {...chartMotion} />
+                  <Bar dataKey="Failed" stackId="v" fill={C_RED} radius={[3, 3, 0, 0]} {...chartMotion} />
                 </BarChart>
               </ResponsiveContainer>
               <div className="mt-2 flex gap-4 text-xs text-muted-foreground">

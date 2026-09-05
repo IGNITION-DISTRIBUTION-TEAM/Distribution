@@ -11,6 +11,8 @@ import { SERIES, BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartT
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Payload = {
   acquisitions: { month: string; acquired: number; still_active: number }[]
@@ -23,6 +25,7 @@ const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTH
 const rand = (n: number) => (Math.abs(n) >= 1e6 ? `R ${(n / 1e6).toFixed(1)}M` : Math.abs(n) >= 1e3 ? `R ${(n / 1e3).toFixed(0)}K` : `R ${Math.round(n)}`)
 
 export function SpotReportCommercialCohort({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { user } = useAuth()
   const { data, live, loading, error, reload } = useReportData<Payload>("/api/spot-report/commercial-cohort", "/spot-report/data/16_commercial_cohort.json", override)
   const [refreshing, setRefreshing] = useState(false)
@@ -77,7 +80,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
 
   const overallRet = model.totalAcq > 0 ? (model.totalActive / model.totalAcq) * 100 : 0
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -122,8 +125,8 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Acquired" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
-              <Bar dataKey="Still active" fill={SERIES[1]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Acquired" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
+              <Bar dataKey="Still active" fill={SERIES[1]} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
           <Legend items={[{ label: "Acquired", color: BLUE }, { label: "Still active", color: SERIES[1] }]} />
@@ -136,7 +139,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
               <RTooltip content={<ChartTip suffix="%" />} />
-              <Line type="monotone" dataKey="ret" name="Retention" stroke={SERIES[1]} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="ret" name="Retention" stroke={SERIES[1]} strokeWidth={2} dot={false} {...chartMotion} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -150,7 +153,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="ARPU" fill={AMBER} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="ARPU" fill={AMBER} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -162,7 +165,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              {model.channels.map((c, i) => (<Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />))}
+              {model.channels.map((c, i) => (<Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} {...chartMotion} />))}
             </BarChart>
           </ResponsiveContainer>
           <Legend items={model.channels.map((c, i) => ({ label: c, color: SERIES[i % SERIES.length] }))} />
@@ -190,6 +193,6 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
           ? "Live from Snowflake — materialised from the cohort view (VW_COHORT_OVERALL_SALES_WITH_AGING_ON_MEASURES) into SPOT_COHORT on rebuild, shared with the subscriptions cohort page."
           : "Snapshot. Runs off the same cohort source as the subscriptions cohort — an admin can “Build live” to materialise it in the background."}
       </p>
-    </div>
+    </ReportPage>
   )
 }

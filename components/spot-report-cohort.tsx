@@ -11,6 +11,8 @@ import { SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, u
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type ChannelRow = { month: string; channel: string; billed: number; paid: number }
 type CohortRow = { acquired_month: string; billing_month: string; billed: number }
@@ -41,6 +43,7 @@ const rand = (n: number) => {
 }
 
 export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
+  const chartMotion = useChartMotion()
   const { user } = useAuth()
   const { data: snap, loading, error, reload } = useReportData<Snapshot>(null, "/spot-report/data/15_subscriptions_cohort.json", override)
 
@@ -185,7 +188,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
   if (isLive) {
     const m = liveModel!
     return (
-      <div className="flex flex-col gap-5 p-6">
+      <ReportPage>
         {header}
         {refreshBanner}
         <div className="grid gap-3 sm:grid-cols-3">
@@ -202,7 +205,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
               {m.channels.map((c, i) => (
-                <Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />
+                <Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} {...chartMotion} />
               ))}
             </BarChart>
           </ResponsiveContainer>
@@ -245,7 +248,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
           Live from Snowflake — materialised from VW_COHORT_OVERALL_SALES_WITH_AGING_ON_MEASURES (a ~90s 5-way join) into a
           compact table on refresh, so the page loads instantly. {user?.isSuperAdmin ? "Use “Rebuild” to re-run the source query in the background." : "An admin can rebuild it from the latest source."}
         </p>
-      </div>
+      </ReportPage>
     )
   }
 
@@ -254,7 +257,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
   const s = snapModel
   const collectionRate = s.totalBilled > 0 ? (s.totalPaid / s.totalBilled) * 100 : 0
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       {header}
       {refreshBanner}
       <div className="grid gap-3 sm:grid-cols-3">
@@ -270,7 +273,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} />
             <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            {s.channels.map((c, i) => (<Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} isAnimationActive={false} />))}
+            {s.channels.map((c, i) => (<Bar key={c} dataKey={c} stackId="ch" fill={SERIES[i % SERIES.length]} {...chartMotion} />))}
           </BarChart>
         </ResponsiveContainer>
         <Legend items={s.channels.map((c, i) => ({ label: c, color: SERIES[i % SERIES.length] }))} />
@@ -311,6 +314,6 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
       <p className="text-xs text-muted-foreground">
         Snapshot. {user?.isSuperAdmin ? "Click “Build live” to materialise the live cohort view in the background (~1–2 min), then the page switches to live campaign sales + retention." : "An admin can build the live version from the cohort source."} The live view is richer (real campaigns, active-base retention, revenue).
       </p>
-    </div>
+    </ReportPage>
   )
 }

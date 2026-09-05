@@ -39,6 +39,7 @@ import {
 import { PageHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SkeletonForm, SkeletonReport, SkeletonRows } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -566,6 +567,7 @@ function shortDay(iso: string): string {
 }
 
 function TicketsTimeChart({ series }: { series: ReportData["series"] }) {
+  const chartMotion = useChartMotion()
   // Departments ordered by 30-day volume; beyond the palette, fold into "Other".
   const totals = new Map<string, number>()
   for (const r of series) totals.set(r.dept, (totals.get(r.dept) ?? 0) + r.count)
@@ -668,7 +670,7 @@ function TicketsTimeChart({ series }: { series: ReportData["series"] }) {
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }}
-                  isAnimationActive={false}
+                  {...chartMotion}
                 />
               ))}
             </LineChart>

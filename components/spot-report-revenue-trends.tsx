@@ -11,6 +11,8 @@ import { BLUE, SERIES, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend, 
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Monthly = { month: string; total: number; cellc: number; voucher: number; app: number; billrun: number; postpaid: number }
 type Payload = { monthly: Monthly[]; tenant_revenue: { tenant: string; revenue: number }[] }
@@ -35,6 +37,7 @@ const STREAMS: { key: keyof Monthly; label: string }[] = [
 ]
 
 export function SpotReportRevenueTrends({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/37_revenue_trends.json", override)
   const [rev, setRev] = useState<{ monthly: { month: string; revenue: number }[]; dataThrough: string | null; uploadedAt: string | null } | null>(null)
   useEffect(() => {
@@ -76,7 +79,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
   const tenantData = [...data.tenant_revenue].sort((a, b) => b.revenue - a.revenue)
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -113,7 +116,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
             <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => rand(Number(v))} />
             <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="Revenue" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="Revenue" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -127,7 +130,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} />
               {activeStreams.map((s, i) => (
-                <Line key={s.label} type="monotone" dataKey={s.label} stroke={SERIES[i % SERIES.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line key={s.label} type="monotone" dataKey={s.label} stroke={SERIES[i % SERIES.length]} strokeWidth={2} dot={false} {...chartMotion} />
               ))}
             </LineChart>
           </ResponsiveContainer>
@@ -147,7 +150,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} />
-              <Area type="monotone" dataKey="Cumulative" stroke={SERIES[1]} strokeWidth={2} fill="url(#revcum)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="Cumulative" stroke={SERIES[1]} strokeWidth={2} fill="url(#revcum)" {...chartMotion} />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -159,6 +162,6 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
           revenue live; the per-stream split stays on the snapshot (the map doesn&apos;t define the stream breakdown as a query).
         </p>
       )}
-    </div>
+    </ReportPage>
   )
 }

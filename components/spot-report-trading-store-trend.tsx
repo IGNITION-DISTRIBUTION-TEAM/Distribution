@@ -11,6 +11,8 @@ import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type MRow = { month: string; channel: string; cnt: number }
 type WRow = { week: string; channel: string; cnt: number }
@@ -42,6 +44,7 @@ function aggregate<T extends { channel: string; cnt: number }>(rows: T[], key: k
 }
 
 export function SpotReportTradingStoreTrend({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/12_trading_store_trend.json", override)
 
   const channels = useMemo(() => {
@@ -93,7 +96,7 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
   const topRows = Array.from(totals.values()).sort((a, b) => b.this_month - a.this_month).slice(0, 20)
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -147,7 +150,7 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
               <XAxis dataKey="label" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -159,7 +162,7 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
               <XAxis dataKey="label" tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={SERIES[1]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={SERIES[1]} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -203,6 +206,6 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
         Baked snapshot. The PBI map doesn&apos;t define how trading-store sales channels (F2F / Telesales / Digital / OTHER)
         are classified from source, so this stays on the snapshot rather than risk mis-bucketing a live channel split.
       </p>
-    </div>
+    </ReportPage>
   )
 }

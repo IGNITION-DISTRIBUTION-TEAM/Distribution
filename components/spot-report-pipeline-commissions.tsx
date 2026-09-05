@@ -11,6 +11,8 @@ import { SERIES, BLUE, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend, use
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Row = { stage: string; sort: number; category: string; count: number }
 type Payload = { snapshot_date: string; rows: Row[]; uploadedAt?: string | null; uploadedBy?: string | null }
@@ -20,6 +22,7 @@ const LOST = "Not interested or deal lost"
 
 
 export function SpotReportPipelineCommissions({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, live, loading, error, reload } = useReportData<Payload>("/api/spot-report/pipeline", "/spot-report/data/13_pipeline_commissions.json", override)
 
   const model = useMemo(() => {
@@ -76,7 +79,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
   if (error || !data || !model) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -146,7 +149,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
               <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
               <YAxis type="category" dataKey="category" tick={axisTick} axisLine={false} tickLine={false} width={130} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
+              <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={26} {...chartMotion}>
                 <LabelList dataKey="count" position="right" style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                 {model.byCat.map((r, i) => (
                   <Cell key={r.category} fill={SERIES[i % SERIES.length]} />
@@ -164,7 +167,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
                 <XAxis type="number" domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
                 <YAxis type="category" dataKey="category" tick={axisTick} axisLine={false} tickLine={false} width={130} />
                 <RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-                <Bar dataKey="rate" radius={[0, 3, 3, 0]} maxBarSize={26} isAnimationActive={false}>
+                <Bar dataKey="rate" radius={[0, 3, 3, 0]} maxBarSize={26} {...chartMotion}>
                   <LabelList dataKey="rate" position="right" formatter={(v: unknown) => `${Number(v).toFixed(0)}%`} style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                   {model.winByCat.map((r) => (
                     <Cell key={r.category} fill={r.rate >= 50 ? SERIES[1] : SERIES[2]} />
@@ -186,7 +189,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
             <YAxis type="category" dataKey="stage" tick={axisTick} axisLine={false} tickLine={false} width={230} />
             <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
             {model.cats.map((c, i) => (
-              <Bar key={c} dataKey={c} stackId="s" fill={SERIES[i % SERIES.length]} isAnimationActive={false} maxBarSize={26} />
+              <Bar key={c} dataKey={c} stackId="s" fill={SERIES[i % SERIES.length]} {...chartMotion} maxBarSize={26} />
             ))}
           </BarChart>
         </ResponsiveContainer>
@@ -198,6 +201,6 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
           ? "Read from the uploaded BDM pipeline workbook (stored in Snowflake). Counts only — no decision-maker details, and the workbook carries no commission values."
           : "Baked snapshot — the source is a hand-maintained SharePoint workbook with no Snowflake feed, so it's kept current by admin upload (Financials → Upload pipeline) rather than a live query."}
       </p>
-    </div>
+    </ReportPage>
   )
 }

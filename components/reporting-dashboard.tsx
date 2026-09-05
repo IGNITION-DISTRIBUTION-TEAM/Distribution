@@ -61,6 +61,7 @@ import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 
 const isoDaysAgo = (days: number): string => {
@@ -407,6 +408,7 @@ type TrendPoint = {
 }
 
 function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
+  const chartMotion = useChartMotion()
   const thinCount = points.filter((p) => p.thin).length
   // Many percentile labels ("662 to 672") crowd the axis, so angle them once
   // there are more than a handful.
@@ -514,6 +516,7 @@ function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
               activeDot={{ r: 6 }}
               connectNulls
               label={endLabel(FTC_COLOUR)}
+            {...chartMotion}
             />
             <Line
               type="monotone"
@@ -525,6 +528,7 @@ function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
               activeDot={{ r: 6 }}
               connectNulls
               label={endLabel(FID_COLOUR)}
+            {...chartMotion}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -1540,6 +1544,7 @@ function ForecastChart({
 }: {
   forecast: NonNullable<QualityPayload["forecast"]>
 }) {
+  const chartMotion = useChartMotion()
   const points = forecast.weeks
   if (points.length < 3) return null
 
@@ -1637,6 +1642,7 @@ function ForecastChart({
               dot={{ r: 3 }}
               activeDot={{ r: 6 }}
               connectNulls={false}
+            {...chartMotion}
             />
             <Line
               type="monotone"
@@ -1649,6 +1655,7 @@ function ForecastChart({
               strokeDasharray="5 4"
               dot={false}
               connectNulls
+            {...chartMotion}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -1705,6 +1712,7 @@ function FtcOverTimeChart({
     thin: boolean
   }[]
 }) {
+  const chartMotion = useChartMotion()
   const withRate = points.filter((p) => p.ftcPct != null)
   if (withRate.length < 2) return null
 
@@ -1801,6 +1809,7 @@ function FtcOverTimeChart({
               dot={dot}
               activeDot={{ r: 6 }}
               connectNulls
+            {...chartMotion}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -1830,6 +1839,7 @@ function ReasonTrendChart({
   rows: { month: string; reason: string; accounts: number }[]
   topReasons: string[]
 }) {
+  const chartMotion = useChartMotion()
   const { points, months } = useMemo(() => {
     const byMonth = new Map<string, { total: number; byReason: Map<string, number> }>()
     for (const r of rows) {
@@ -1907,6 +1917,7 @@ function ReasonTrendChart({
                 dot={{ r: 4 }}
                 activeDot={{ r: 6 }}
                 connectNulls
+              {...chartMotion}
               />
             ))}
           </LineChart>

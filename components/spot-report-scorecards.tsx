@@ -11,6 +11,8 @@ import { BLUE, SERIES, AMBER, axisTick, MONTHS, shortDay, iso, parseIso, fmt, St
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Quality = {
   active_1_count: number; total_sims: number; active_1_pct: number
@@ -79,6 +81,7 @@ type Live = {
 }
 
 export function SpotReportScorecards({ overrides }: { overrides?: Record<string, Scorecard> } = {}) {
+  const chartMotion = useChartMotion()
   const [store, setStore] = useState(STORES[0].label)
   const [cache, setCache] = useState<Record<string, Scorecard>>(overrides ?? {})
   const [live, setLive] = useState<Record<string, Live>>({})
@@ -172,12 +175,12 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
   )
 
   if (loading && !data) {
-    return <div className="flex flex-col gap-5 p-6">{header}{selector}<SkeletonReport header={false} tiles={8} charts={3} chartHeight={300} /></div>
+    return <ReportPage>{header}{selector}<SkeletonReport header={false} tiles={8} charts={3} chartHeight={300} /></ReportPage>
   }
   if (error && !data) {
-    return <div className="flex flex-col gap-5 p-6">{header}{selector}<Banner tone="error"><span>{error}</span></Banner></div>
+    return <ReportPage>{header}{selector}<Banner tone="error"><span>{error}</span></Banner></ReportPage>
   }
-  if (!data) return <div className="flex flex-col gap-5 p-6">{header}{selector}</div>
+  if (!data) return <ReportPage>{header}{selector}</ReportPage>
 
   const monthly = data.monthly
   const thisM = monthly.length ? monthly[monthly.length - 1].activations : 0
@@ -189,7 +192,7 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
   const wastageCost = data.wastage_rate != null ? q.sims_never_used * data.wastage_rate : null
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       {header}
       {selector}
 
@@ -225,8 +228,8 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
               <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={24} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={48} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Daily" fill={BLUE} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-              <Line dataKey="7-day avg" stroke={SERIES[1]} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Bar dataKey="Daily" fill={BLUE} radius={[2, 2, 0, 0]} {...chartMotion} />
+              <Line dataKey="7-day avg" stroke={SERIES[1]} strokeWidth={2} dot={false} {...chartMotion} />
             </ComposedChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -238,7 +241,7 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={AMBER} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={AMBER} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -284,6 +287,6 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
         and wastage rate stay on the snapshot — those aren&apos;t cleanly derivable from the map. The original per-store
         QoS/ROS/voucher columns and cohort-revenue panels were never wired to a source, so they&apos;re omitted.
       </p>
-    </div>
+    </ReportPage>
   )
 }

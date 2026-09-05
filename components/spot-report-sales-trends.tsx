@@ -21,6 +21,8 @@ import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 // Validated dark categorical steps (contrast + CVD checked against the app card
 // surface earlier this session). Activations = blue; the 7-day average
@@ -140,6 +142,7 @@ function GroupFilter({
 /* ------------------------------- Page ---------------------------------- */
 
 export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const [payload, setPayload] = useState<Payload | null>(dataOverride ?? null)
   const [live, setLive] = useState(!!dataOverride?._live)
   const [loading, setLoading] = useState(!dataOverride)
@@ -314,7 +317,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
       : "All dates"
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -391,8 +394,8 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
               axisLine={{ stroke: "hsl(var(--border))" }} />
             <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
             <RTooltip content={<ChartTip fmtLabel={shortDay} />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-            <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} maxBarSize={14} isAnimationActive={false} />
-            <Line type="monotone" dataKey="7-day avg" stroke={AMBER} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} maxBarSize={14} {...chartMotion} />
+            <Line type="monotone" dataKey="7-day avg" stroke={AMBER} strokeWidth={2} dot={false} {...chartMotion} />
           </ComposedChart>
         </ResponsiveContainer>
         <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
@@ -409,7 +412,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
               <XAxis dataKey="date" tickFormatter={shortDay} tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
               <RTooltip content={<ChartTip fmtLabel={shortDay} />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -421,7 +424,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
               <XAxis dataKey="week" tickFormatter={shortDay} tick={axisTick} tickLine={false} minTickGap={16} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
               <RTooltip content={<ChartTip fmtLabel={(s) => `Week of ${shortDay(s)}`} />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -433,7 +436,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Activations" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -448,11 +451,11 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
               <XAxis dataKey="date" tickFormatter={shortDay} tick={axisTick} tickLine={false} minTickGap={40} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
               <RTooltip content={<ChartTip fmtLabel={shortDay} />} />
-              <Line type="monotone" dataKey="7-day avg" stroke={BLUE} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="7-day avg" stroke={BLUE} strokeWidth={2} dot={false} {...chartMotion} />
             </ComposedChart>
           </ResponsiveContainer>
         </ChartCard>
       </div>
-    </div>
+    </ReportPage>
   )
 }

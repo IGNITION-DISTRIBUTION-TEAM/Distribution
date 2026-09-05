@@ -8,6 +8,8 @@ import { BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Lege
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Payload = { monthly: { month: string; qty: number; value: number }[] }
 const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTHS[Number(m) - 1]} ${y.slice(2)}` }
@@ -25,6 +27,7 @@ function project(ys: number[], ahead: number) {
 }
 
 export function SpotReportPrepaidProjection({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/23_prepaid_recharge_projection.json", override)
   const monthOpts = useMemo(() => (data ? Array.from(new Set(data.monthly.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(monthOpts)
@@ -53,15 +56,15 @@ export function SpotReportPrepaidProjection({ override }: { override?: Payload }
           <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
           <YAxis tick={axisTick} axisLine={false} tickLine={false} width={60} tickFormatter={(v) => fmtY(Number(v))} />
           <RTooltip content={<ChartTip />} />
-          <Line type="monotone" dataKey="Actual" stroke={BLUE} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-          <Line type="monotone" dataKey="Projected" stroke={AMBER} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} />
+          <Line type="monotone" dataKey="Actual" stroke={BLUE} strokeWidth={2} dot={false} connectNulls {...chartMotion} />
+          <Line type="monotone" dataKey="Projected" stroke={AMBER} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls {...chartMotion} />
         </LineChart>
       </ResponsiveContainer>
       <Legend items={[{ label: "Actual", color: BLUE }, { label: "Projected (linear trend)", color: AMBER }]} />
     </ChartCard>
   )
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2"><PageHeading>Prepaid Recharge Projection</PageHeading><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span></div>
@@ -79,6 +82,6 @@ export function SpotReportPrepaidProjection({ override }: { override?: Payload }
       {proj("Prepaid recharge qty — actual + 6-month projection", "Snapshot · linear trend", m.qty, (v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v)))}
       {proj("Recharge revenue — actual + 6-month projection", "Snapshot · linear trend", m.val, rand)}
       <p className="text-xs text-muted-foreground">Baked snapshot. Projection is a simple least-squares linear trend over the actuals — indicative only, not a forecast model.</p>
-    </div>
+    </ReportPage>
   )
 }

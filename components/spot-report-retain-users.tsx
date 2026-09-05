@@ -11,6 +11,8 @@ import { SERIES, BLUE, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, use
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { SkeletonReport } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
+import { ReportPage } from "@/components/kit/page"
 
 type Monthly = { month: string; reward_qty: number; reward_value: number }
 type Payload = {
@@ -30,6 +32,7 @@ const rand = (n: number) => {
 }
 
 export function SpotReportRetainUsers({ override }: { override?: Payload } = {}) {
+  const chartMotion = useChartMotion()
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/40_retain_users_airtime.json", override)
   const [live, setLive] = useState<{ monthly: Monthly[]; dataThrough: string | null } | null>(null)
   useEffect(() => {
@@ -72,7 +75,7 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
     .map((r) => ({ month: monthLabel(r.month), "R / recipient": Math.round(r.recipient_revenue / r.recipients) }))
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <ReportPage>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -114,7 +117,7 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={48} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Qty" fill={SERIES[1]} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Qty" fill={SERIES[1]} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -126,7 +129,7 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
               <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} />
               <RTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="Value" fill={BLUE} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="Value" fill={BLUE} radius={[3, 3, 0, 0]} {...chartMotion} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -143,7 +146,7 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
               <XAxis dataKey="group" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
               <YAxis tick={axisTick} axisLine={false} tickLine={false} domain={[0, 100]} width={40} tickFormatter={(v) => `${v}%`} />
               <RTooltip content={<ChartTip suffix="%" />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
-              <Bar dataKey="pct" radius={[3, 3, 0, 0]} maxBarSize={90} isAnimationActive={false}>
+              <Bar dataKey="pct" radius={[3, 3, 0, 0]} maxBarSize={90} {...chartMotion}>
                 <LabelList dataKey="pct" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}%`} style={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                 {retention.map((r) => (
                   <Cell key={r.group} fill={/reward recipient/i.test(r.group) ? SERIES[1] : SERIES[2]} />
@@ -164,7 +167,7 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
                 <XAxis dataKey="month" tick={axisTick} tickLine={false} minTickGap={8} axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => rand(Number(v))} />
                 <RTooltip content={<ChartTip />} />
-                <Line type="monotone" dataKey="R / recipient" stroke={SERIES[3]} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="monotone" dataKey="R / recipient" stroke={SERIES[3]} strokeWidth={2} dot={{ r: 3 }} {...chartMotion} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -178,6 +181,6 @@ export function SpotReportRetainUsers({ override }: { override?: Payload } = {})
         retentions sub-wallet, free-airtime bundle benefits). Retention and revenue-per-recipient stay on the snapshot — the
         map doesn&apos;t fully define those as queries.
       </p>
-    </div>
+    </ReportPage>
   )
 }

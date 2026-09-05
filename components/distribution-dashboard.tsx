@@ -105,6 +105,7 @@ import { Banner } from "@/components/kit/banner"
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Skeleton, SkeletonPanel, SkeletonRows, SkeletonText } from "@/components/kit/skeleton"
+import { useChartMotion } from "@/hooks/use-chart-motion"
 
 type NavItem = {
   id: string
@@ -6094,6 +6095,7 @@ export function DiallerDashboardPanel() {
 }
 
 function DiallerSummary({ data }: { data: DiallerData }) {
+  const chartMotion = useChartMotion()
   const dateLabel =
     data.startDate === data.endDate ? data.startDate : `${data.startDate} → ${data.endDate}`
   const avgPerDay = data.totals.days > 0 ? data.totals.totalLeads / data.totals.days : 0
@@ -6178,6 +6180,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
                   strokeWidth={2}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
+                {...chartMotion}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -6648,6 +6651,7 @@ function MultiSelectFilter({
 }
 
 function SalesSummary({ data }: { data: SalesData }) {
+  const chartMotion = useChartMotion()
   const dateLabel =
     data.startDate === data.endDate ? data.startDate : `${data.startDate} → ${data.endDate}`
   const avgPerDay =
@@ -6832,6 +6836,7 @@ function SalesSummary({ data }: { data: SalesData }) {
                   activeDot={{ r: 5 }}
                   connectNulls={false}
                   legendType={variance ? "none" : "line"}
+                {...chartMotion}
                 />
                 {(salesForecast || intraday) && (
                   <Line
@@ -6844,6 +6849,7 @@ function SalesSummary({ data }: { data: SalesData }) {
                     dot={false}
                     connectNulls
                     legendType={variance ? "none" : "line"}
+                  {...chartMotion}
                   />
                 )}
               </LineChart>
@@ -6969,6 +6975,7 @@ function AvgScoreLineChart({
   /** Set when the caller has narrowed the series with the grid's date filter. */
   filterNote?: string
 }) {
+  const chartMotion = useChartMotion()
   // Filter out days with no leads (avgScore null) so the line doesn't drop to 0.
   const series = data
     .filter((r) => r.avgScore !== null)
@@ -7028,6 +7035,7 @@ function AvgScoreLineChart({
               strokeWidth={2}
               dot={{ r: 3 }}
               activeDot={{ r: 5 }}
+            {...chartMotion}
             />
           </LineChart>
         </ResponsiveContainer>
