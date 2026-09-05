@@ -5,11 +5,12 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Monthly = { month: string; total: number; cellc: number; voucher: number; app: number; billrun: number; postpaid: number }
 type Payload = { monthly: Monthly[]; tenant_revenue: { tenant: string; revenue: number }[] }
@@ -45,7 +46,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
   }, [override])
   const revLive = !!rev
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={3} chartHeight={280} />
   if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   // Total revenue by month: live income statement when available, else snapshot.

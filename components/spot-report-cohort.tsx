@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth-context"
 import { SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type ChannelRow = { month: string; channel: string; billed: number; paid: number }
 type CohortRow = { acquired_month: string; billing_month: string; billed: number }
@@ -142,7 +143,7 @@ export function SpotReportCohort({ override }: { override?: Snapshot } = {}) {
     return { months, channels, stacked, totalBilled, totalPaid, acqMonths, grid, agings: Array.from({ length: maxAging + 1 }, (_, i) => i), maxBilled }
   }, [snap])
 
-  if (loading || liveLoading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if ((loading || liveLoading) && !snap) return <SkeletonReport tiles={6} charts={4} chartHeight={320} />
   if (error && !live) return <Banner tone="error" className="m-6"><span>{error}</span></Banner>
 
   const isLive = !!live && !!liveModel

@@ -4,12 +4,13 @@ import { useMemo, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type MRow = { month: string; channel: string; cnt: number }
 type WRow = { week: string; channel: string; cnt: number }
@@ -65,7 +66,7 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
     })
   }
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={3} chartHeight={300} />
   if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   const mKey = (d: string) => `${d.slice(0, 7)}-01`

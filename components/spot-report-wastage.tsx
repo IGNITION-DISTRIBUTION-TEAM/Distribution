@@ -4,11 +4,12 @@ import { useMemo } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Payload = {
   kpis: { this_month: number; last_month: number; last_7: number; early_churn: number }
@@ -22,7 +23,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
   const { data, loading, error, reload } = useReportData<Payload>(null, "/spot-report/data/17_wastage.json", override)
   const months = useMemo(() => (data ? Array.from(new Set(data.monthly_churn.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(months)
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={3} chartHeight={300} />
   if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   const k = data.kpis

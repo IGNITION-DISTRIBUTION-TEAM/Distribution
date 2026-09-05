@@ -16,10 +16,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { CalendarDays, Check, ChevronsUpDown, Loader2, RefreshCw, Search } from "lucide-react"
+import { CalendarDays, Check, ChevronsUpDown, RefreshCw, Search } from "lucide-react"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 import { StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 // Validated dark categorical steps (contrast + CVD checked against the app card
 // surface earlier this session). Activations = blue; the 7-day average
@@ -298,13 +299,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
       })
   }, [sortedDates, byDate])
 
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading Sales Trends…
-      </div>
-    )
-  }
+  if (loading && !payload) return <SkeletonReport charts={4} chartHeight={320} />
   if (error) {
     return (
       <Banner tone="error" className="m-6">

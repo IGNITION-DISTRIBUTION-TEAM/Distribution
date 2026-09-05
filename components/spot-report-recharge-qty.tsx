@@ -2,11 +2,12 @@
 
 import { useMemo } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Row = { month?: string; week?: string; type: string; qty: number; value: number }
 type Payload = { kpis: { qty_mtd: number; value_mtd: number; qty_lm: number; value_lm: number }; monthly: Row[]; weekly: Row[] }
@@ -37,7 +38,7 @@ export function SpotReportRechargeQty({ override }: { override?: Payload } = {})
       wQty: (() => { const s = stack(weekly, "week", "qty", shortDay); return { data: s.data.slice(-26), types: s.types } })(),
     }
   }, [data, inRange])
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={3} chartHeight={280} />
   if (error || !data || !m) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
   const k = data.kpis
   const legend = (types: string[]) => types.map((t, i) => ({ label: t, color: SERIES[i % SERIES.length] }))

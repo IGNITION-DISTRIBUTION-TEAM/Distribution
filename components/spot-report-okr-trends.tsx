@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from "react"
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Info, Loader2, RefreshCw } from "lucide-react"
+import { Info, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Row = { month: string; actual: number | null; target: number | null }
 const monthLabel = (s: string) => {
@@ -39,8 +40,8 @@ export function SpotReportOkrTrends() {
   const months = useMemo(() => (series ? Array.from(new Set(series.map((r) => String(r.month)))).sort() : []), [series])
   const { range, setRange, inRange } = useMonthRange(months)
 
-  if (loading) {
-    return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !series) {
+    return <SkeletonReport charts={1} chartHeight={320} />
   }
   if (error) {
     return <Banner tone="error" className="m-6"><span>{error}</span></Banner>

@@ -2,11 +2,12 @@
 
 import { useMemo } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SERIES, axisTick, MONTHS, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type MonthRow = { month: string } & Record<string, number | string>
 type Payload = { monthly: MonthRow[] }
@@ -34,7 +35,7 @@ export function SpotReportRevenueComparisons({ override }: { override?: Payload 
     })
     return { streams, grouped, share }
   }, [data, inRange])
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport tiles={0} chartHeight={320} />
   if (error || !data || !m) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
   return (
     <div className="flex flex-col gap-5 p-6">

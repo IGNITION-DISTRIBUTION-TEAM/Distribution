@@ -5,11 +5,12 @@ import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Info, Loader2, RefreshCw } from "lucide-react"
+import { Info, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SERIES, BLUE, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Row = { stage: string; sort: number; category: string; count: number }
 type Payload = { snapshot_date: string; rows: Row[]; uploadedAt?: string | null; uploadedBy?: string | null }
@@ -71,7 +72,7 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
     return { total, won, lost, active, winRate, byStage, maxStage, byCat, cats, stacked, winByCat }
   }, [data])
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={4} chartHeight={300} />
   if (error || !data || !model) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   return (

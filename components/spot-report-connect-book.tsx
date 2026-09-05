@@ -4,11 +4,12 @@ import { useEffect, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useReportData } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Payload = {
   kpis: { total_sims: number; active_sims: number; ltm_revenue: number }
@@ -84,8 +85,8 @@ export function SpotReportConnectBook({ override }: { override?: Payload } = {})
   }, [override])
   const revLive = !!rev
 
-  if (loading) {
-    return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) {
+    return <SkeletonReport tiles={3} charts={3} chartHeight={200} />
   }
   if (error || !data) {
     return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>

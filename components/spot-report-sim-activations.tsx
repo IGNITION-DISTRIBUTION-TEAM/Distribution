@@ -9,13 +9,14 @@ import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { CalendarDays, Loader2, RefreshCw } from "lucide-react"
+import { CalendarDays, RefreshCw } from "lucide-react"
 import {
   SERIES, axisTick, iso, parseIso, shortDay, fmt,
   StatTile, ChartCard, ChartTip, Legend, MultiSelect, useReportData,
 } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type GroupDaily = { date: string; activations: number; active1_pct: number }
 type Payload = { groups: { label: string; daily: GroupDaily[] }[] }
@@ -127,8 +128,8 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
     return { today, last7, thisMonth, util }
   }, [dates, selGroups, lookup])
 
-  if (loading) {
-    return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) {
+    return <SkeletonReport chartHeight={320} />
   }
   if (error) {
     return <Banner tone="error" className="m-6"><span>{error}</span></Banner>

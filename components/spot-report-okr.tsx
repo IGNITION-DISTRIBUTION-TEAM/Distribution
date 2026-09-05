@@ -4,11 +4,12 @@ import { useEffect, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Info, Loader2, RefreshCw } from "lucide-react"
+import { Info, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend } from "@/components/spot-report-kit"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Channel = { channel: string; yesterday: number; last7avg: number }
 
@@ -35,8 +36,8 @@ export function SpotReportOkr() {
   }
   useEffect(load, [])
 
-  if (loading) {
-    return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !channels) {
+    return <SkeletonReport charts={1} chartHeight={300} />
   }
 
   const totalYest = (channels ?? []).reduce((a, c) => a + c.yesterday, 0)

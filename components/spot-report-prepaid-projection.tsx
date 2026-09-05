@@ -2,11 +2,12 @@
 
 import { useMemo } from "react"
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Payload = { monthly: { month: string; qty: number; value: number }[] }
 const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTHS[Number(m) - 1]} ${y.slice(2)}` }
@@ -42,7 +43,7 @@ export function SpotReportPrepaidProjection({ override }: { override?: Payload }
     const last = months[months.length - 1]
     return { qty: build("qty", qtyProj), val: build("value", valProj), lastQty: last.qty, lastVal: last.value }
   }, [data, inRange])
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport tiles={2} charts={1} chartHeight={300} />
   if (error || !data || !m) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
   const proj = (title: string, subtitle: string, rows: { month: string; Actual: number | null; Projected: number | null }[], fmtY: (v: number) => string) => (
     <ChartCard title={title} subtitle={subtitle}>

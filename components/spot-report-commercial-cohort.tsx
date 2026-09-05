@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth-context"
 import { SERIES, BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Payload = {
   acquisitions: { month: string; acquired: number; still_active: number }[]
@@ -71,7 +72,7 @@ export function SpotReportCommercialCohort({ override }: { override?: Payload } 
     return { acq, arpu, channels, chStacked, cohorts, ages, grid, totalAcq, totalActive }
   }, [data, inRange])
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+  if (loading && !data) return <SkeletonReport charts={4} chartHeight={280} />
   if (error || !data || !model) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   const overallRet = model.totalAcq > 0 ? (model.totalActive / model.totalAcq) * 100 : 0

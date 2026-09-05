@@ -5,11 +5,12 @@ import {
   Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, AMBER, axisTick, MONTHS, shortDay, iso, parseIso, fmt, StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
+import { SkeletonReport } from "@/components/kit/skeleton"
 
 type Quality = {
   active_1_count: number; total_sims: number; active_1_pct: number
@@ -171,7 +172,7 @@ export function SpotReportScorecards({ overrides }: { overrides?: Record<string,
   )
 
   if (loading && !data) {
-    return <div className="flex flex-col gap-5 p-6">{header}{selector}<div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading {store}…</div></div>
+    return <div className="flex flex-col gap-5 p-6">{header}{selector}<SkeletonReport header={false} tiles={8} charts={3} chartHeight={300} /></div>
   }
   if (error && !data) {
     return <div className="flex flex-col gap-5 p-6">{header}{selector}<Banner tone="error"><span>{error}</span></Banner></div>
