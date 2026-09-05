@@ -18,7 +18,7 @@ import {
 } from "recharts"
 import { CalendarDays, Check, ChevronsUpDown, Loader2, RefreshCw, Search } from "lucide-react"
 import { Banner } from "@/components/kit/banner"
-import { Card } from "@/components/ui/card"
+import { PageHeading } from "@/components/kit/heading"
 import { StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
 
 // Validated dark categorical steps (contrast + CVD checked against the app card
