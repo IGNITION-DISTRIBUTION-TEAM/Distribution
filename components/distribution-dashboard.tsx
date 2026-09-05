@@ -7343,10 +7343,13 @@ function ScoreDateHeatgrid({
       </div>
 
       <div className="-mx-6 overflow-x-auto px-6">
-        <table className="border-separate" style={{ borderSpacing: "2px" }}>
+        <table className="w-full border-separate" style={{ borderSpacing: "2px" }}>
           <thead>
             <tr>
-              <th className="sticky left-0 bg-card px-2 text-left text-xs font-medium text-muted-foreground">
+              <th
+                className="sticky left-0 whitespace-nowrap bg-card px-2 text-left text-xs font-medium text-muted-foreground"
+                style={{ width: 1 }}
+              >
                 Score group
               </th>
               {dates.map((d) => (
@@ -7360,7 +7363,12 @@ function ScoreDateHeatgrid({
                   </span>
                 </th>
               ))}
-              <th className="px-2 text-right text-xs font-medium text-muted-foreground">Total</th>
+              <th
+                className="whitespace-nowrap px-2 text-right text-xs font-medium text-muted-foreground"
+                style={{ width: 1 }}
+              >
+                Total
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -7385,7 +7393,7 @@ function ScoreDateHeatgrid({
                     return (
                       <td
                         key={d}
-                        title={`${sg} · ${d}: ${count.toLocaleString()} (${pct.toFixed(1)}% of day)`}
+                        title={`${sg} · ${d}: ${count.toLocaleString()} (${pct.toFixed(1)}% of ${unit})`}
                         style={{
                           backgroundColor: cellColor(count, dayTotal),
                           minWidth: 32,
