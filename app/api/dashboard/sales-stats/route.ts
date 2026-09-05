@@ -198,9 +198,16 @@ export async function GET(request: NextRequest) {
         DAY: string
         SALES: number | string | null
       }>(
+        // Single-day selection -> bucket by hour, so the grid shows the shape
+        // of the day rather than one column. Same hour expression as the time
+        // series above, so the two never disagree about when the day peaked.
         `SELECT
            COALESCE(NULLIF(TRIM(SCOREGROUP3), ''), '(none)') AS SCOREGROUP,
-           TO_CHAR(ORDERDATE, 'YYYY-MM-DD') AS DAY,
+           ${
+             startDate === endDate
+               ? `LPAD(EXTRACT(HOUR FROM ORDERORDERDATE)::VARCHAR, 2, '0') || ':00'`
+               : `TO_CHAR(ORDERDATE, 'YYYY-MM-DD')`
+           } AS DAY,
            SUM(SALES) AS SALES
          FROM ${VIEW}
          ${where}

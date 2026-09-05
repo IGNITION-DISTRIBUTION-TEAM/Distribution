@@ -7123,6 +7123,18 @@ function ScoreDateHeatgrid({
     const set = new Set(filteredRows.map((r) => r.date))
     return Array.from(set).sort()
   }, [filteredRows])
+  /**
+   * Date columns or time-of-day columns?
+   *
+   * Read off the data rather than passed in, because the column key is
+   * whatever the route bucketed by and only the data can be wrong about that:
+   * Sales sends `HH:00` when one day is picked, Dialler sends `HH:MM`
+   * half-hours, everything else sends `YYYY-MM-DD`. A prop could be passed
+   * inconsistently with the rows it labels; this cannot.
+   */
+  const axisKind: "date" | "time" =
+    dates.length > 0 && dates.every((d) => /^\d{2}:\d{2}$/.test(d)) ? "time" : "date"
+  const unit = axisKind === "time" ? "hour" : "day"
 
   // Lookup: scoreGroup|date → count
   const lookup = useMemo(() => {
@@ -7199,13 +7211,13 @@ function ScoreDateHeatgrid({
     <div className="w-full min-w-0 rounded-xl border border-border bg-card p-6">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <SectionHeading>Score group × created on</SectionHeading>
+          <SectionHeading>Score group × {axisKind === "time" ? "hour" : "created on"}</SectionHeading>
           <p className="text-sm text-muted-foreground">
             {mode === "percent"
-              ? "Each cell as % of that day's total. Empty days hidden."
-              : "Lead counts coloured by intensity. Empty days are hidden."}{" "}
+              ? `Each cell as % of that ${unit}'s total. Empty ${unit}s hidden.`
+              : `Lead counts coloured by intensity. Empty ${unit}s are hidden.`}{" "}
             {scoreGroups.length} of {allScoreGroups.length} score group
-            {allScoreGroups.length === 1 ? "" : "s"} · {dates.length} day
+            {allScoreGroups.length === 1 ? "" : "s"} · {dates.length} {unit}
             {dates.length === 1 ? "" : "s"}
             {mode === "count" && ` · max ${maxCount.toLocaleString()}`}
             {mode === "percent" && maxPercent > 0 &&
@@ -7217,7 +7229,7 @@ function ScoreDateHeatgrid({
           <Popover open={dateFilterOpen} onOpenChange={setDateFilterOpen}>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm">
-                Filter dates{" "}
+                Filter {unit}s{" "}
                 {!isAllDatesSelected && (
                   <span className="ml-1 rounded-full bg-primary/20 px-1.5 text-xs text-primary">
                     {activeDateSet.size}/{allDates.length}
@@ -7228,7 +7240,7 @@ function ScoreDateHeatgrid({
             </PopoverTrigger>
             <PopoverContent className="w-56 p-0" align="end">
               <Command>
-                <CommandInput placeholder="Search dates..." />
+                <CommandInput placeholder={`Search ${unit}s...`} />
                 <CommandList>
                   <CommandEmpty>No match.</CommandEmpty>
                   <CommandGroup>
@@ -7280,7 +7292,7 @@ function ScoreDateHeatgrid({
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              % of day
+              % of {unit}
             </button>
           </div>
 
@@ -7344,7 +7356,7 @@ function ScoreDateHeatgrid({
                   style={{ minWidth: 32 }}
                 >
                   <span className="block whitespace-nowrap" title={d}>
-                    {d.slice(5)}
+                    {axisKind === "time" ? d : d.slice(5)}
                   </span>
                 </th>
               ))}
