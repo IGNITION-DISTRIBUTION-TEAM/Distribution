@@ -17,6 +17,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react"
 import { useAuth } from "@/lib/auth-context"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -84,6 +85,14 @@ export type DepartmentShellProps = {
   headerActions?: ReactNode
   /** Default true: children sit in a p-6 wrapper. False hands them the raw scroll region. */
   padded?: boolean
+  /**
+   * Fade the content region in on each nav change. Default true.
+   *
+   * The fade needs a `key` to re-run, and a key remounts children — so pass
+   * false for a department that keeps a section mounted across nav changes.
+   * Task Automation does; see its call site.
+   */
+  animateContent?: boolean
   children: ReactNode
 }
 
@@ -96,6 +105,7 @@ export function DepartmentShell({
   title,
   headerActions,
   padded = true,
+  animateContent = true,
   children,
 }: DepartmentShellProps) {
   const { user, logout } = useAuth()
@@ -186,7 +196,19 @@ export function DepartmentShell({
         </header>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
-          {padded ? <div className="min-w-0 p-6">{children}</div> : children}
+          {padded ? (
+            <div
+              key={animateContent ? activeId : undefined}
+              className={cn(
+                "min-w-0 p-6",
+                animateContent && "animate-in fade-in-0 slide-in-from-bottom-1 duration-200 ease-out",
+              )}
+            >
+              {children}
+            </div>
+          ) : (
+            children
+          )}
         </div>
       </SidebarInset>
     </SidebarProvider>

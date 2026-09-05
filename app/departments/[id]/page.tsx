@@ -38,7 +38,7 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
 
   if (!isDepartmentId(id) || !allowed) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center animate-in fade-in-0 duration-200 ease-out">
         <h1 className="text-xl font-semibold text-foreground">
           {isDepartmentId(id) ? "You don't have access to this department" : "Unknown department"}
         </h1>

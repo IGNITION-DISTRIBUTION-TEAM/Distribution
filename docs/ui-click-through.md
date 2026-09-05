@@ -92,6 +92,34 @@ Run with DevTools → Network → **Slow 3G** so the loading frame is visible.
 Kept as spinners on purpose: buttons ("Saving…", "Uploading…") and the disabled
 campaign / job-title dropdown triggers that read "Loading campaigns…".
 
+## Motion (added with the animation release)
+
+The system is four class strings and one chart constant, all documented in
+`lib/motion.ts`. Restrained on purpose: 150ms for hover, 200ms for content,
+4px maximum travel, no stagger. `scripts/check-ui-consistency.mjs` fails
+`npm test` if something slower or larger creeps in.
+
+| # | Step | Expected | OK? |
+|---|---|---|---|
+| M1 | OS **Reduce motion** on, then use the app | Dialogs and dropdowns open instantly, skeletons are solid grey, content does not fade. **Spinners still turn**, slower — deliberate, they are the only in-flight signal and several replace a button's label | |
+| M2 | Hover a sidebar nav item | The background eases in over 200ms. It used to snap — only size properties were transitioned | |
+| M3 | Collapse the sidebar (Cmd/Ctrl+B) | The group label ("Processes", "Options") **fades** as the panel narrows rather than vanishing — a one-word typo fix upstream had as `opa` | |
+| M4 | Hover a department tile on the picker | Border, background and the icon chip all change together. The chip used to snap while the tile faded | |
+| M5 | Switch nav on Distribution, Tickets, Reporting, EngAIge, Spot, Spot Report | Content fades in over 200ms with a ~4px rise. The **header title does not move** — one moving region per interaction | |
+| M6 | **Task Automation: Create → Current jobs → Create** | **No fade** — expected and deliberate. Then: start a job in the wizard, switch away, switch back — **the config is still there.** The fade is keyed on the nav id and a key would remount the wizard | |
+| M7 | Scroll to the bottom of a long page, then switch nav | You land at the top of the new section with no jump-then-settle | |
+| M8 | Open a Spot Report cold | Skeleton, then the page fades in. Series draw once, ~350ms — not Recharts' 1.5s default | |
+| M9 | Change a filter or press Reload on a report | Data stays on screen; one redraw at 350ms | |
+| M10 | **Leave Task Automation → Tasks open for 90 seconds** | The chart **must not re-animate.** That page ticks every 60s to recompute next-run times; the chart's data is set only by the fetch, so it should be untouched | |
+| M11 | Login → picker → a department | Each fades in. **The loading bar does not** — its whole job is to be on screen immediately | |
+| M12 | Hover a table row while data lands | The hover must not stutter. Skeleton rows deliberately have no fade for this reason | |
+| M13 | Drag a file over an upload dropzone | The border colour eases rather than snapping, and keeps up with dragenter/dragleave | |
+
+Deliberately not animated: cards, stat tiles and chart cards (not interactive —
+a hover state there promises a click that never comes), button press states,
+and the Spot Report iframe (it renders blank white until load, so a fade would
+only draw the eye to the blank).
+
 ## Known and deliberate
 
 - EngAIge still uses emoji status glyphs (✅ ⏳ ❌ ⏹️ ❔ 🟢 🔴). Left by decision.
@@ -101,5 +129,11 @@ campaign / job-title dropdown triggers that read "Loading campaigns…".
   `app/api/task-automation/sftp/inspect`.
 - `lib/snowflake.ts` falls back to `ACCOUNTADMIN` when `SNOWFLAKE_ROLE` is
   unset. Confirm the production value via `/api/distribution/snowflake-identity`.
+- The mobile sidebar opens in 500ms and closes in 300ms (it goes through
+  `ui/sheet.tsx`) while the desktop one collapses in 200ms. Left alone —
+  changing the sheet timings moves every dialog-adjacent surface in the app.
+- `ui/input-otp.tsx` references an `animate-caret-blink` class that is defined
+  nowhere. Pre-existing dead class; left dead on purpose, so nobody turns it
+  into a blinking caret while adding animation.
 - The Azure callback fails **open** to all departments if the grants lookup
   throws; the session cookie is unsigned JSON. Both predate this work.

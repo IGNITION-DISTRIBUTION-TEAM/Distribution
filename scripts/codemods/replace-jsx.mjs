@@ -33,6 +33,11 @@ const RULES = [
   { tag: "h3", className: "font-medium text-foreground", to: "SectionHeading", attrs: "", imp: HEADING("SectionHeading") },
   { tag: "div", className: ERROR_BANNER, to: "Banner", attrs: ' tone="error"', imp: BANNER, dropIcon: "AlertCircle" },
   { tag: "div", className: `m-6 ${ERROR_BANNER}`, to: "Banner", attrs: ' tone="error" className="m-6"', imp: BANNER, dropIcon: "AlertCircle" },
+  // The Spot Report page root. Carries the skeleton→content fade; see
+  // components/kit/page.tsx. NOT safe on a file where the same string also
+  // wraps a skeleton/error/empty branch — spot-report-scorecards.tsx does, and
+  // is excluded.
+  { tag: "div", className: "flex flex-col gap-5 p-6", to: "ReportPage", attrs: "", imp: { name: "ReportPage", from: "@/components/kit/page" }, extraAttrs: true },
   // The p-3 / rounded-md family used inside Distribution and its Daily Files
   // panels. No icon child to drop; Banner supplies one.
   { tag: "div", className: "rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300", to: "Banner", attrs: ' tone="error"', imp: BANNER },

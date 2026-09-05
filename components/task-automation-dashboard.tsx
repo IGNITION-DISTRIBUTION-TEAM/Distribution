@@ -84,6 +84,10 @@ export function TaskAutomationDashboard({ onBack }: { onBack?: () => void }) {
       activeId={activeNav}
       onNavigate={setActiveNav}
       onBack={onBack}
+      // No content fade here. The fade is keyed on the active nav id, and a key
+      // remounts children — which would throw away a half-built job in the
+      // always-mounted wizard below. A missing 200ms fade is the cheaper loss.
+      animateContent={false}
     >
       {/* Mounted always, hidden when another section is showing — see the
           note at the top of this file. A direct child of the shell's padded

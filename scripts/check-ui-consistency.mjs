@@ -29,6 +29,8 @@ const ALLOW = new Set([
   "components/kit/skeleton.tsx",
   "components/ui/skeleton.tsx",
   "components/app-loading.tsx",
+  "components/kit/page.tsx",
+  "lib/motion.ts",
 ])
 
 /**
@@ -107,6 +109,39 @@ const RULES = [
     name: "hand-rolled skeleton (import from @/components/kit/skeleton)",
     re: /className="[^"]*\banimate-pulse\b/g,
   },
+  // ---- motion: restrained means restrained ----
+  // components/ui/ is vendored shadcn/Radix. It legitimately carries
+  // duration-300/500 and zoom-in-95, and normalising it is a separate
+  // decision — so the motion rules skip that directory by prefix rather than
+  // adding eleven ALLOW entries, which would exempt those files from every
+  // other rule too.
+  {
+    name: "scale on hover/press (motion is colour and opacity only — see lib/motion.ts)",
+    re: /\b(?:hover|active|focus|group-hover):scale-/g,
+  },
+  {
+    name: "animation slower than 200ms (the system is 150–200ms; charts are the one exception, in lib/motion.ts)",
+    re: /\bduration-(?:2[5-9]\d|[3-9]\d\d|1000|\[)/g,
+    skipPrefix: "components/ui/",
+  },
+  {
+    name: "delay-* (no stagger: animate-in has no fill-mode, so a delayed element flashes)",
+    re: /\bdelay-\d/g,
+    skipPrefix: "components/ui/",
+  },
+  {
+    name: "animate-in with no explicit duration (it silently defaults to 150ms)",
+    re: /\banimate-in\b(?![^"'`]*\bduration-)/g,
+    skipPrefix: "components/ui/",
+  },
+  {
+    name: "raw isAnimationActive (spread {...chartMotion} from useChartMotion)",
+    re: /isAnimationActive=\{/g,
+  },
+  {
+    name: "hand-rolled report page root (use <ReportPage>)",
+    re: /className="flex flex-col gap-5 p-6"/g,
+  },
 ]
 
 function* walk(dir) {
@@ -125,6 +160,7 @@ for (const root of ROOTS) {
     const src = readFileSync(file, "utf8")
     for (const rule of RULES) {
       if (rule.allowIn?.includes(rel)) continue
+      if (rule.skipPrefix && rel.startsWith(rule.skipPrefix)) continue
       const found = [...src.matchAll(rule.re)].filter((m) => !(rule.unless && rule.unless(src, m.index)))
       if (found.length) {
         hits += found.length
