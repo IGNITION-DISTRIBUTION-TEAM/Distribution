@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireAuthenticated } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -7,7 +8,10 @@ const SAFE_IDENT = /^[A-Z0-9_]+$/i
 
 type Body = { table?: unknown }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireAuthenticated(request)
+  if (guard instanceof NextResponse) return guard
+
   let body: Body
   try {
     body = await request.json()

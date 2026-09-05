@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -8,7 +9,10 @@ type CampaignRow = {
   TITLE: string | null
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   try {
     const rows = await executeSnowflakeQuery<CampaignRow>(
       `SELECT CAMPAIGNID, TITLE

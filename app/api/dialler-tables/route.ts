@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -32,7 +33,10 @@ export function validateTableIndex(raw: unknown): number | { error: string } {
   return n
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   try {
     const rows = await executeSnowflakeQuery<DiallerTableRow>(
       `SELECT TABLE_INDEX, TABLE_NAME, CREATED_AT FROM ${TABLE} ORDER BY TABLE_INDEX`,
@@ -46,7 +50,10 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: { tableIndex?: unknown; tableName?: unknown }
   try {
     body = await request.json()

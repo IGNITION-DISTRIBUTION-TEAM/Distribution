@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { normLeadExpiryDays, batchNameSql, DEFAULT_BATCH_TEMPLATE } from "@/lib/hll-insert"
 
@@ -261,7 +262,10 @@ export function getActorEmail(request: NextRequest): string | null {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   try {
     const rows = await executeSnowflakeQuery<Record<string, unknown>>(
       `SELECT * FROM ${TABLE} ORDER BY CAMPAIGNID`,
@@ -354,6 +358,9 @@ async function ensureConfigColumns(): Promise<Set<string>> {
 
 // Upsert (insert or update) a campaign's config row, keyed by CAMPAIGNID.
 export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

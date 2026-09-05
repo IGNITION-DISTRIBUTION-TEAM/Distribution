@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { readCampaignSetting } from "@/lib/config-lookup"
 
@@ -93,7 +94,10 @@ async function readGrouped(
 
 // Compare the stage table row count against the HLL (main) table for this
 // campaign loaded today. Stage table is read from the campaign config.
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: { campaignId?: unknown; configId?: unknown }
   try {
     body = await request.json()

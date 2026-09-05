@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -6,7 +7,10 @@ export const dynamic = "force-dynamic"
 const VIEW = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_DIALLER_STATS"
 const SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   try {
     const rows = await executeSnowflakeQuery<{ V: string | null }>(
       `SELECT DISTINCT CALL_STATUS AS V

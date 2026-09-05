@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -12,7 +13,10 @@ type AggRow = {
   CNT: number | string
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { searchParams } = new URL(request.url)
   const daysRaw = searchParams.get("days") ?? "30"
   const days = parseInt(daysRaw, 10)

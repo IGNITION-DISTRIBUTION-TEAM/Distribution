@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { TABLE, SF_OPTS } from "../route"
 
@@ -9,7 +10,10 @@ function parseCampaignId(raw: string): number | { error: string } {
   return Number(raw)
 }
 
-export async function GET(_request: Request, { params }: { params: Promise<{ campaignId: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ campaignId: string }> }) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { campaignId } = await params
   const id = parseCampaignId(campaignId)
   if (typeof id !== "number") return NextResponse.json(id, { status: 400 })
@@ -39,7 +43,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cam
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ campaignId: string }> }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ campaignId: string }> }) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { campaignId } = await params
   const id = parseCampaignId(campaignId)
   if (typeof id !== "number") return NextResponse.json(id, { status: 400 })

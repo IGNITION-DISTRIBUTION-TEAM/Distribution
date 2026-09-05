@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   executeSnowflakeQuery,
   executeSnowflakeQueryWithMeta,
@@ -10,7 +11,10 @@ export const dynamic = "force-dynamic"
 const TABLE = "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.SYNC_LEAD_TRACKING"
 const SF_OPTS = { database: "DATAWAREHOUSE", schema: "DISTRIBUTION_AUTOMATION" } as const
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { searchParams } = new URL(request.url)
   const date = searchParams.get("date")
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { readCampaignSetting, asList } from "@/lib/config-lookup"
 import {
@@ -16,7 +17,10 @@ export const maxDuration = 120
 // The proc is either the campaign's assigned UPDATE_HLL_PROCEDURE or an
 // override passed in the body — but either way it MUST exist in the
 // TSK_HLL_UPDATE_PROCEDURES master list, so we never CALL an arbitrary proc.
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: { campaignId?: unknown; procOverride?: unknown; configId?: unknown }
   try {
     body = await request.json()

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -39,7 +40,10 @@ export function validateProcIndex(raw: unknown): number | { error: string } {
   return n
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   try {
     const rows = await executeSnowflakeQuery<HllProcRow>(
       `SELECT PROC_INDEX, PROC_NAME, CREATED_AT FROM ${TABLE} ORDER BY PROC_INDEX`,
@@ -53,7 +57,10 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: { procIndex?: unknown; procName?: unknown }
   try {
     body = await request.json()

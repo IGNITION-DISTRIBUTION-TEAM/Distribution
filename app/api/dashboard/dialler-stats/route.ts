@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 
 export const dynamic = "force-dynamic"
@@ -10,7 +11,10 @@ function escSql(s: string): string {
   return s.replace(/'/g, "''")
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { searchParams } = new URL(request.url)
   const namesRaw = searchParams.get("campaignNames")
   const startDate = searchParams.get("startDate")

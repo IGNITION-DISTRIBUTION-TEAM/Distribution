@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import {
   executeSnowflakeQueryWithMeta,
   formatSnowflakeRows,
@@ -28,7 +29,10 @@ const SS_VIEW = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_EXPIRED_SS_CHECKS"
 // idnumber and cellnumber are digit strings — reject anything else as a safety net.
 const SAFE_VALUE = /^[0-9A-Za-z]{1,32}$/
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: Body
   try {
     body = await request.json()

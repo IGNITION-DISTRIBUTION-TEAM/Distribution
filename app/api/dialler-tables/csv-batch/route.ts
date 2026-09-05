@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import JSZip from "jszip"
 import { validateTableIndex } from "../route"
 import { buildDiallerCsv, DiallerCsvError } from "@/lib/dialler-csv"
@@ -9,7 +10,10 @@ export const maxDuration = 300
 
 type Body = { indices?: unknown }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: Body
   try {
     body = await request.json()

@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { TABLE, SF_OPTS, escapeSqlString, validateProcIndex, validateProcName } from "../route"
 
 export const dynamic = "force-dynamic"
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ index: string }> }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ index: string }> }) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { index } = await params
   const currentIdx = validateProcIndex(index)
   if (typeof currentIdx !== "number") return NextResponse.json(currentIdx, { status: 400 })
@@ -47,7 +51,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ in
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ index: string }> }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ index: string }> }) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { index } = await params
   const idx = validateProcIndex(index)
   if (typeof idx !== "number") return NextResponse.json(idx, { status: 400 })

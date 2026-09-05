@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import SftpClient from "ssh2-sftp-client"
 
 export const dynamic = "force-dynamic"
@@ -14,7 +15,10 @@ type Body = {
   path?: string
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: Body
   try {
     body = await request.json()

@@ -1,13 +1,15 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { validateTableIndex } from "../../route"
 import { buildDiallerCsv, DiallerCsvError } from "@/lib/dialler-csv"
 
 export const dynamic = "force-dynamic"
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ index: string }> }
-) {
+export async function GET(request: NextRequest,
+  { params }: { params: Promise<{ index: string }> }) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   const { index } = await params
   const idx = validateTableIndex(index)
   if (typeof idx !== "number") return NextResponse.json(idx, { status: 400 })

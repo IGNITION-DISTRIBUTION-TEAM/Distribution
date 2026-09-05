@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { readCampaignSetting } from "@/lib/config-lookup"
 
@@ -11,7 +12,10 @@ const QUALIFIED = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // Run the campaign's configured "Load into history" procedure (stage -> HLL).
 // The proc name is read from the campaign config rather than the request body,
 // so a caller can't ask us to CALL an arbitrary procedure.
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireDepartmentAccess(request, "distribution")
+  if (guard instanceof NextResponse) return guard
+
   let body: { campaignId?: unknown; configId?: unknown }
   try {
     body = await request.json()
