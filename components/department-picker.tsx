@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { BarChart3, Briefcase, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
@@ -145,9 +146,9 @@ export function DepartmentPicker({
         </div>
 
         {visibleDepartments.length === 0 && (
-          <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+          <Card padding="none" className="border-dashed p-10 text-center text-sm text-muted-foreground">
             You don&apos;t have access to any departments yet. Contact an administrator.
-          </div>
+          </Card>
         )}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

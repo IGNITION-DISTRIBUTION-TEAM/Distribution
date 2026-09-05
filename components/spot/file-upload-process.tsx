@@ -28,12 +28,13 @@ import {
   Upload,
   FileSpreadsheet,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
   X,
   History,
 } from "lucide-react"
 import { fqTable, type SpotUploadProcess } from "@/lib/spot-uploads"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 type UploadResult = {
   table?: string
@@ -144,7 +145,7 @@ export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">{process.label}</h2>
+        <PageHeading>{process.label}</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           {process.description} Upload an Excel (.xlsx/.xls) or CSV file.{" "}
           <span className="text-foreground">
@@ -259,18 +260,14 @@ export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
       </AlertDialog>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <Banner tone="error">
           <span className="break-words">{error}</span>
-        </div>
+        </Banner>
       )}
 
       {result && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm">
-          <div className="flex items-center gap-2 text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span className="font-medium">Load complete</span>
-          </div>
+        <Banner tone="success">
+          <p className="font-medium">Load complete</p>
           <ul className="mt-2 space-y-1 text-muted-foreground">
             <li>
               Table: <code className="text-xs">{result.table ?? table}</code>
@@ -286,7 +283,7 @@ export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
               <li>Columns: {result.columns.join(", ")}</li>
             )}
           </ul>
-        </div>
+        </Banner>
       )}
 
       <div className="mt-2">
@@ -295,42 +292,42 @@ export function FileUploadProcess({ process }: { process: SpotUploadProcess }) {
           <h3 className="text-sm font-semibold text-foreground">Last 10 files loaded</h3>
         </div>
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">File</th>
-                <th className="px-3 py-2 font-medium">Rows loaded</th>
-                <th className="px-3 py-2 font-medium">Rows replaced</th>
-                <th className="px-3 py-2 font-medium">Uploaded by</th>
-                <th className="px-3 py-2 font-medium">When</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>File</TableHead>
+                <TableHead>Rows loaded</TableHead>
+                <TableHead>Rows replaced</TableHead>
+                <TableHead>Uploaded by</TableHead>
+                <TableHead>When</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {historyLoading ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : history.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     No files loaded yet.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 history.map((h, i) => (
-                  <tr key={i} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2 text-foreground">{h.fileName}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.rowsLoaded}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.rowsReplaced}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedBy}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedAt}</td>
-                  </tr>
+                  <TableRow key={i}>
+                    <TableCell className="text-foreground">{h.fileName}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.rowsLoaded}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.rowsReplaced}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.uploadedBy}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.uploadedAt}</TableCell>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
     </div>

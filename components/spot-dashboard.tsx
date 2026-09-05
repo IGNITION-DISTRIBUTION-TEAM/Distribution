@@ -1,38 +1,21 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
-import {
-  ArrowLeft,
-  LogOut,
   Target,
   Upload,
   FileSpreadsheet,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
   X,
   History,
 } from "lucide-react"
+import { DepartmentShell } from "@/components/department-shell"
 import { FileUploadProcess } from "@/components/spot/file-upload-process"
 import { SPOT_UPLOADS, getSpotUpload } from "@/lib/spot-uploads"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 const ARPU_TABLE = "SPOT_DW.SPOT_SFTP.ARPU_DASHBOARD_FEES"
 
@@ -153,7 +136,7 @@ function ArpuFileContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">ARPU File</h2>
+        <PageHeading>ARPU File</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Upload an Excel (.xlsx/.xls) or CSV file. Its rows are loaded into{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">{ARPU_TABLE}</code>. Columns are
@@ -233,18 +216,14 @@ function ArpuFileContent() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <Banner tone="error">
           <span className="break-words">{error}</span>
-        </div>
+        </Banner>
       )}
 
       {result && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm">
-          <div className="flex items-center gap-2 text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span className="font-medium">Upload complete</span>
-          </div>
+        <Banner tone="success">
+          <p className="font-medium">Upload complete</p>
           <ul className="mt-2 space-y-1 text-muted-foreground">
             <li>Table: <code className="text-xs">{result.table ?? ARPU_TABLE}</code></li>
             {typeof result.rowsParsed === "number" && <li>Rows parsed: {result.rowsParsed}</li>}
@@ -253,7 +232,7 @@ function ArpuFileContent() {
               <li>Columns: {result.columns.join(", ")}</li>
             )}
           </ul>
-        </div>
+        </Banner>
       )}
 
       <div className="mt-2">
@@ -262,44 +241,44 @@ function ArpuFileContent() {
           <h3 className="text-sm font-semibold text-foreground">Last 10 files loaded</h3>
         </div>
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">File</th>
-                <th className="px-3 py-2 font-medium">Rows merged</th>
-                <th className="px-3 py-2 font-medium">Inserted</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="px-3 py-2 font-medium">Uploaded by</th>
-                <th className="px-3 py-2 font-medium">When</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>File</TableHead>
+                <TableHead>Rows merged</TableHead>
+                <TableHead>Inserted</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead>Uploaded by</TableHead>
+                <TableHead>When</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {historyLoading ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : history.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">
                     No files loaded yet.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 history.map((h, i) => (
-                  <tr key={i} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2 text-foreground">{h.fileName}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.rowsMerged}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.inserted}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.updated}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedBy}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{h.uploadedAt}</td>
-                  </tr>
+                  <TableRow key={i}>
+                    <TableCell className="text-foreground">{h.fileName}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.rowsMerged}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.inserted}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.updated}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.uploadedBy}</TableCell>
+                    <TableCell className="text-muted-foreground">{h.uploadedAt}</TableCell>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
     </div>
@@ -307,7 +286,6 @@ function ArpuFileContent() {
 }
 
 export function SpotDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
   const [activeNav, setActiveNav] = useState("arpu-file")
 
   const renderContent = () => {
@@ -324,89 +302,14 @@ export function SpotDashboard({ onBack }: { onBack?: () => void }) {
   }
 
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <Target className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">Spot</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Processes</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      onClick={() => setActiveNav(item.id)}
-                      isActive={activeNav === item.id}
-                      tooltip={item.label}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <span className="text-sm font-medium text-muted-foreground">Spot Department</span>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-auto min-w-0">
-          <div className="min-w-0 p-6">{renderContent()}</div>
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <DepartmentShell
+      brand={{ icon: <Target />, label: "Spot" }}
+      nav={[{ id: "processes", label: "Processes", items: navItems }]}
+      activeId={activeNav}
+      onNavigate={setActiveNav}
+      onBack={onBack}
+    >
+      {renderContent()}
+    </DepartmentShell>
   )
 }

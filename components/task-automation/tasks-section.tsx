@@ -43,6 +43,9 @@ import { cn } from "@/lib/utils"
 import { StatTile } from "@/components/spot-report-kit"
 import { describeCron, formatWallClock, nextRuns, parseCron, zonedNow } from "@/lib/cron-schedule"
 import type { SyncConfig } from "@/lib/sftp-sync-codegen"
+import { PageHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Banner } from "@/components/kit/banner"
 
 type Run = {
   syncName: string
@@ -220,7 +223,7 @@ export function TasksSection() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Tasks</h2>
+          <PageHeading>Tasks</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             What is on a schedule, and what the last {days} days of runs moved.
           </p>
@@ -290,14 +293,14 @@ export function TasksSection() {
       )}
 
       {totals && totals.notReporting > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+        <Banner tone="warning">
           {totals.notReporting} sync{totals.notReporting === 1 ? "" : "s"} were built by an older
           generator. They may contribute nothing to the figures above, and they do not check that
           their own load landed — an older sync can report SUCCESS against a target that ended up
           empty. Redeploy them from Current jobs: it is{" "}
           <code className="text-foreground">CREATE OR REPLACE</code> throughout and the task state
           is preserved.
-        </div>
+        </Banner>
       )}
 
       <div className="rounded-lg border border-border bg-card p-4">
@@ -342,46 +345,46 @@ export function TasksSection() {
       <div>
         <h3 className="mb-2 text-sm font-medium text-foreground">On a schedule</h3>
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Sync</th>
-                <th className="px-3 py-2 font-medium">Schedule</th>
-                <th className="px-3 py-2 font-medium">Next run</th>
-                <th className="px-3 py-2 font-medium">Task</th>
-                <th className="px-3 py-2 text-right font-medium">In target</th>
-                <th className="px-3 py-2 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Sync</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead>Next run</TableHead>
+                <TableHead>Task</TableHead>
+                <TableHead className="text-right">In target</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {loading ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : scheduled.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     Nothing scheduled yet.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 scheduled.map((s) => (
-                  <tr key={s.config.syncName} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2 font-medium text-foreground">{s.config.syncName}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{s.schedule}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground" title="Worked out by this app, not by Snowflake.">
+                  <TableRow key={s.config.syncName}>
+                    <TableCell className="font-medium text-foreground">{s.config.syncName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{s.schedule}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground" title="Worked out by this app, not by Snowflake.">
                       {s.taskState?.toLowerCase() === "started" ? s.next : "— (suspended)"}
-                    </td>
-                    <td className="px-3 py-2 text-xs">
+                    </TableCell>
+                    <TableCell className="text-xs">
                       <span className={s.taskState?.toLowerCase() === "started" ? "text-emerald-300" : "text-muted-foreground"}>
                         {s.taskState ?? "not visible"}
                       </span>
-                    </td>
+                    </TableCell>
                     {/* A scheduled sync reporting NO_CHANGE at an EMPTY table is
                         the state that looks healthy and delivers nothing. */}
-                    <td className="px-3 py-2 text-right font-mono text-xs">
+                    <TableCell className="text-right font-mono text-xs">
                       <span className={cn(targetRows[s.config.syncName] === 0 ? "text-rose-300" : "text-muted-foreground")}>
                         {targetRows[s.config.syncName] != null
                           ? targetRows[s.config.syncName].toLocaleString()
@@ -390,8 +393,8 @@ export function TasksSection() {
                       {targetRows[s.config.syncName] === 0 && (
                         <p className="text-[10px] text-rose-300">empty</p>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
+                    </TableCell>
+                    <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
@@ -443,14 +446,14 @@ export function TasksSection() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
               {scheduled.map((s) =>
                 editing === s.config.syncName ? (
-                  <tr key={`${s.config.syncName}-edit`} className="border-b border-border bg-muted/20">
-                    <td colSpan={6} className="px-3 py-4">
+                  <TableRow key={`${s.config.syncName}-edit`} className="bg-muted/20">
+                    <TableCell colSpan={6} className="py-4">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-sm font-medium text-foreground">
                           Schedule for {s.config.syncName}
@@ -478,12 +481,12 @@ export function TasksSection() {
                           it is suspended, changed, and put back the way it was found.
                         </p>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ) : null
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
 

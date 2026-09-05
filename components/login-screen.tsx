@@ -1,5 +1,8 @@
 "use client"
 
+import { Loader2 } from "lucide-react"
+import { Card } from "@/components/ui/card"
+import { Banner } from "@/components/kit/banner"
 import { useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -85,7 +88,7 @@ export function LoginScreen() {
           />
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-8 shadow-2xl shadow-black/20">
+        <Card padding="none" className="p-8 shadow-2xl shadow-black/20">
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-semibold text-foreground">Welcome back</h1>
             <p className="mt-2 text-sm text-muted-foreground">
@@ -94,12 +97,12 @@ export function LoginScreen() {
           </div>
 
           {error && (
-            <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <Banner tone="error" className="mb-4">
               {error}
               {errorDetail && (
                 <p className="mt-1 break-words font-mono text-xs opacity-80">{errorDetail}</p>
               )}
-            </div>
+            </Banner>
           )}
 
           <Button
@@ -111,7 +114,7 @@ export function LoginScreen() {
           >
             {isAzureLoading ? (
               <>
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-foreground/30 border-t-foreground" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 <span>Connecting...</span>
               </>
             ) : (
@@ -131,7 +134,7 @@ export function LoginScreen() {
           <p className="mt-6 text-center text-xs text-muted-foreground">
             Access is restricted to authorised Ignition Group employees.
           </p>
-        </div>
+        </Card>
       </div>
     </div>
   )

@@ -28,6 +28,9 @@ import { cn } from "@/lib/utils"
 import { parseCron, describeCron } from "@/lib/cron-schedule"
 import { objectNames } from "@/lib/sftp-sync-codegen"
 import type { SyncConfig } from "@/lib/sftp-sync-codegen"
+import { PageHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Banner } from "@/components/kit/banner"
 
 type SyncRow = {
   config: SyncConfig
@@ -255,7 +258,7 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Current jobs</h2>
+          <PageHeading>Current jobs</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             Every sync this app has created. Open one to change its mapping or schedule and
             redeploy it.
@@ -278,42 +281,38 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
       )}
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Sync</th>
-              <th className="px-3 py-2 font-medium">Source</th>
-              <th className="px-3 py-2 font-medium">Target</th>
-              <th className="px-3 py-2 font-medium">Schedule</th>
-              <th className="px-3 py-2 font-medium">Task</th>
-              <th className="px-3 py-2 font-medium">Last run</th>
-              <th className="px-3 py-2 text-right font-medium">Rows</th>
-              <th className="px-3 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Sync</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead>Target</TableHead>
+              <TableHead>Schedule</TableHead>
+              <TableHead>Task</TableHead>
+              <TableHead>Last run</TableHead>
+              <TableHead className="text-right">Rows</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   No jobs yet. Create one under Create job — it appears here once it deploys.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               rows.map((r) => (
-                <tr
-                  key={r.config.syncName}
-                  className={cn(
-                    "border-b border-border last:border-0 align-top",
-                    (r.targetMissing || (r.consecutiveFailures ?? 0) > 0) && "bg-rose-500/5"
+                <TableRow key={r.config.syncName} className={cn( "border-b border-border last:border-0 align-top", (r.targetMissing || (r.consecutiveFailures ?? 0)> 0) && "bg-rose-500/5"
                   )}
                 >
-                  <td className="px-3 py-2">
+                  <TableCell>
                     <span className="font-medium text-foreground">{r.config.syncName}</span>
                     {r.targetHealth === "missing" && (
                       <span
@@ -361,20 +360,20 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                     <p className="text-xs text-muted-foreground">
                       {r.deployedBy ? `by ${r.deployedBy}` : "—"}
                     </p>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
                     {r.config.endpoint}:{r.config.remoteDir}/{r.config.filePattern}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
                     {r.config.targetTable}
                     <span className="ml-1 text-[10px] uppercase">
                       {r.config.loadMode === "merge" ? "merge" : "replace"}
                     </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {scheduleText(r.config.scheduleCron)}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
+                  </TableCell>
+                  <TableCell className="text-xs">
                     {r.taskState ? (
                       <span
                         className={
@@ -388,12 +387,12 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                         not visible
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {controlValue(r.control, "STATUS")}
                     <p className="text-[10px]">{controlValue(r.control, "LAST_SYNCED")}</p>
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs">
                     <span className={cn(
                       r.targetRowCount === 0 && Number(r.control?.ROW_COUNT ?? 0) > 0
                         ? "text-rose-300"
@@ -411,8 +410,8 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                           last run said {Number(r.control.ROW_COUNT).toLocaleString()}
                         </p>
                       )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  </TableCell>
+                  <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       {r.canCreateTarget && (
                         <Button
@@ -495,22 +494,22 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {rows.some((r) => r.targetMissing && !r.canCreateTarget) && (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+        <Banner tone="warning">
           A job whose target is missing but which was set up against an{" "}
           <em>existing</em> table has no Create button: it stored placeholder column types rather
           than the real ones, so building the table from them would give you something that loads
           quietly and holds the wrong types. Open the job, switch Destination to &ldquo;Create a
           new table&rdquo;, choose the types and deploy again.
-        </p>
+        </Banner>
       )}
 
       {showSql !== null && (
@@ -538,28 +537,28 @@ export function CurrentJobsSection({ onOpen }: { onOpen: (config: SyncConfig) =>
             not misleadingly short.
           </p>
           <div className="mt-2 overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Last synced</th>
-                  <th className="px-3 py-2 text-right font-medium">Rows</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last synced</TableHead>
+                  <TableHead className="text-right">Rows</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {foreign.map((f) => (
-                  <tr key={f.syncName} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{f.syncName}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{controlValue(f.control, "STATUS")}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{controlValue(f.control, "LAST_SYNCED")}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                  <TableRow key={f.syncName}>
+                    <TableCell className="font-mono text-xs text-foreground">{f.syncName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{controlValue(f.control, "STATUS")}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{controlValue(f.control, "LAST_SYNCED")}</TableCell>
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">
                       {f.control?.ROW_COUNT != null ? Number(f.control.ROW_COUNT).toLocaleString() : "—"}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </div>
       )}

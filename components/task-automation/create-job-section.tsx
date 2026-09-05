@@ -50,6 +50,8 @@ import {
   type TargetColumn,
   type Delimiter,
 } from "@/lib/column-mapping"
+import { Card } from "@/components/ui/card"
+import { Banner } from "@/components/kit/banner"
 
 type SftpEndpoint = { name: string; label: string; allowedRoot: string; enabled: boolean }
 type TestLoadResult = {
@@ -822,7 +824,7 @@ export function CreateJobSection({
           </div>
         </div>
       )}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-4 flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
             1
@@ -999,10 +1001,10 @@ export function CreateJobSection({
             )}
           </>
         )}
-      </div>
+      </Card>
 
       {selected && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               2
@@ -1062,11 +1064,11 @@ export function CreateJobSection({
               </p>
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {selected && sourceHeaders.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               3
@@ -1246,11 +1248,11 @@ export function CreateJobSection({
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {selected && targetColumns.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               4
@@ -1326,11 +1328,11 @@ export function CreateJobSection({
               wrong for a feed that only sends the day&apos;s changes.
             </p>
           )}
-        </div>
+        </Card>
       )}
 
       {selected && targetColumns.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               5
@@ -1456,11 +1458,11 @@ export function CreateJobSection({
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {selected && targetColumns.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               6
@@ -1517,11 +1519,11 @@ export function CreateJobSection({
           )}
 
           {deployMode === "replace" && (
-            <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
+            <Banner tone="warning" className="mt-4">
               A job called <span className="font-mono text-foreground">{syncName.trim().toUpperCase()}</span>{" "}
               already exists. Deploying replaces its procedure, task and configuration. Pick a
               different name if you meant a new sync.
-            </div>
+            </Banner>
           )}
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1580,11 +1582,11 @@ export function CreateJobSection({
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {deployResult?.deployed && syncTarget && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               7
@@ -1662,7 +1664,7 @@ export function CreateJobSection({
             the account reports into. &quot;Watermark&quot; is the newest file mtime seen; only
             files newer than it are fetched next run.
           </p>
-        </div>
+        </Card>
       )}
     </div>
   )

@@ -41,6 +41,9 @@ import {
   validateEndpoint,
   type EndpointDraft,
 } from "@/lib/sftp-endpoint-sql"
+import { Card } from "@/components/ui/card"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 type Endpoint = {
   name: string
@@ -161,7 +164,7 @@ export function EndpointsSection() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">SFTP endpoints</h2>
+          <PageHeading>SFTP endpoints</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             The servers this app may browse. Host, SFTP user and the pinned host key are held in
             Snowflake and are not shown here — the app has no privilege to read them.
@@ -197,9 +200,9 @@ export function EndpointsSection() {
 
       {/* ---- edit card, above the table ---- */}
       {editing && form && (
-        <div className="rounded-xl border border-border bg-card p-5">
+        <Card padding="dense">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="font-medium text-foreground">Edit {editing.name}</h3>
+            <SectionHeading>Edit {editing.name}</SectionHeading>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(null); setForm(null) }}>
               <X className="mr-2 h-4 w-4" /> Cancel
             </Button>
@@ -261,14 +264,14 @@ export function EndpointsSection() {
               Save changes
             </Button>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* ---- new endpoint: form here, SQL to run there ---- */}
       {creating && (
-        <div className="rounded-xl border border-border bg-card p-5">
+        <Card padding="dense">
           <div className="mb-1 flex items-center justify-between">
-            <h3 className="font-medium text-foreground">New endpoint</h3>
+            <SectionHeading>New endpoint</SectionHeading>
             <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>
               <X className="mr-2 h-4 w-4" /> Close
             </Button>
@@ -392,60 +395,60 @@ export function EndpointsSection() {
               </pre>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* ---- the list ---- */}
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Endpoint</th>
-              <th className="px-3 py-2 font-medium">Browse root</th>
-              <th className="px-3 py-2 font-medium">Caps</th>
-              <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Last change</th>
-              <th className="px-3 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Endpoint</TableHead>
+              <TableHead>Browse root</TableHead>
+              <TableHead>Caps</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last change</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                   No endpoints registered. Use New endpoint to draft one.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               rows.map((e) => (
-                <tr key={e.name} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2">
+                <TableRow key={e.name}>
+                  <TableCell>
                     <p className="font-medium text-foreground">{e.name}</p>
                     <p className="text-xs text-muted-foreground">{e.label}</p>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
                     {e.allowedRoot}
                     <p className="text-[10px]">floor {e.rootFloor}</p>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {e.maxEntries} entries · {e.maxPeekLines} lines ·{" "}
                     {Math.round(e.maxPeekBytes / 1024)} KB
-                  </td>
-                  <td className="px-3 py-2 text-xs">
+                  </TableCell>
+                  <TableCell className="text-xs">
                     <span className={e.enabled ? "text-emerald-300" : "text-rose-300"}>
                       {e.enabled ? "enabled" : "disabled"}
                     </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {e.updatedBy ?? "—"}
                     <p className="text-[10px]">{e.updatedAt ?? ""}</p>
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  </TableCell>
+                  <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(e)} aria-label="Edit" title="Edit">
                         <Pencil className="h-4 w-4" />
@@ -461,12 +464,12 @@ export function EndpointsSection() {
                         <Power className="h-4 w-4" />
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       <p className="text-xs text-muted-foreground">
