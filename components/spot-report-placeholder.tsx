@@ -1,6 +1,7 @@
 "use client"
 
 import { BarChart3, Info } from "lucide-react"
+import { PageHeading } from "@/components/kit/heading"
 
 // App-styled placeholder for reports that have no data source yet (parity with
 // the original static rebuild's placeholder pages, in the portal design).
@@ -21,7 +22,7 @@ export function SpotReportPlaceholder({
     <div className="flex flex-col gap-5 p-6">
       <div>
         <div className="flex items-center gap-2">
-          <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
+          <PageHeading>{title}</PageHeading>
           <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
             ● No data source
           </span>

@@ -9,11 +9,13 @@ import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, CalendarDays, Loader2, RefreshCw } from "lucide-react"
+import { CalendarDays, Loader2, RefreshCw } from "lucide-react"
 import {
   SERIES, axisTick, iso, parseIso, shortDay, fmt,
   StatTile, ChartCard, ChartTip, Legend, MultiSelect, useReportData,
 } from "@/components/spot-report-kit"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type GroupDaily = { date: string; activations: number; active1_pct: number }
 type Payload = { groups: { label: string; daily: GroupDaily[] }[] }
@@ -129,7 +131,7 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
     return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   }
   if (error) {
-    return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>
+    return <Banner tone="error" className="m-6"><span>{error}</span></Banner>
   }
 
   const rangeLabel = range?.from && range?.to ? `${shortDay(iso(range.from))} – ${shortDay(iso(range.to))}` : "All dates"
@@ -140,7 +142,7 @@ export function SpotReportSimActivations({ override }: { override?: Payload } = 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">New SIM Activations &amp; Utilisation</h2>
+            <PageHeading>New SIM Activations &amp; Utilisation</PageHeading>
             <select
               className={selectCls}
               value={partIdx}

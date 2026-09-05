@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react"
+import { CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading } from "@/components/kit/heading"
 
 type Status = { rows: number; deals: number; stages: number; categories: number; lastAt: string | null; lastBy: string | null }
 type Result = {
@@ -73,7 +75,7 @@ export function SpotReportPipelineUpload() {
   return (
     <div className="flex max-w-3xl flex-col gap-5 p-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Pipeline upload</h2>
+        <PageHeading>Pipeline upload</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Upload the BDM pipeline workbook (<span className="font-mono text-xs">Pipeline.xlsx</span>). It&apos;s parsed
           into Snowflake and drives the Pipeline &amp; Provisional Commissions page. The parser finds the stage column by
@@ -142,9 +144,9 @@ export function SpotReportPipelineUpload() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span className="break-words">{error}</span>
-        </div>
+        <Banner tone="error">
+          <span className="break-words">{error}</span>
+        </Banner>
       )}
 
       {result && (

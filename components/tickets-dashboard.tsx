@@ -3,23 +3,10 @@
 import { useState, useCallback, useEffect } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
+import { Separator } from "@/components/ui/separator"
+import { DepartmentShell } from "@/components/department-shell"
+import { Banner } from "@/components/kit/banner"
 import {
   Dialog,
   DialogContent,
@@ -27,26 +14,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import {
-  AlertCircle,
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  BarChart3,
-  Building2,
-  CheckCircle2,
-  ClipboardList,
-  Link as LinkIcon,
-  ListTodo,
-  Loader2,
-  LogOut,
-  Paperclip,
-  Plus,
-  RefreshCw,
-  Settings2,
-  Ticket as TicketIcon,
-  Trash2,
-} from "lucide-react"
+import { ArrowDown, ArrowUp, BarChart3, Building2, CheckCircle2, Link as LinkIcon, ListTodo, Loader2, Paperclip, Plus, RefreshCw, Settings2, Ticket as TicketIcon, Trash2 } from "lucide-react"
 import {
   CartesianGrid,
   Legend,
@@ -68,6 +36,8 @@ import {
   type TicketFormConfig,
   type TicketRow,
 } from "@/lib/tickets-shared"
+import { PageHeading } from "@/components/kit/heading"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -91,14 +61,6 @@ function statusBadgeCls(status: string): string {
   }
 }
 
-function ErrorBox({ message }: { message: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span className="break-words">{message}</span>
-    </div>
-  )
-}
 
 /* ------------------------------- Log a ticket ------------------------------ */
 
@@ -106,7 +68,7 @@ function LogTicketContent() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Log a ticket</h2>
+        <PageHeading>Log a ticket</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Submit a request to the tickets team. Your name and email are attached automatically.
         </p>
@@ -198,7 +160,7 @@ function DepartmentsContent() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Departments</h2>
+        <PageHeading>Departments</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Business departments that log tickets. Each gets its own capture link — share it with
           that team; anyone signed in can use it (no department grant needed). Removing a
@@ -206,7 +168,7 @@ function DepartmentsContent() {
         </p>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
 
       <div className="flex items-center gap-2">
         <input
@@ -222,35 +184,35 @@ function DepartmentsContent() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Department</th>
-              <th className="px-3 py-2 font-medium">Capture link</th>
-              <th className="px-3 py-2 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Department</TableHead>
+              <TableHead>Capture link</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : departments.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
                   No departments yet. Add one above — its capture link appears here.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               departments.map((d) => (
-                <tr key={d.slug} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 font-medium text-foreground">{d.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                <TableRow key={d.slug}>
+                  <TableCell className="font-medium text-foreground">{d.name}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
                     {captureUrl(d.slug)}
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  </TableCell>
+                  <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => copy(d.slug)}>
                       {copiedSlug === d.slug ? (
                         <>
@@ -271,12 +233,12 @@ function DepartmentsContent() {
                     >
                       <Trash2 className="mr-1 h-4 w-4" /> Remove
                     </Button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   )
@@ -404,7 +366,7 @@ function TicketDetailDialog({
             </div>
           </div>
 
-          {error && <ErrorBox message={error} />}
+          {error && <Banner tone="error">{error}</Banner>}
 
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -472,7 +434,7 @@ function TicketsListContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">All tickets</h2>
+        <PageHeading>All tickets</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Newest 200 tickets. Click a row to view details, change status, or assign it.
         </p>
@@ -504,65 +466,63 @@ function TicketsListContent() {
         </Button>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Ref</th>
-              <th className="px-3 py-2 font-medium">Created</th>
-              <th className="px-3 py-2 font-medium">Requestor</th>
-              <th className="px-3 py-2 font-medium">Request type</th>
-              <th className="px-3 py-2 font-medium">Urgency</th>
-              <th className="px-3 py-2 font-medium">SLA due</th>
-              <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Assigned to</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Ref</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Requestor</TableHead>
+              <TableHead>Request type</TableHead>
+              <TableHead>Urgency</TableHead>
+              <TableHead>SLA due</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Assigned to</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : visible.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   No tickets found.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               visible.map((t) => (
-                <tr
-                  key={t.ticketId}
-                  onClick={() => setSelected(t)}
+                <TableRow key={t.ticketId} onClick={() => setSelected(t)}
                   className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/30"
                 >
-                  <td className="px-3 py-2 font-mono text-xs text-foreground">{t.ticketRef}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{t.createdAt ?? "—"}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <TableCell className="font-mono text-xs text-foreground">{t.ticketRef}</TableCell>
+                  <TableCell className="text-muted-foreground">{t.createdAt ?? "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">
                     {t.createdByName || t.createdByEmail || "—"}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">{t.requestType ?? "—"}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{t.urgency ?? "—"}</td>
-                  <td className="px-3 py-2">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{t.requestType ?? "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{t.urgency ?? "—"}</TableCell>
+                  <TableCell>
                     <span className={t.overdue ? "font-medium text-rose-300" : "text-muted-foreground"}>
                       {t.slaDueAt ?? "—"}
                     </span>
-                  </td>
-                  <td className="px-3 py-2">
+                  </TableCell>
+                  <TableCell>
                     <Badge variant="outline" className={statusBadgeCls(t.status)}>
                       {t.status}
                     </Badge>
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">{t.assignedTo ?? "—"}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{t.assignedTo ?? "—"}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {selected && (
@@ -732,24 +692,24 @@ function CountTable({ title, rows }: { title: string; rows: { label: string; cou
       <div className="border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       </div>
-      <table className="w-full text-sm">
-        <tbody>
+      <Table>
+        <TableBody>
           {rows.length === 0 ? (
-            <tr>
-              <td className="px-4 py-4 text-center text-muted-foreground">No data yet.</td>
-            </tr>
+            <TableRow>
+              <TableCell className="px-4 py-4 text-center text-muted-foreground">No data yet.</TableCell>
+            </TableRow>
           ) : (
             rows.map((r) => (
-              <tr key={r.label} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 text-foreground">{r.label}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">
+              <TableRow key={r.label}>
+                <TableCell className="px-4 text-foreground">{r.label}</TableCell>
+                <TableCell className="px-4 text-right font-mono text-muted-foreground">
                   {r.count.toLocaleString()}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))
           )}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   )
 }
@@ -773,7 +733,7 @@ function ReportingContent() {
     load()
   }, [load])
 
-  if (error) return <ErrorBox message={error} />
+  if (error) return <Banner tone="error">{error}</Banner>
   if (!data) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -793,7 +753,7 @@ function ReportingContent() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Reporting</h2>
+          <PageHeading>Reporting</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">Ticket volumes, statuses and SLA.</p>
         </div>
         <Button variant="outline" size="sm" onClick={load}>
@@ -922,18 +882,16 @@ function CustomizeFormContent() {
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Customize form</h2>
+        <PageHeading>Customize form</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Change the fields shown on the &quot;Log a ticket&quot; page. Changes apply to new
           tickets immediately; existing tickets keep the answers they were logged with.
         </p>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
       {saved && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
-          <CheckCircle2 className="h-4 w-4" /> Form saved.
-        </div>
+        <Banner tone="success">Form saved.</Banner>
       )}
 
       {config && (
@@ -1101,19 +1059,15 @@ function CustomizeFormContent() {
 /* --------------------------------- Dashboard ------------------------------- */
 
 export function TicketsDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const [activeNav, setActiveNav] = useState("log")
 
   const navItems = [
     { id: "log", label: "Log a ticket", icon: <Plus className="h-4 w-4" /> },
     { id: "tickets", label: "All tickets", icon: <ListTodo className="h-4 w-4" /> },
     { id: "reporting", label: "Reporting", icon: <BarChart3 className="h-4 w-4" /> },
-    ...(user?.isSuperAdmin
-      ? [
-          { id: "departments", label: "Departments", icon: <Building2 className="h-4 w-4" /> },
-          { id: "customize", label: "Customize form", icon: <Settings2 className="h-4 w-4" /> },
-        ]
-      : []),
+    { id: "departments", label: "Departments", icon: <Building2 className="h-4 w-4" />, adminOnly: true },
+    { id: "customize", label: "Customize form", icon: <Settings2 className="h-4 w-4" />, adminOnly: true },
   ]
 
   const renderContent = () => {
@@ -1132,90 +1086,14 @@ export function TicketsDashboard({ onBack }: { onBack?: () => void }) {
   }
 
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <TicketIcon className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">Tickets</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Tickets</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      onClick={() => setActiveNav(item.id)}
-                      isActive={activeNav === item.id}
-                      tooltip={item.label}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <span className="text-sm font-medium text-muted-foreground">Tickets Department</span>
-          </div>
-          <ClipboardList className="h-5 w-5 text-muted-foreground" />
-        </header>
-
-        <main className="flex-1 overflow-auto min-w-0">
-          <div className="min-w-0 p-6">{renderContent()}</div>
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <DepartmentShell
+      brand={{ icon: <TicketIcon />, label: "Tickets" }}
+      nav={[{ id: "tickets", label: "Tickets", items: navItems }]}
+      activeId={activeNav}
+      onNavigate={setActiveNav}
+      onBack={onBack}
+    >
+      {renderContent()}
+    </DepartmentShell>
   )
 }

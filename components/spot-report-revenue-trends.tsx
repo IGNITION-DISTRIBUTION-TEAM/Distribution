@@ -5,9 +5,11 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, StatTile, ChartCard, ChartTip, Legend, useReportData } from "@/components/spot-report-kit"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type Monthly = { month: string; total: number; cellc: number; voucher: number; app: number; billrun: number; postpaid: number }
 type Payload = { monthly: Monthly[]; tenant_revenue: { tenant: string; revenue: number }[] }
@@ -44,7 +46,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
   const revLive = !!rev
 
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-  if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
+  if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   // Total revenue by month: live income statement when available, else snapshot.
   const totalsSource: { month: string; total: number }[] = revLive
@@ -77,7 +79,7 @@ export function SpotReportRevenueTrends({ override }: { override?: Payload } = {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">Revenue Trends</h2>
+            <PageHeading>Revenue Trends</PageHeading>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${revLive ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
               {revLive ? "● Total live · income statement" : "● Snapshot"}
             </span>

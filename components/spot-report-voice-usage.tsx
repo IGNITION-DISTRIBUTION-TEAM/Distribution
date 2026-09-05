@@ -5,10 +5,12 @@ import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type Row = { tenant: string; month: string; minutes: number; activeUsers: number }
 type Payload = { hasData: boolean; rows: Row[]; months: string[]; dataThrough: string | null; error?: string }
@@ -49,7 +51,7 @@ export function SpotReportVoiceUsage() {
     return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
   }
   if (error) {
-    return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>
+    return <Banner tone="error" className="m-6"><span>{error}</span></Banner>
   }
 
   // No usage returned (view not granted yet, or genuinely empty) → honest placeholder.
@@ -113,7 +115,7 @@ export function SpotReportVoiceUsage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">Voice Usage by Tenant</h2>
+            <PageHeading>Voice Usage by Tenant</PageHeading>
             <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">● Live · Snowflake</span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Voice minutes and active voice users by tenant.</p>

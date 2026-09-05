@@ -2,9 +2,11 @@
 
 import { useMemo } from "react"
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type Payload = { monthly: { month: string; qty: number; value: number }[] }
 const monthLabel = (s: string) => { const [y, m] = s.split("-"); return `${MONTHS[Number(m) - 1]} ${y.slice(2)}` }
@@ -41,7 +43,7 @@ export function SpotReportPrepaidProjection({ override }: { override?: Payload }
     return { qty: build("qty", qtyProj), val: build("value", valProj), lastQty: last.qty, lastVal: last.value }
   }, [data, inRange])
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-  if (error || !data || !m) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
+  if (error || !data || !m) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
   const proj = (title: string, subtitle: string, rows: { month: string; Actual: number | null; Projected: number | null }[], fmtY: (v: number) => string) => (
     <ChartCard title={title} subtitle={subtitle}>
       <ResponsiveContainer width="100%" height={300}>
@@ -61,7 +63,7 @@ export function SpotReportPrepaidProjection({ override }: { override?: Payload }
     <div className="flex flex-col gap-5 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2"><h2 className="text-2xl font-semibold text-foreground">Prepaid Recharge Projection</h2><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span></div>
+          <div className="flex items-center gap-2"><PageHeading>Prepaid Recharge Projection</PageHeading><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span></div>
           <p className="mt-1 text-sm text-muted-foreground">Prepaid recharge volume and revenue, with a 6-month trend projection.</p>
         </div>
         <div className="flex items-center gap-2">

@@ -4,9 +4,11 @@ import { useEffect, useState } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Info, Loader2, RefreshCw } from "lucide-react"
+import { Info, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, axisTick, fmt, StatTile, ChartCard, ChartTip, Legend } from "@/components/spot-report-kit"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading } from "@/components/kit/heading"
 
 type Channel = { channel: string; yesterday: number; last7avg: number }
 
@@ -46,7 +48,7 @@ export function SpotReportOkr() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">OKR Scorecard</h2>
+            <PageHeading>OKR Scorecard</PageHeading>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${live ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
               {live ? "● Subscriptions live · Snowflake" : "● No data"}
             </span>
@@ -76,9 +78,9 @@ export function SpotReportOkr() {
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span>
-        </div>
+        <Banner tone="error">
+          <span>{error}</span>
+        </Banner>
       )}
 
       {channels && channels.length > 0 && (

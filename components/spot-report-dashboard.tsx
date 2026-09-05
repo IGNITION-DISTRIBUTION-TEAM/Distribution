@@ -1,24 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
-import { ArrowLeft, ChevronRight, LogOut, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
+import { DepartmentShell } from "@/components/department-shell"
 import { SpotReportSalesTrends } from "@/components/spot-report-sales-trends"
 import { SpotReportSimActivations } from "@/components/spot-report-sim-activations"
 import { SpotReportExco } from "@/components/spot-report-exco"
@@ -54,6 +39,16 @@ import { SpotReportPlaceholder } from "@/components/spot-report-placeholder"
 // `native` is a key selecting an in-app React page; when unset the page is
 // shown via the static iframe.
 type Report = { label: string; page: string | null; indent?: boolean; header?: boolean; native?: string; adminOnly?: boolean }
+
+/**
+ * A report's identity for the nav. Before this, "which report is active" was
+ * the (label, native, page) triple compared field by field. The native key is
+ * unique where present, the page file where not; an unbuilt report is
+ * identified by its label since it has nothing else.
+ */
+function reportId(r: Report): string {
+  return r.native ?? r.page ?? `soon-${r.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+}
 
 function renderNative(key: string): React.ReactNode {
   switch (key) {
@@ -209,178 +204,89 @@ const SECTIONS: Section[] = [
 const FIRST = SECTIONS[1].items[0] // Sales Trends
 
 export function SpotReportDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
   const [active, setActive] = useState<Report>(FIRST)
   const [reloadKey, setReloadKey] = useState(0)
-  // Collapsible sidebar sections — all collapsed by default.
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set())
-  const toggleSection = (title: string) =>
-    setOpenSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(title)) next.delete(title)
-      else next.add(title)
-      return next
-    })
-
   // Native React pages render in-app; only non-native pages use the iframe.
   const src = active.page && !active.native ? `/spot-report/pages/${active.page}` : null
 
+  // Six sections, all folded by default; the shell opens whichever holds the
+  // active report and hides admin-only items (and a section left empty).
+  const nav = SECTIONS.map((section) => ({
+    id: section.title,
+    label: section.title,
+    collapsible: true,
+    defaultOpen: false,
+    items: section.items.map((item) => ({
+      id: reportId(item),
+      label: item.label,
+      adminOnly: item.adminOnly,
+      disabled: !(item.page || item.native),
+      indent: item.indent,
+      heading: item.header,
+    })),
+  }))
+  const onNavigate = (id: string) => {
+    const item = SECTIONS.flatMap((sec) => sec.items).find((it) => reportId(it) === id)
+    if (item) setActive(item)
+  }
+
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <span className="text-lg font-bold text-foreground">
-              Spot<sup className="text-[10px]">TM</sup>
-            </span>
-            <span className="text-xs text-muted-foreground">Telco Retail</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent className="gap-0.5">
-          {SECTIONS.map((section) => {
-            const visibleItems = section.items.filter((item) => !item.adminOnly || user?.isSuperAdmin)
-            if (visibleItems.length === 0) return null
-            const isOpen = openSections.has(section.title)
-            const hasActive = visibleItems.some(
-              (it) => it.label === active.label && it.native === active.native && it.page === active.page
-            )
-            return (
-            <SidebarGroup key={section.title} className="py-0.5">
-              <button
-                type="button"
-                onClick={() => toggleSection(section.title)}
-                aria-expanded={isOpen}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-              >
-                <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`} />
-                <span className="flex-1 truncate text-left">{section.title}</span>
-                {hasActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
-              </button>
-              {isOpen && (
-              <SidebarGroupContent className="pl-1.5">
-                <SidebarMenu>
-                  {visibleItems
-                    .map((item) =>
-                    item.header ? (
-                      <div
-                        key={item.label}
-                        className="px-2 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                      >
-                        {item.label}
-                      </div>
-                    ) : (
-                      (() => {
-                        // Selectable if it has a static page OR a native React view.
-                        const selectable = !!(item.page || item.native)
-                        return (
-                      <SidebarMenuItem key={item.label}>
-                        <SidebarMenuButton
-                          onClick={() => selectable && setActive(item)}
-                          isActive={active.label === item.label && active.native === item.native && active.page === item.page}
-                          disabled={!selectable}
-                          tooltip={selectable ? item.label : `${item.label} (coming soon)`}
-                          className={[
-                            item.indent ? "pl-6" : "",
-                            selectable ? "" : "opacity-50",
-                          ].join(" ")}
-                        >
-                          <span className="truncate">{item.label}</span>
-                          {!selectable && (
-                            <span className="ml-auto text-[10px] text-muted-foreground">soon</span>
-                          )}
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                        )
-                      })()
-                    )
-                  )}
-                </SidebarMenu>
-              </SidebarGroupContent>
-              )}
-            </SidebarGroup>
-            )
-          })}
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <SidebarTrigger />
-            <span className="truncate text-sm font-medium text-foreground">{active.label}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {src && (
-              <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Reload
-              </Button>
-            )}
-          </div>
-        </header>
-
-        {active.native ? (
-          <div key={active.native} className="min-h-0 flex-1 overflow-auto">
-            {renderNative(active.native)}
-          </div>
-        ) : src ? (
-          <iframe
-            key={`${active.page}-${reloadKey}`}
-            src={src}
-            title={active.label}
-            className="min-h-0 w-full flex-1 border-0 bg-white"
-            onLoad={(e) => {
-              // Same-origin: hide each report's own topbar (Spot logo + "Back to
-              // Menu" that would jump to the static landing) so only the report
-              // content shows under the app header.
-              try {
-                const doc = e.currentTarget.contentDocument
-                if (doc && !doc.getElementById("spot-embed-style")) {
-                  const style = doc.createElement("style")
-                  style.id = "spot-embed-style"
-                  style.textContent = ".topbar{display:none!important;}"
-                  doc.head.appendChild(style)
-                }
-              } catch {
-                // Cross-origin (shouldn't happen) — leave the page as-is.
+    <DepartmentShell
+      brand={{
+        icon: <span className="text-sm font-bold">S</span>,
+        label: (
+          <>
+            Spot<sup className="text-[10px]">TM</sup>
+          </>
+        ),
+        sublabel: "Telco Retail",
+      }}
+      nav={nav}
+      activeId={reportId(active)}
+      onNavigate={onNavigate}
+      onBack={onBack}
+      padded={false}
+      headerActions={
+        src ? (
+          <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Reload
+          </Button>
+        ) : undefined
+      }
+    >
+      {active.native ? (
+        <div key={active.native} className="min-h-0 flex-1 overflow-auto">
+          {renderNative(active.native)}
+        </div>
+      ) : src ? (
+        <iframe
+          key={`${active.page}-${reloadKey}`}
+          src={src}
+          title={active.label}
+          className="min-h-0 w-full flex-1 border-0 bg-white"
+          onLoad={(e) => {
+            // Same-origin: hide each report's own topbar (Spot logo + "Back to
+            // Menu" that would jump to the static landing) so only the report
+            // content shows under the app header.
+            try {
+              const doc = e.currentTarget.contentDocument
+              if (doc && !doc.getElementById("spot-embed-style")) {
+                const style = doc.createElement("style")
+                style.id = "spot-embed-style"
+                style.textContent = ".topbar{display:none!important;}"
+                doc.head.appendChild(style)
               }
-            }}
-          />
-        ) : (
-          <div className="flex flex-1 items-center justify-center p-10 text-center text-sm text-muted-foreground">
-            This report hasn&apos;t been built yet.
-          </div>
-        )}
-      </SidebarInset>
-    </SidebarProvider>
+            } catch {
+              // Cross-origin (shouldn't happen) — leave the page as-is.
+            }
+          }}
+        />
+      ) : (
+        <div className="flex flex-1 items-center justify-center p-10 text-center text-sm text-muted-foreground">
+          This report hasn&apos;t been built yet.
+        </div>
+      )}
+    </DepartmentShell>
   )
 }

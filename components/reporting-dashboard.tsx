@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,21 +14,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
+import { DepartmentShell } from "@/components/department-shell"
+import { StatTile } from "@/components/kit/stat-tile"
+import { Banner } from "@/components/kit/banner"
 import {
   Select,
   SelectContent,
@@ -47,14 +34,11 @@ import {
 } from "@/components/ui/command"
 import {
   AlertCircle,
-  ArrowLeft,
   Check,
-  ChevronRight,
   ChevronsUpDown,
   Download,
   LineChart as LineChartIcon,
   Loader2,
-  LogOut,
   ShieldCheck,
 } from "lucide-react"
 import {
@@ -74,6 +58,8 @@ import {
   DiallerDashboardPanel,
 } from "@/components/distribution-dashboard"
 import { cn } from "@/lib/utils"
+import { Card } from "@/components/ui/card"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
 
 
 const isoDaysAgo = (days: number): string => {
@@ -222,130 +208,41 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
 ]
 
 export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
   const [active, setActive] = useState<ReportItem>(SECTIONS[0].items[0])
-  // Only two sections here, so both start open rather than collapsed.
-  const [openSections, setOpenSections] = useState<Set<string>>(
-    new Set(SECTIONS.map((s) => s.title))
-  )
-  const toggleSection = (title: string) =>
-    setOpenSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(title)) next.delete(title)
-      else next.add(title)
-      return next
-    })
+
+  // Two sections; both open, and the shell keeps whichever holds the active
+  // report open. Items without a view are not built yet and are shown dimmed.
+  const nav = SECTIONS.map((section) => ({
+    id: section.title,
+    label: section.title,
+    collapsible: true,
+    defaultOpen: true,
+    items: section.items.map((item) => ({
+      id: item.view ?? `soon-${item.label}`,
+      label: item.label,
+      disabled: item.view === null,
+      disabledHint: "awaiting sales/billing data",
+    })),
+  }))
+  const onNavigate = (id: string) => {
+    const item = SECTIONS.flatMap((sec) => sec.items).find((it) => it.view === id)
+    if (item) setActive(item)
+  }
 
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <LineChartIcon className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">Reporting</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent className="gap-0.5">
-          {SECTIONS.map((section) => {
-            const isOpen = openSections.has(section.title)
-            const hasActive = section.items.some((it) => it.label === active.label)
-            return (
-              <SidebarGroup key={section.title} className="py-0.5">
-                <button
-                  type="button"
-                  onClick={() => toggleSection(section.title)}
-                  aria-expanded={isOpen}
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-                >
-                  <ChevronRight
-                    className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${
-                      isOpen ? "rotate-90" : ""
-                    }`}
-                  />
-                  <span className="flex-1 truncate text-left">{section.title}</span>
-                  {hasActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
-                </button>
-                {isOpen && (
-                  <SidebarGroupContent className="pl-1.5">
-                    <SidebarMenu>
-                      {section.items.map((item) => {
-                        const selectable = item.view !== null
-                        return (
-                          <SidebarMenuItem key={item.label}>
-                            <SidebarMenuButton
-                              onClick={() => selectable && setActive(item)}
-                              isActive={active.label === item.label}
-                              disabled={!selectable}
-                              tooltip={
-                                selectable ? item.label : `${item.label} (awaiting sales/billing data)`
-                              }
-                              className={selectable ? "" : "opacity-50"}
-                            >
-                              <span className="truncate">{item.label}</span>
-                              {!selectable && (
-                                <span className="ml-auto text-[10px] text-muted-foreground">soon</span>
-                              )}
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        )
-                      })}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                )}
-              </SidebarGroup>
-            )
-          })}
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <SidebarTrigger />
-            <span className="truncate text-sm font-medium text-foreground">{active.label}</span>
-          </div>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-auto">
-          <div className="w-full px-6 py-8">
-            {active.view === "quality" && <QualityMixReport />}
-            {active.view === "distributed" && <DistributedDashboardPanel />}
-            {active.view === "pool" && <PoolAllocationReport />}
-            {active.view === "sales" && <SalesDashboardPanel />}
-            {active.view === "dialler" && <DiallerDashboardPanel />}
-          </div>
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+    <DepartmentShell
+      brand={{ icon: <LineChartIcon />, label: "Reporting" }}
+      nav={nav}
+      activeId={active.view ?? ""}
+      onNavigate={onNavigate}
+      onBack={onBack}
+    >
+      {active.view === "quality" && <QualityMixReport />}
+      {active.view === "distributed" && <DistributedDashboardPanel />}
+      {active.view === "pool" && <PoolAllocationReport />}
+      {active.view === "sales" && <SalesDashboardPanel />}
+      {active.view === "dialler" && <DiallerDashboardPanel />}
+    </DepartmentShell>
   )
 }
 
@@ -550,7 +447,7 @@ function FtcFidByBandChart({ points }: { points: TrendPoint[] }) {
     <div className="mt-5 rounded-xl border border-border bg-card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">FTC and FID rate by score band</h3>
+          <SectionHeading>FTC and FID rate by score band</SectionHeading>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Share of each band&apos;s matured accounts whose first collection paid (FTC) or did not
             (FID), lowest score on the left. The two are complementary by definition, so the lines
@@ -856,7 +753,7 @@ function QualityMixReport() {
       </div>
 
       {/* ---- filters ---- */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <Card padding="dense">
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <Label className="mb-1.5 block text-xs text-muted-foreground">Sales from</Label>
@@ -1034,7 +931,7 @@ function QualityMixReport() {
             several rows.
           </span>
         </div>
-      </div>
+      </Card>
 
       {data?.dataThrough && (
         <FreshnessNote dataThrough={data.dataThrough} endDate={data.endDate} />
@@ -1043,10 +940,9 @@ function QualityMixReport() {
       {notConfigured && <NotConfiguredPanel />}
 
       {error && !notConfigured && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
+        <Banner tone="error" className="mt-4">
+          {error}
+        </Banner>
       )}
 
       {/* Connected, but the chosen window holds no sales. Say so plainly and
@@ -1116,7 +1012,7 @@ function QualityMixReport() {
 
           {/* ---- score mix bar ---- */}
           <div className="mt-5 rounded-xl border border-border bg-card p-5">
-            <h3 className="font-medium text-foreground">Score mix of accounts written</h3>
+            <SectionHeading>Score mix of accounts written</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {data.startDate} to {data.endDate}
             </p>
@@ -1146,7 +1042,7 @@ function QualityMixReport() {
           <div className="mt-5 rounded-xl border border-border bg-card">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
               <div>
-                <h3 className="font-medium text-foreground">FTC / FID by score band</h3>
+                <SectionHeading>FTC / FID by score band</SectionHeading>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Base excludes accounts with no first collection yet.
                 </p>
@@ -1285,9 +1181,9 @@ function QualityMixReport() {
 
           {/* ---- cohort trend + reasons ---- */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
-            <div className="rounded-xl border border-border bg-card">
+            <Card padding="none">
               <div className="border-b border-border px-5 py-4">
-                <h3 className="font-medium text-foreground">By sale cohort</h3>
+                <SectionHeading>By sale cohort</SectionHeading>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Mix and first-collection outcome per sale month.
                 </p>
@@ -1346,11 +1242,11 @@ function QualityMixReport() {
                   </TableBody>
                 </Table>
               </div>
-            </div>
+            </Card>
 
-            <div className="rounded-xl border border-border bg-card">
+            <Card padding="none">
               <div className="border-b border-border px-5 py-4">
-                <h3 className="font-medium text-foreground">Why first collections failed</h3>
+                <SectionHeading>Why first collections failed</SectionHeading>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Unpaid reason on the first collection.
                 </p>
@@ -1382,7 +1278,7 @@ function QualityMixReport() {
                   </div>
                 )}
               </div>
-            </div>
+            </Card>
             <PriceByBandPanel bands={data.bands} bandOrder={data.bandOrder} />
           </div>
 
@@ -1558,9 +1454,9 @@ function PriceByBandPanel({
     v == null ? "—" : `R${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
   return (
-    <div className="rounded-xl border border-border bg-card">
+    <Card padding="none">
       <div className="border-b border-border px-5 py-4">
-        <h3 className="font-medium text-foreground">Average price by score band</h3>
+        <SectionHeading>Average price by score band</SectionHeading>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {flat ? (
             <>
@@ -1612,7 +1508,7 @@ function PriceByBandPanel({
         collection actually took, ex VAT. The two differ through pro-rata, plan changes and
         discounts.
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -1652,9 +1548,9 @@ function ForecastChart({
     <div className="mt-5 rounded-xl border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">
+          <SectionHeading>
             FTC / FID outlook — next {forecast.forwardWeeks} weeks
-          </h3>
+          </SectionHeading>
           <p className="mt-0.5 max-w-2xl text-xs text-muted-foreground">
             Each band&apos;s matured FTC rate applied to the score mix actually written that week.
             Recent weeks can be projected because the sales already exist — only their first
@@ -1833,7 +1729,7 @@ function FtcOverTimeChart({
     <div className="mt-5 rounded-xl border border-border bg-card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">FTC rate over time</h3>
+          <SectionHeading>FTC rate over time</SectionHeading>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Blended first-time collection rate per sale month, across every band in the current
             filter. Because it is blended, it moves with the score mix as well as with performance.
@@ -1955,7 +1851,7 @@ function ReasonTrendChart({
 
   return (
     <div className="mt-5 rounded-xl border border-border bg-card p-5">
-      <h3 className="font-medium text-foreground">Failure reasons by month</h3>
+      <SectionHeading>Failure reasons by month</SectionHeading>
       <p className="mt-0.5 text-xs text-muted-foreground">
         Each reason as a share of that month&apos;s first-time defaults, by sale month. Top{" "}
         {topReasons.length} reasons shown; hover for counts.
@@ -2011,15 +1907,6 @@ function ReasonTrendChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
-    </div>
-  )
-}
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
-      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
     </div>
   )
 }
@@ -2554,16 +2441,14 @@ function PoolAllocationReport() {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300">
-        {error}
-      </div>
+      <Banner tone="error">{error}</Banner>
     )
   }
 
   if (data?.notConfigured || (data?.bands.length ?? 0) === 0) {
     return (
       <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-card p-8">
-        <h3 className="font-medium text-foreground">Can&apos;t read the balanced pool</h3>
+        <SectionHeading>Can&apos;t read the balanced pool</SectionHeading>
         <p className="max-w-2xl text-sm text-muted-foreground">
           Snowflake reports a missing object and a missing privilege with the same message, so this
           is one of two things. Either the balanced process has not been created here — run steps 1
@@ -2588,7 +2473,7 @@ function PoolAllocationReport() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Pool allocation</h2>
+          <PageHeading>Pool allocation</PageHeading>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             How the last distribution split between the two bases, what is still sitting in each
             pool, and what a different head count or band weighting would produce.
@@ -2678,7 +2563,7 @@ function PoolAllocationReport() {
       )}
 
       {/* ---- What-if settings ---- */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <Card padding="dense">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-wrap items-end gap-4">
             <div>
@@ -2783,12 +2668,12 @@ function PoolAllocationReport() {
             {lastRun?.agents ?? "—"} × {lastRun?.days ?? "—"} × {lastRun?.leadsPerAgentDay ?? "—"}.
           </p>
         )}
-      </div>
+      </Card>
 
       {/* ---- The ledger ---- */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <h3 className="font-medium text-foreground">By score band</h3>
+          <SectionHeading>By score band</SectionHeading>
           <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <i className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: POOL_DEFAULT_COLOUR }} />
@@ -2991,7 +2876,7 @@ function PoolAllocationReport() {
       {(data?.runs.length ?? 0) > 0 && (
         <div className="overflow-hidden rounded-xl border border-border bg-card">
           <div className="border-b border-border px-5 py-3">
-            <h3 className="font-medium text-foreground">Run history</h3>
+            <SectionHeading>Run history</SectionHeading>
             <p className="text-xs text-muted-foreground">
               What each distribution was sized for, and what it managed.
             </p>

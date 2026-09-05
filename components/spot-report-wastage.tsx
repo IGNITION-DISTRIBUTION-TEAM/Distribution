@@ -4,9 +4,11 @@ import { useMemo } from "react"
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BLUE, AMBER, SERIES, axisTick, MONTHS, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type Payload = {
   kpis: { this_month: number; last_month: number; last_7: number; early_churn: number }
@@ -21,7 +23,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
   const months = useMemo(() => (data ? Array.from(new Set(data.monthly_churn.map((r) => String(r.month)))).sort() : []), [data])
   const { range, setRange, inRange } = useMonthRange(months)
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-  if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
+  if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   const k = data.kpis
   const monthly = data.monthly_churn.filter((r) => inRange(String(r.month))).map((r) => ({ month: monthLabel(r.month), Terminated: r.terminated }))
@@ -34,7 +36,7 @@ export function SpotReportWastage({ override }: { override?: Payload } = {}) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">Wastage</h2>
+            <PageHeading>Wastage</PageHeading>
             <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-300">● Snapshot</span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Subscription terminations — volume, recency and age at churn.</p>

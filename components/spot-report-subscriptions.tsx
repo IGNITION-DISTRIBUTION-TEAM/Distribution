@@ -5,9 +5,11 @@ import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SERIES, BLUE, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, Legend, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
+import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 type Kpis = {
   book_size: number; ftc_pct: number | null; month2_pct?: number | null; active_users?: number
@@ -106,7 +108,7 @@ export function SpotReportSubscriptions({
   }, [data, inRange])
 
   if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-  if (error || !data) return <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error ?? "No data"}</span></div>
+  if (error || !data) return <Banner tone="error" className="m-6"><span>{error ?? "No data"}</span></Banner>
 
   const k = data.kpis
   const monthlyData = data.monthly.filter((r) => inRange(String(r.month))).map((r) => ({ label: monthLabel(r.month), Sales: r.sales }))
@@ -143,7 +145,7 @@ export function SpotReportSubscriptions({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
+            <PageHeading>{title}</PageHeading>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${salesLive ? "bg-emerald-500/12 text-emerald-300" : "bg-amber-500/12 text-amber-300"}`}>
               {salesLive ? "● Sales live · Snowflake" : "● Snapshot"}
             </span>

@@ -16,7 +16,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { AlertCircle, CalendarDays, Check, ChevronsUpDown, Loader2, RefreshCw, Search } from "lucide-react"
+import { CalendarDays, Check, ChevronsUpDown, Loader2, RefreshCw, Search } from "lucide-react"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { Card } from "@/components/ui/card"
 
 // Validated dark categorical steps (contrast + CVD checked against the app card
 // surface earlier this session). Activations = blue; the 7-day average
@@ -70,13 +73,13 @@ function StatTile({ label, value, sub, accent }: { label: string; value: string;
 
 function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
+    <Card padding="dense">
       <div className="mb-2">
-        <h3 className="font-medium text-foreground">{title}</h3>
+        <SectionHeading>{title}</SectionHeading>
         {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
       </div>
       {children}
-    </div>
+    </Card>
   )
 }
 
@@ -355,10 +358,9 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
   }
   if (error) {
     return (
-      <div className="m-6 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <Banner tone="error" className="m-6">
         <span>{error}</span>
-      </div>
+      </Banner>
     )
   }
 
@@ -372,7 +374,7 @@ export function SpotReportSalesTrends({ dataOverride }: { dataOverride?: Payload
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">Sales Trends</h2>
+            <PageHeading>Sales Trends</PageHeading>
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                 live
