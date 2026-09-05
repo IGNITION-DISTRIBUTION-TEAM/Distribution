@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { BLUE, SERIES, axisTick, MONTHS, shortDay, fmt, StatTile, ChartCard, ChartTip, useReportData, useMonthRange, MonthRangeControl } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
 import { Banner } from "@/components/kit/banner"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 type MRow = { month: string; channel: string; cnt: number }
 type WRow = { week: string; channel: string; cnt: number }
@@ -166,31 +167,31 @@ export function SpotReportTradingStoreTrend({ override }: { override?: Payload }
       <ChartCard title="Top stores by activations" subtitle="This month vs last · top 20 for selected channels">
         {topRows.length ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="py-2 pr-2 font-medium">#</th>
-                  <th className="py-2 pr-2 font-medium">Store</th>
-                  <th className="py-2 pr-2 text-right font-medium">This month</th>
-                  <th className="py-2 pr-2 text-right font-medium">Last month</th>
-                  <th className="py-2 pr-2 text-right font-medium">Δ</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <TableHead className="pr-2">#</TableHead>
+                  <TableHead className="pr-2">Store</TableHead>
+                  <TableHead className="pr-2 text-right">This month</TableHead>
+                  <TableHead className="pr-2 text-right">Last month</TableHead>
+                  <TableHead className="pr-2 text-right">Δ</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {topRows.map((r, i) => {
                   const d = r.this_month - r.last_month
                   return (
-                    <tr key={r.tenant} className="border-b border-border/50">
-                      <td className="py-1.5 pr-2 text-muted-foreground">{i + 1}</td>
-                      <td className="py-1.5 pr-2 text-foreground">{r.tenant}</td>
-                      <td className="py-1.5 pr-2 text-right font-mono text-emerald-300">{fmt(r.this_month)}</td>
-                      <td className="py-1.5 pr-2 text-right font-mono text-sky-300">{fmt(r.last_month)}</td>
-                      <td className={`py-1.5 pr-2 text-right font-mono ${d >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{d >= 0 ? "+" : ""}{fmt(d)}</td>
-                    </tr>
+                    <TableRow key={r.tenant} className="border-border/50">
+                      <TableCell className="py-1.5 pr-2 text-muted-foreground">{i + 1}</TableCell>
+                      <TableCell className="py-1.5 pr-2 text-foreground">{r.tenant}</TableCell>
+                      <TableCell className="py-1.5 pr-2 text-right font-mono text-emerald-300">{fmt(r.this_month)}</TableCell>
+                      <TableCell className="py-1.5 pr-2 text-right font-mono text-sky-300">{fmt(r.last_month)}</TableCell>
+                      <TableCell className={`py-1.5 pr-2 text-right font-mono ${d>= 0 ? "text-emerald-300" : "text-rose-300"}`}>{d >= 0 ? "+" : ""}{fmt(d)}</TableCell>
+                    </TableRow>
                   )
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ) : (
           <p className="py-6 text-center text-sm text-muted-foreground">No store data for the selected channels.</p>

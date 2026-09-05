@@ -1353,7 +1353,7 @@ function NotConfiguredPanel() {
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm">
+    <Banner tone="warning" className="mt-4 rounded-xl p-5">
       <div className="flex items-start gap-2">
         <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
         <div className="min-w-0 flex-1 text-amber-100">
@@ -1418,7 +1418,7 @@ function NotConfiguredPanel() {
           )}
         </div>
       </div>
-    </div>
+    </Banner>
   )
 }
 
@@ -2185,11 +2185,11 @@ function PoolVolumeCard({
       </div>
 
       {volume.eligibleOutsideBands > 0 && (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        <Banner tone="warning" className="px-3 py-2">
           <span className="font-mono">{fmtInt(volume.eligibleOutsideBands)}</span> distributable leads
           fall outside every enabled band and can never be selected. Usually a gap between two score
           ranges, or a band switched off.
-        </p>
+        </Banner>
       )}
 
       {volume.reasons.length > 0 && (

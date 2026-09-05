@@ -18,8 +18,8 @@ import {
 } from "recharts"
 import { CalendarDays, Check, ChevronsUpDown, Loader2, RefreshCw, Search } from "lucide-react"
 import { Banner } from "@/components/kit/banner"
-import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Card } from "@/components/ui/card"
+import { StatTile, ChartCard, ChartTip } from "@/components/spot-report-kit"
 
 // Validated dark categorical steps (contrast + CVD checked against the app card
 // surface earlier this session). Activations = blue; the 7-day average
@@ -59,57 +59,6 @@ function fmt(n: number): string {
   return n.toLocaleString()
 }
 
-/* ------------------------------- UI bits ------------------------------- */
-
-function StatTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-2xl font-semibold text-foreground">{value}</p>
-      {sub && <p className={`mt-0.5 text-xs ${accent ?? "text-muted-foreground"}`}>{sub}</p>}
-    </div>
-  )
-}
-
-function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  return (
-    <Card padding="dense">
-      <div className="mb-2">
-        <SectionHeading>{title}</SectionHeading>
-        {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
-      </div>
-      {children}
-    </Card>
-  )
-}
-
-function ChartTip({
-  active,
-  payload,
-  label,
-  fmtLabel,
-}: {
-  active?: boolean
-  payload?: { dataKey?: string | number; value?: number | string; color?: string }[]
-  label?: string | number
-  fmtLabel?: (s: string) => string
-}) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-medium text-foreground">{fmtLabel ? fmtLabel(String(label)) : String(label)}</p>
-      {payload.map((p) => (
-        <div key={String(p.dataKey)} className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: String(p.color) }} />
-          <span className="text-muted-foreground">{String(p.dataKey)}</span>
-          <span className="ml-auto pl-3 font-mono text-foreground">
-            {typeof p.value === "number" ? Math.round(p.value).toLocaleString() : String(p.value)}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 // Searchable checkbox multiselect for the tenant/group filter.
 function GroupFilter({

@@ -1,6 +1,5 @@
 "use client"
 
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Label } from "@/components/ui/label"
@@ -58,24 +57,8 @@ import {
 import { toast } from "sonner"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { DailyFilesContent } from "@/components/daily-files"
+import { DepartmentShell } from "@/components/department-shell"
 import {
-  SidebarProvider,
-  Sidebar,
-  SidebarContent,
-  SidebarHeader,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarInset,
-  SidebarTrigger,
-  SidebarFooter,
-} from "@/components/ui/sidebar"
-import {
-  ArrowLeft,
-  LogOut,
   Truck,
   Zap,
   Hand,
@@ -117,6 +100,10 @@ import {
   type TargetColumn as SharedTargetColumn,
 } from "@/lib/column-mapping"
 import type { TaskRow } from "@/app/api/distribution/tasks/route"
+import { StatTile } from "@/components/kit/stat-tile"
+import { Banner } from "@/components/kit/banner"
+import { Card } from "@/components/ui/card"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
 
 type NavItem = {
   id: string
@@ -393,7 +380,7 @@ function ManualContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Manual Lead Distribution</h2>
+        <PageHeading>Manual Lead Distribution</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Distribute leads to dialling systems and CRM. Pick the campaign first, then choose how to
           bring the leads in.
@@ -401,12 +388,12 @@ function ManualContent() {
       </div>
 
       {/* Step 1 — Campaign */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-4 flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
             1
           </span>
-          <h3 className="font-medium text-foreground">Campaign</h3>
+          <SectionHeading>Campaign</SectionHeading>
         </div>
         <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
         <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
@@ -467,16 +454,16 @@ function ManualContent() {
         {campaignsError && (
           <p className="mt-2 text-xs text-rose-400">Failed to load campaigns: {campaignsError}</p>
         )}
-      </div>
+      </Card>
 
       {/* Step 2 — choose source (only after campaign selected) */}
       {selectedCampaign && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               2
             </span>
-            <h3 className="font-medium text-foreground">Automation &amp; lead source</h3>
+            <SectionHeading>Automation &amp; lead source</SectionHeading>
           </div>
 
           {configsLoading ? (
@@ -522,21 +509,21 @@ function ManualContent() {
               </p>
             </>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Step 3 — source-specific config */}
       {selectedCampaign && source && configId != null && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               3
             </span>
-            <h3 className="font-medium text-foreground">
+            <SectionHeading>
               {source === "file" && "Upload file"}
               {source === "sftp" && "SFTP connection"}
               {source === "snowflake" && "Run distribution"}
-            </h3>
+            </SectionHeading>
           </div>
 
           {source === "file" && (
@@ -548,22 +535,22 @@ function ManualContent() {
           )}
           {source === "sftp" && <SftpSourcePanel />}
           {source === "snowflake" && <SnowflakeSourcePanel configId={configId} configName={selectedConfig?.CONFIG_NAME ?? "Automation"} campaignId={selectedCampaign.id} />}
-        </div>
+        </Card>
       )}
 
       {/* Steps 4 and 5 — extract, then email. Snowflake only: on a file source
           both live inside the panel above as tabs, next to the other tools, so
           repeating them here would be the same two buttons twice. */}
       {selectedCampaign && source === "snowflake" && configId != null && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <ExportDownloadStep campaignId={String(selectedCampaign.id)} step={4} />
-        </div>
+        </Card>
       )}
 
       {selectedCampaign && source === "snowflake" && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <EmailExportStep campaignId={String(selectedCampaign.id)} step={5} />
-        </div>
+        </Card>
       )}
     </div>
   )
@@ -582,7 +569,7 @@ function StepHeading({ step, title }: { step?: number; title: string }) {
           {step}
         </span>
       )}
-      <h3 className="font-medium text-foreground">{title}</h3>
+      <SectionHeading>{title}</SectionHeading>
     </div>
   )
 }
@@ -827,8 +814,8 @@ function LoadHistorySection({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="font-medium text-foreground">Load into history</h3>
+    <Card>
+      <SectionHeading>Load into history</SectionHeading>
       <p className="mt-1 text-sm text-muted-foreground">
         Runs the campaign&apos;s configured procedure to load the stage table into the history (HLL)
         table.
@@ -854,7 +841,7 @@ function LoadHistorySection({
         )}
         {done ? "Run again" : "Run load into history"}
       </Button>
-    </div>
+    </Card>
   )
 }
 
@@ -965,34 +952,34 @@ function LabelBreakdown({
       {allUnset && missingNote && <p className="mb-2 text-xs text-amber-300">{missingNote}</p>}
 
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-xs">
-          <thead className="bg-card">
-            <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-2 font-medium">{title.replace(/^By /i, "")}</th>
-              <th className="px-3 py-2 text-right font-medium">Leads</th>
-              <th className="px-3 py-2 text-right font-medium">Share</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="text-xs">
+          <TableHeader className="bg-card">
+            <TableRow className="text-[10px] uppercase tracking-wide">
+              <TableHead>{title.replace(/^By /i, "")}</TableHead>
+              <TableHead className="text-right">Leads</TableHead>
+              <TableHead className="text-right">Share</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((r) => (
-              <tr key={r.label ?? "__none__"} className="border-t border-border">
-                <td className="px-3 py-2">
+              <TableRow key={r.label ?? "__none__"}>
+                <TableCell>
                   {r.label == null ? (
                     <span className="text-amber-300">{unsetLabel}</span>
                   ) : (
                     <span className="text-foreground">{r.label}</span>
                   )}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-foreground">
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-foreground">
                   {r.leads.toLocaleString()}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">
                   {pct(r.leads)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>
     </div>
@@ -1032,8 +1019,8 @@ function VerifyCountsSection({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="font-medium text-foreground">Verify counts</h3>
+    <Card>
+      <SectionHeading>Verify counts</SectionHeading>
       <p className="mt-1 text-sm text-muted-foreground">
         Compares the stage table row count against the HLL (main) table for this campaign loaded
         today.
@@ -1049,8 +1036,8 @@ function VerifyCountsSection({
 
       {result && (
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <SummaryCard label="Stage rows" value={result.stageCount} accent="primary" />
-          <SummaryCard label="HLL rows (today)" value={result.hllCount} accent="primary" />
+          <StatTile label="Stage rows" value={result.stageCount} tone="primary" />
+          <StatTile label="HLL rows (today)" value={result.hllCount} tone="primary" />
           <div className="rounded-lg border border-border bg-background/40 p-4">
             <p className="text-xs text-muted-foreground">Match</p>
             <div className="mt-2">
@@ -1106,7 +1093,7 @@ function VerifyCountsSection({
           />
         </>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -1172,8 +1159,8 @@ function UpdateHllSection({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="font-medium text-foreground">Update HLL</h3>
+    <Card>
+      <SectionHeading>Update HLL</SectionHeading>
       <p className="mt-1 text-sm text-muted-foreground">
         Runs the update-HLL procedure for this campaign — <span className="font-mono">CALL
         proc({campaignId})</span>. Uses the campaign&apos;s assigned procedure, or an override below.
@@ -1225,7 +1212,7 @@ function UpdateHllSection({
         )}
         {done ? "Run again" : "Run update HLL"}
       </Button>
-    </div>
+    </Card>
   )
 }
 
@@ -1684,7 +1671,7 @@ function FileUploadMapper({
   if (stage === "create") {
     return (
       <div className="flex flex-col gap-4">
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
+        <Banner tone="warning">
           <div className="flex items-start gap-2">
             <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
             <span>
@@ -1693,7 +1680,7 @@ function FileUploadMapper({
               is added automatically.
             </span>
           </div>
-        </div>
+        </Banner>
 
         <div className="overflow-hidden rounded-lg border border-border">
           <Table>
@@ -1759,9 +1746,9 @@ function FileUploadMapper({
         </div>
 
         {createError && (
-          <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+          <Banner tone="error">
             {createError}
-          </div>
+          </Banner>
         )}
 
         <div className="flex items-center gap-2">
@@ -1977,16 +1964,9 @@ function ManualStepRunner({
         </Button>
       </div>
       {result && (
-        <div
-          className={cn(
-            "whitespace-pre-wrap rounded-md border p-3 text-sm",
-            result.ok
-              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
-              : "border-rose-500/30 bg-rose-500/5 text-rose-300"
-          )}
-        >
+        <Banner tone={result.ok ? "success" : "error"} className="whitespace-pre-wrap">
           {result.message}
-        </div>
+        </Banner>
       )}
     </div>
   )
@@ -2278,9 +2258,9 @@ function FileSourcePanel({
       </p>
 
       {planError && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <Banner tone="warning">
           {planError} Only the upload and the checks are available until that is fixed.
-        </div>
+        </Banner>
       )}
 
       {section === "upload" && <FileUploadMapper campaignId={campaignId} />}
@@ -2596,9 +2576,9 @@ function SftpSourcePanel() {
           </div>
 
           {error && (
-            <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+            <Banner tone="error" className="mt-3">
               {error}
-            </div>
+            </Banner>
           )}
 
           <div className="mt-4">
@@ -2673,9 +2653,9 @@ function SftpSourcePanel() {
           )}
 
           {error && (
-            <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+            <Banner tone="error">
               {error}
-            </div>
+            </Banner>
           )}
 
           {/* Filter + listing */}
@@ -2801,9 +2781,9 @@ function SftpSourcePanel() {
               </div>
 
               {previewError && (
-                <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/5 p-2 text-xs text-rose-300">
+                <Banner tone="error" className="mt-3 p-2">
                   {previewError}
-                </div>
+                </Banner>
               )}
 
               {preview && (
@@ -3216,7 +3196,7 @@ function AutomationContent() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Automated Lead Distribution</h2>
+          <PageHeading>Automated Lead Distribution</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             Create, track and edit distribution automation tasks. Stored in Snowflake.
           </p>
@@ -3225,34 +3205,34 @@ function AutomationContent() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
               <Zap className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h3 className="font-medium text-foreground">CRM Integration</h3>
+              <SectionHeading>CRM Integration</SectionHeading>
               <p className="mt-1 text-sm text-muted-foreground">Connect to your CRM to automatically distribute leads in real-time.</p>
               <Button variant="outline" size="sm" className="mt-3" onClick={() => openNew("CRM")}>Configure CRM</Button>
             </div>
           </div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-6">
+        </Card>
+        <Card>
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
               <Truck className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h3 className="font-medium text-foreground">Dialling System Integration</h3>
+              <SectionHeading>Dialling System Integration</SectionHeading>
               <p className="mt-1 text-sm text-muted-foreground">Route leads to dialling systems for immediate agent engagement.</p>
               <Button variant="outline" size="sm" className="mt-3" onClick={() => openNew("Dialling")}>Configure Dialling</Button>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
 
       {editing !== null && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-foreground">{editing === "new" ? "New automation task" : "Edit task"}</h3>
             <Button variant="ghost" size="sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
@@ -3450,16 +3430,16 @@ function AutomationContent() {
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : editing === "new" ? "Create task" : "Save changes"}
             </Button>
           </div>
-        </div>
+        </Card>
       )}
 
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-foreground">Active Distributions</h3>
           <Button variant="ghost" size="sm" onClick={load} disabled={loading}><RefreshCw className={cn("mr-2 h-4 w-4", loading && "animate-spin")} /> Refresh</Button>
         </div>
         {error ? (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>
+          <Banner tone="error"><span>{error}</span></Banner>
         ) : loading ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading tasks…</div>
         ) : tasks.length === 0 ? (
@@ -3526,7 +3506,7 @@ function AutomationContent() {
             </Table>
           </div>
         )}
-      </div>
+      </Card>
 
       <AlertDialog open={!!deleteTask} onOpenChange={(o) => !o && setDeleteTask(null)}>
         <AlertDialogContent>
@@ -3821,7 +3801,7 @@ function ExtendExpiredContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Extend Expired Leads</h2>
+        <PageHeading>Extend Expired Leads</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Re-activate expired leads at the client's request — verifies distribution history and pulls the
           current expiry date from Silver Surfer CRM.
@@ -3830,12 +3810,12 @@ function ExtendExpiredContent() {
 
 
       {/* Step 1 — Campaign */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-4 flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
             1
           </span>
-          <h3 className="font-medium text-foreground">Campaign</h3>
+          <SectionHeading>Campaign</SectionHeading>
         </div>
         <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
         <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
@@ -3902,15 +3882,15 @@ function ExtendExpiredContent() {
             Will filter history table by CAMPAIGNID = <span className="font-mono">{selectedCampaign.id}</span>
           </p>
         )}
-      </div>
+      </Card>
 
       {/* Step 2 — Lookup */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-4 flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
             2
           </span>
-          <h3 className="font-medium text-foreground">Leads to extend</h3>
+          <SectionHeading>Leads to extend</SectionHeading>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -3957,7 +3937,7 @@ function ExtendExpiredContent() {
             </p>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Action */}
       <div className="flex items-center gap-3">
@@ -3982,36 +3962,36 @@ function ExtendExpiredContent() {
       </div>
 
       {checkError && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           <div className="flex items-start gap-2">
             <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
             <span>{checkError}</span>
           </div>
-        </div>
+        </Banner>
       )}
 
       {/* Step 3 — Results */}
       {results && summary && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-4 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
               3
             </span>
-            <h3 className="font-medium text-foreground">Results</h3>
+            <SectionHeading>Results</SectionHeading>
           </div>
 
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-            <SummaryCard label="Submitted" value={summary.total} />
-            <SummaryCard label="In history" value={summary.inHistory} accent="primary" />
-            <SummaryCard label="Expired (history)" value={summary.expired} accent="success" />
-            <SummaryCard label="Active (not expired)" value={summary.active} accent="muted" />
-            <SummaryCard label="In SS expired" value={summary.inSs} accent="primary" />
+            <StatTile label="Submitted" value={summary.total} />
+            <StatTile label="In history" value={summary.inHistory} tone="primary" />
+            <StatTile label="Expired (history)" value={summary.expired} tone="success" />
+            <StatTile label="Active (not expired)" value={summary.active} tone="muted" />
+            <StatTile label="In SS expired" value={summary.inSs} tone="primary" />
           </div>
 
           {ssMeta?.error && (
-            <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
+            <Banner tone="warning" className="mb-3">
               SS check skipped: {ssMeta.error}
-            </div>
+            </Banner>
           )}
 
           <div className="overflow-hidden rounded-lg border border-border">
@@ -4156,7 +4136,7 @@ function ExtendExpiredContent() {
           {syncResult && (
             <SyncResultPanel result={syncResult} insertedCount={insertedCount} />
           )}
-        </div>
+        </Card>
       )}
 
       <AlertDialog open={extendOpen} onOpenChange={(open) => !extending && setExtendOpen(open)}>
@@ -4216,57 +4196,7 @@ function formatRand(n: number): string {
   return `R ${Math.round(n).toLocaleString()}`
 }
 
-function CompactStat({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: string | number
-  accent?: "primary" | "success" | "danger" | "muted"
-}) {
-  const cls =
-    accent === "success"
-      ? "text-emerald-300"
-      : accent === "danger"
-      ? "text-rose-300"
-      : accent === "primary"
-      ? "text-primary"
-      : accent === "muted"
-      ? "text-muted-foreground"
-      : "text-foreground"
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-0.5 text-base font-semibold ${cls}`}>{value}</p>
-    </div>
-  )
-}
 
-function SummaryCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: number
-  accent?: "primary" | "success" | "muted"
-}) {
-  const accentClass =
-    accent === "success"
-      ? "text-emerald-400"
-      : accent === "primary"
-      ? "text-primary"
-      : accent === "muted"
-      ? "text-muted-foreground"
-      : "text-foreground"
-  return (
-    <div className="rounded-lg border border-border bg-background/50 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${accentClass}`}>{value}</p>
-    </div>
-  )
-}
 
 function parseSyncSummary(raw: string) {
   const get = (re: RegExp): string | null => {
@@ -4332,18 +4262,18 @@ function SyncResultPanel({
 
       {/* Top stats */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <SyncStat label="Total rows" value={parsed.totalRows ?? "—"} />
-        <SyncStat
+        <StatTile label="Total rows" value={parsed.totalRows ?? "—"} />
+        <StatTile
           label="Successful"
           value={parsed.successful ?? "—"}
-          accent={parsed.successful !== null && parsed.successful > 0 ? "success" : "muted"}
+          tone={parsed.successful !== null && parsed.successful > 0 ? "success" : "muted"}
         />
-        <SyncStat
+        <StatTile
           label="Failed"
           value={parsed.failed ?? 0}
-          accent={parsed.failed && parsed.failed > 0 ? "danger" : "muted"}
+          tone={parsed.failed && parsed.failed > 0 ? "danger" : "muted"}
         />
-        <SyncStat label="Success rate" value={parsed.successRate ?? "—"} accent="success" />
+        <StatTile label="Success rate" value={parsed.successRate ?? "—"} tone="success" />
       </div>
 
       {/* Run details */}
@@ -4390,30 +4320,6 @@ function SyncResultPanel({
   )
 }
 
-function SyncStat({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: string | number
-  accent?: "success" | "danger" | "muted"
-}) {
-  const cls =
-    accent === "success"
-      ? "text-emerald-300"
-      : accent === "danger"
-      ? "text-rose-300"
-      : accent === "muted"
-      ? "text-muted-foreground"
-      : "text-foreground"
-  return (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${cls}`}>{value}</p>
-    </div>
-  )
-}
 
 function DetailRow({
   label,
@@ -4893,7 +4799,7 @@ function ForecastingContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Forecasting</h2>
+        <PageHeading>Forecasting</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Forecast lead volume, sales, and conversion trends.
         </p>
@@ -5071,10 +4977,10 @@ function RemoveDuplicatesTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
-            <h3 className="font-medium text-foreground">Find duplicates</h3>
+            <SectionHeading>Find duplicates</SectionHeading>
             <p className="mt-1 text-sm text-muted-foreground">
               Reads <span className="font-mono text-xs">Upload.TempUpload</span> and lands the
               duplicate rows in <span className="font-mono text-xs">TEMP_UPLOAD_DUPES</span>.
@@ -5132,10 +5038,10 @@ function RemoveDuplicatesTab() {
               : ""}
           </p>
         )}
-      </div>
+      </Card>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
           {data?.steps && data.steps.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs text-rose-200/80">
@@ -5146,44 +5052,44 @@ function RemoveDuplicatesTab() {
               ))}
             </ul>
           )}
-        </div>
+        </Banner>
       )}
 
       {data?.rescanError && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <Banner tone="warning">
           The delete succeeded, but re-reading the duplicates afterwards failed, so the figures
           below are the pre-delete ones. Scan again to see the current state. ({data.rescanError})
-        </div>
+        </Banner>
       )}
 
       {summary && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <CompactStat label="Duplicate groups" value={summary.duplicateGroups.toLocaleString()} />
-          <CompactStat
+          <StatTile size="sm" label="Duplicate groups" value={summary.duplicateGroups.toLocaleString()} />
+          <StatTile size="sm"
             label="Rows in those groups"
             value={summary.rowsInDuplicateGroups.toLocaleString()}
           />
-          <CompactStat
+          <StatTile size="sm"
             label="Rows that would be deleted"
             value={summary.rowsToDelete.toLocaleString()}
-            accent={summary.rowsToDelete > 0 ? "danger" : "muted"}
+            tone={summary.rowsToDelete > 0 ? "danger" : "muted"}
           />
         </div>
       )}
 
       {data?.truncated && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+        <Banner tone="warning">
           <span className="font-medium">The scan hit its limit.</span> It returned exactly{" "}
           <span className="font-mono">{(data.topN ?? 0).toLocaleString()}</span> rows, so the counts
           above are a floor, not a total — there are more duplicates than shown.{" "}
           <span className="font-medium">The delete is not limited</span> and will remove all of
           them. Raise the scan limit if you want to see the real figure first.
-        </div>
+        </Banner>
       )}
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h3 className="font-medium text-foreground">
+          <SectionHeading>
             Duplicate rows{" "}
             <span className="text-sm font-normal text-muted-foreground">
               ({rows.length.toLocaleString()} shown)
@@ -5193,7 +5099,7 @@ function RemoveDuplicatesTab() {
                 RN 1 is kept · RN 2+ would be deleted
               </span>
             )}
-          </h3>
+          </SectionHeading>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
               <Download className="mr-2 h-4 w-4" /> Export CSV
@@ -5341,7 +5247,7 @@ function TempUploadContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Temp Upload</h2>
+        <PageHeading>Temp Upload</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Today&apos;s batch counts, and duplicate removal on the upload staging table.
         </p>
@@ -5450,10 +5356,10 @@ function TempUploadCountsTab() {
   return (
     <div className="flex flex-col gap-6">
 
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="font-medium text-foreground">Refresh batch counts</h3>
+            <SectionHeading>Refresh batch counts</SectionHeading>
             <p className="mt-1 text-sm text-muted-foreground">
               Empties <span className="font-mono text-xs">TEMP_UPLOAD</span>, runs{" "}
               <span className="font-mono text-xs">SP_SYNC_BATCH_COUNTS_TODAY()</span>, then reads the
@@ -5485,10 +5391,10 @@ function TempUploadCountsTab() {
               : ""}
           </p>
         )}
-      </div>
+      </Card>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
           {data?.steps && data.steps.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs text-rose-200/80">
@@ -5499,12 +5405,12 @@ function TempUploadCountsTab() {
               ))}
             </ul>
           )}
-        </div>
+        </Banner>
       )}
 
-      <div className="rounded-xl border border-border bg-card">
+      <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h3 className="font-medium text-foreground">
+          <SectionHeading>
             TEMP_UPLOAD{" "}
             <span className="text-sm text-muted-foreground">
               ({rows.length.toLocaleString()} row{rows.length === 1 ? "" : "s"},{" "}
@@ -5515,7 +5421,7 @@ function TempUploadCountsTab() {
                 read {readAt.toLocaleTimeString()}
               </span>
             )}
-          </h3>
+          </SectionHeading>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
@@ -5607,7 +5513,7 @@ function TempUploadCountsTab() {
             )}
           </Table>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -5616,7 +5522,7 @@ function RecycleContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Recycle</h2>
+        <PageHeading>Recycle</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Re-queue previously distributed leads for another pass.
         </p>
@@ -5745,7 +5651,7 @@ export function DistributedDashboardPanel() {
       <p className="text-sm text-muted-foreground">Leads loaded by campaign and date.</p>
 
       {/* Filters */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <Label className="mb-2 block text-sm text-muted-foreground">Campaigns</Label>
@@ -5859,12 +5765,12 @@ export function DistributedDashboardPanel() {
             />
           </div>
         </div>
-      </div>
+      </Card>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       {selectedCampaignIds.length > 0 && loading && !data && (
@@ -6059,7 +5965,7 @@ export function DiallerDashboardPanel() {
     <div className="flex min-w-0 flex-col gap-6">
       <p className="text-sm text-muted-foreground">Dialler activity by campaign and date.</p>
 
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <Label className="mb-2 block text-sm text-muted-foreground">Campaigns</Label>
@@ -6182,12 +6088,12 @@ export function DiallerDashboardPanel() {
             error={statusError}
           />
         </div>
-      </div>
+      </Card>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       {selectedCampaigns.length > 0 && loading && !data && (
@@ -6210,36 +6116,36 @@ function DiallerSummary({ data }: { data: DiallerData }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-        <CompactStat
+        <StatTile size="sm"
           label="Total leads"
           value={data.totals.totalLeads.toLocaleString()}
-          accent="success"
+          tone="success"
         />
-        <CompactStat label="Days" value={data.totals.days.toLocaleString()} accent="primary" />
-        <CompactStat
+        <StatTile size="sm" label="Days" value={data.totals.days.toLocaleString()} tone="primary" />
+        <StatTile size="sm"
           label="Campaigns"
           value={data.totals.campaigns.toLocaleString()}
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg / day"
           value={data.totals.days > 0 ? avgPerDay.toFixed(1) : "—"}
-          accent="muted"
+          tone="muted"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg score"
           value={data.totals.avgScore === null ? "—" : data.totals.avgScore.toFixed(1)}
-          accent="primary"
+          tone="primary"
         />
       </div>
 
       {/* Leads over time / by half-hour */}
       {data.byBucket.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">
+            <SectionHeading>
               {data.granularity === "halfHour" ? "Leads by half-hour" : "Leads over time"}
-            </h3>
+            </SectionHeading>
             <p className="text-sm text-muted-foreground">
               Sum of <span className="font-mono">LEADS</span>{" "}
               {data.granularity === "halfHour" ? (
@@ -6291,7 +6197,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Heatgrid SCOREGROUP × CALL_START_TIME */}
@@ -6301,7 +6207,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
       {data.byStatus.length > 0 && (
         <div>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">Leads by call status</h3>
+            <SectionHeading>Leads by call status</SectionHeading>
             <p className="text-sm text-muted-foreground">{dateLabel}</p>
           </div>
           <div className="overflow-hidden rounded-lg border border-border">
@@ -6331,7 +6237,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
       {data.byCampaign.length > 1 && (
         <div>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">Leads per campaign</h3>
+            <SectionHeading>Leads per campaign</SectionHeading>
             <p className="text-sm text-muted-foreground">{dateLabel}</p>
           </div>
           <div className="overflow-hidden rounded-lg border border-border">
@@ -6508,7 +6414,7 @@ export function SalesDashboardPanel() {
         Sales activity by campaign and date.
       </p>
 
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <Label className="mb-2 block text-sm text-muted-foreground">Campaigns</Label>
@@ -6639,12 +6545,12 @@ export function SalesDashboardPanel() {
             error={filterErrors.isInsurable}
           />
         </div>
-      </div>
+      </Card>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       {selectedCampaigns.length > 0 && loading && !data && (
@@ -6806,32 +6712,32 @@ function SalesSummary({ data }: { data: SalesData }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
-        <CompactStat
+        <StatTile size="sm"
           label="Total sales"
           value={data.totals.totalSales.toLocaleString()}
-          accent="success"
+          tone="success"
         />
-        <CompactStat label="Rows" value={data.totals.rows.toLocaleString()} />
-        <CompactStat label="Days" value={data.totals.days.toLocaleString()} accent="primary" />
-        <CompactStat
+        <StatTile size="sm" label="Rows" value={data.totals.rows.toLocaleString()} />
+        <StatTile size="sm" label="Days" value={data.totals.days.toLocaleString()} tone="primary" />
+        <StatTile size="sm"
           label="Campaigns"
           value={data.totals.campaigns.toLocaleString()}
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg / day"
           value={data.totals.days > 0 ? avgPerDay.toFixed(1) : "—"}
-          accent="muted"
+          tone="muted"
         />
       </div>
 
       {/* Sales over time — by hour when single day, by date when range */}
       {data.bySalesDate.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">
+            <SectionHeading>
               {data.granularity === "hour" ? "Sales by hour" : "Sales over time"}
-            </h3>
+            </SectionHeading>
             <p className="text-sm text-muted-foreground">
               Sum of <span className="font-mono">SALES</span>{" "}
               {data.granularity === "hour" ? (
@@ -7027,7 +6933,7 @@ function SalesSummary({ data }: { data: SalesData }) {
               </p>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Heatgrid of score group × date with sales as the metric */}
@@ -7037,7 +6943,7 @@ function SalesSummary({ data }: { data: SalesData }) {
       {data.byCampaign.length > 1 && (
         <div>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">Sales per campaign</h3>
+            <SectionHeading>Sales per campaign</SectionHeading>
             <p className="text-sm text-muted-foreground">{dateLabel}</p>
           </div>
           <div className="overflow-hidden rounded-lg border border-border">
@@ -7097,9 +7003,9 @@ function AvgScoreLineChart({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <Card>
       <div className="mb-2">
-        <h3 className="font-medium text-foreground">Average score over time</h3>
+        <SectionHeading>Average score over time</SectionHeading>
         <p className="text-sm text-muted-foreground">
           Mean of <span className="font-mono">SCORE</span> per day · {series.length} day
           {series.length === 1 ? "" : "s"} with data
@@ -7144,7 +7050,7 @@ function AvgScoreLineChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -7309,7 +7215,7 @@ function ScoreDateHeatgrid({
     <div className="w-full min-w-0 rounded-xl border border-border bg-card p-6">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">Score group × created on</h3>
+          <SectionHeading>Score group × created on</SectionHeading>
           <p className="text-sm text-muted-foreground">
             {mode === "percent"
               ? "Each cell as % of that day's total. Empty days hidden."
@@ -7594,54 +7500,54 @@ function DashboardSummary({
     <>
       {/* KPI strip — compact, two rows on most screens */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-10">
-        <CompactStat label="Total leads" value={data.totals.total.toLocaleString()} />
-        <CompactStat
+        <StatTile size="sm" label="Total leads" value={data.totals.total.toLocaleString()} />
+        <StatTile size="sm"
           label="Batches"
           value={data.totals.distinctBatches.toLocaleString()}
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Active"
           value={data.totals.active.toLocaleString()}
-          accent="success"
+          tone="success"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Expired"
           value={data.totals.expired.toLocaleString()}
-          accent={data.totals.expired > 0 ? "danger" : "muted"}
+          tone={data.totals.expired > 0 ? "danger" : "muted"}
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Distinct IDs"
           value={data.totals.distinctIdnumbers.toLocaleString()}
         />
-        <CompactStat
+        <StatTile size="sm"
           label="With ESTATUS"
           value={data.totals.withStatus.toLocaleString()}
-          accent="muted"
+          tone="muted"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg score"
           value={data.totals.avgScore === null ? "—" : data.totals.avgScore.toFixed(1)}
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg salary"
           value={data.totals.avgSalary === null ? "—" : formatRand(data.totals.avgSalary)}
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg available spend"
           value={
             data.totals.avgAvailableSpend === null
               ? "—"
               : formatRand(data.totals.avgAvailableSpend)
           }
-          accent="primary"
+          tone="primary"
         />
-        <CompactStat
+        <StatTile size="sm"
           label="Avg UDM8 LDA"
           value={data.totals.avgUdm8Lda === null ? "—" : data.totals.avgUdm8Lda.toFixed(2)}
-          accent="primary"
+          tone="primary"
         />
       </div>
 
@@ -7663,7 +7569,7 @@ function DashboardSummary({
       {data.byStatus.length > 0 && (
         <div>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">Status breakdown</h3>
+            <SectionHeading>Status breakdown</SectionHeading>
             <p className="text-sm text-muted-foreground">
               ESTATUS distribution for {dateLabel}
             </p>
@@ -7693,7 +7599,7 @@ function DashboardSummary({
       {data.byCampaign.length > 1 && (
         <div>
           <div className="mb-2">
-            <h3 className="font-medium text-foreground">Leads per campaign</h3>
+            <SectionHeading>Leads per campaign</SectionHeading>
             <p className="text-sm text-muted-foreground">
               Counts for {dateLabel} across {data.byCampaign.length} campaign
               {data.byCampaign.length === 1 ? "" : "s"}
@@ -7740,7 +7646,7 @@ function SettingsContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Settings</h2>
+        <PageHeading>Settings</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Distribution-specific settings. App-wide auth settings live on the department picker.
         </p>
@@ -8282,10 +8188,10 @@ function CampaignSettingsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-4 flex items-center gap-2">
           <SettingsIcon className="h-5 w-5 text-muted-foreground" />
-          <h3 className="font-medium text-foreground">Campaign</h3>
+          <SectionHeading>Campaign</SectionHeading>
         </div>
         <Label className="mb-2 block text-sm text-muted-foreground">Search by title</Label>
         <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
@@ -8346,12 +8252,12 @@ function CampaignSettingsPanel() {
         {campaignsError && (
           <p className="mt-2 text-xs text-rose-400">Failed to load campaigns: {campaignsError}</p>
         )}
-      </div>
+      </Card>
 
       {selectedCampaign && (
-        <div className="rounded-xl border border-border bg-card p-6">
+        <Card>
           <div className="mb-1 flex items-center justify-between">
-            <h3 className="font-medium text-foreground">Automation config</h3>
+            <SectionHeading>Automation config</SectionHeading>
             {configLoading ? (
               <span className="text-xs text-muted-foreground">Loading…</span>
             ) : (
@@ -8951,8 +8857,7 @@ function CampaignSettingsPanel() {
                 <div className="mt-3">
                   <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run individual steps</div>
                   {runDirty && (
-                    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                      <AlertCircle className="h-4 w-4 shrink-0" />
+                    <Banner tone="warning" className="mb-2 flex-wrap px-3 py-2">
                       <span>
                         You have unsaved changes. Running uses the{" "}
                         <span className="font-medium">saved</span> config, so these edits won&apos;t apply
@@ -8962,7 +8867,7 @@ function CampaignSettingsPanel() {
                         {saving ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
                         Save now
                       </Button>
-                    </div>
+                    </Banner>
                   )}
                   <ul className="flex flex-col divide-y divide-border/60 rounded-md border border-border">
                     {plan.map((s) => {
@@ -9066,7 +8971,7 @@ function CampaignSettingsPanel() {
               </div>
             </div>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   )
@@ -9111,7 +9016,7 @@ function SilverSurferContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Silver Surfer</h2>
+        <PageHeading>Silver Surfer</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Refreshes today&apos;s batch counts (truncate{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">TEMP_UPLOAD</code>, run{" "}
@@ -9147,47 +9052,43 @@ function SilverSurferContent() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <Banner tone="error">
           <span className="break-words">{error}</span>
-        </div>
+        </Banner>
       )}
 
       {result && (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+          <Table>
+            <TableHeader>
+              <TableRow>
                 {result.columns.map((c) => (
-                  <th key={c} className="whitespace-nowrap px-3 py-2 font-medium">
+                  <TableHead key={c} className="whitespace-nowrap">
                     {c}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {result.rows.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={Math.max(result.columns.length, 1)}
-                    className="px-3 py-8 text-center text-muted-foreground"
-                  >
+                <TableRow>
+                  <TableCell colSpan={Math.max(result.columns.length, 1)} className="py-8 text-center text-muted-foreground">
                     The sync returned no rows.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 result.rows.map((row, i) => (
-                  <tr key={i} className="border-b border-border last:border-0">
+                  <TableRow key={i}>
                     {row.map((v, j) => (
-                      <td key={j} className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                      <TableCell key={j} className="whitespace-nowrap text-muted-foreground">
                         {v === "" ? "—" : v}
-                      </td>
+                      </TableCell>
                     ))}
-                  </tr>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -9202,7 +9103,6 @@ function SilverSurferContent() {
 }
 
 export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) {
-  const { user, logout } = useAuth()
   const [activeNav, setActiveNav] = useState("manual")
 
   const renderContent = useCallback(() => {
@@ -9231,89 +9131,14 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
   }, [activeNav])
 
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <Truck className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">Distribution</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Options</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      onClick={() => setActiveNav(item.id)}
-                      isActive={activeNav === item.id}
-                      tooltip={item.label}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Departments
-              </Button>
-            )}
-            <span className="text-sm font-medium text-muted-foreground">Distribution Department</span>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-auto min-w-0">
-          <div className="min-w-0 p-6">{renderContent()}</div>
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <DepartmentShell
+      brand={{ icon: <Truck />, label: "Distribution" }}
+      nav={[{ id: "options", label: "Options", items: navItems }]}
+      activeId={activeNav}
+      onNavigate={setActiveNav}
+      onBack={onBack}
+    >
+      {renderContent()}
+    </DepartmentShell>
   )
 }

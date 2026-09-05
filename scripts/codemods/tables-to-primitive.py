@@ -87,13 +87,17 @@ for path in sys.argv[1:]:
         b = src.find("</table>", a) + len("</table>")
         block = src[a:b]
         out.append(src[i:a])
-        if "sticky" in block:
+        known = re.match(r'<table className="w-full text-(sm|xs)">', block)
+        if "sticky" in block or not known:
+            # Unknown table shapes (e.g. a border-separate heatmap grid) are a
+            # person's job; converting only the rows would leave a raw <table>
+            # closed by </Table>.
             out.append(block); skipped += 1
         else:
             out.append(transform_block(block)); done += 1
         i = b
     s = "".join(out)
-    if done and IMPORT not in s:
+    if done and 'from "@/components/ui/table"' not in s and "from '@/components/ui/table'" not in s:
         last = max(m.end() for m in re.finditer(r"^import [^\n]*\n(?:(?!import)[^\n]*\n)*?(?=\S)", s, flags=re.M)) if False else None
         # place after the last top-level import statement
         ms = list(re.finditer(r"^import [\s\S]*?\n(?=(?:\n|[^\s]))", s, flags=re.M))

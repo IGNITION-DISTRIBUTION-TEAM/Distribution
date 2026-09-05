@@ -150,7 +150,7 @@ export function SpotReportPipelineUpload() {
       )}
 
       {result && (
-        <div className="flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">
+        <Banner tone="success" className="flex-col">
           <div className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
@@ -168,7 +168,7 @@ export function SpotReportPipelineUpload() {
             Check the detected columns and stage breakdown above look right. If a column was mis-detected, tell me the
             correct header names and I&apos;ll pin them.
           </p>
-        </div>
+        </Banner>
       )}
     </div>
   )

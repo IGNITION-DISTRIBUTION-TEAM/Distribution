@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/select"
 import { DEPARTMENT_IDS, DEPARTMENT_LABELS } from "@/lib/departments"
 import { cn } from "@/lib/utils"
+import { SectionHeading } from "@/components/kit/heading"
+import { Card } from "@/components/ui/card"
 
 type EmailMapping = {
   adEmail: string
@@ -244,8 +246,8 @@ function UserDepartmentsPanel() {
   const availableUsers = users.filter((u) => !grantedForDept.has(u.adEmail.toLowerCase()))
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h3 className="font-medium text-foreground">Department access</h3>
+    <Card>
+      <SectionHeading>Department access</SectionHeading>
       <p className="mt-1 text-sm text-muted-foreground">
         Grant a user access to a department by their login (AD) email. A user sees only the
         departments granted here. Super admins always see all departments. Changes take effect at
@@ -356,7 +358,7 @@ function UserDepartmentsPanel() {
           </TableBody>
         </Table>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -464,7 +466,7 @@ function MapUserCard() {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <Card>
       <h3 className="text-lg font-medium text-foreground">Map an Azure AD user to an employee</h3>
       <p className="mt-1 text-sm text-muted-foreground">
         Enter the user&apos;s Azure AD email and pick the matching employee from HR. The
@@ -556,7 +558,7 @@ function MapUserCard() {
           {saving ? "Saving..." : "Save mapping"}
         </Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -676,9 +678,9 @@ function EmailMapPanel() {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card">
+    <Card padding="none">
       <div className="border-b border-border px-6 py-4">
-        <h3 className="font-medium text-foreground">Existing mappings</h3>
+        <SectionHeading>Existing mappings</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Add new mappings on the &ldquo;Map user&rdquo; tab.
         </p>
@@ -757,7 +759,7 @@ function EmailMapPanel() {
           </TableBody>
         </Table>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -849,8 +851,8 @@ function AllowedRolesPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Add an allowed role</h3>
+      <Card>
+        <SectionHeading>Add an allowed role</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Pick a job title from HR. Matching is case-insensitive against{" "}
           <span className="font-mono text-xs">JOB_TITLE</span>.
@@ -921,11 +923,11 @@ function AllowedRolesPanel() {
           </Button>
         </div>
         {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-border bg-card">
+      <Card padding="none">
         <div className="border-b border-border px-6 py-4">
-          <h3 className="font-medium text-foreground">Allowed roles</h3>
+          <SectionHeading>Allowed roles</SectionHeading>
         </div>
         <div className="overflow-x-auto">
           <Table>
@@ -968,7 +970,7 @@ function AllowedRolesPanel() {
             </TableBody>
           </Table>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -1066,8 +1068,8 @@ function SuperAdminsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Grant super admin access</h3>
+      <Card>
+        <SectionHeading>Grant super admin access</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Super admins bypass the role/active gate and can manage these settings. Add sparingly.
         </p>
@@ -1108,11 +1110,11 @@ function SuperAdminsPanel() {
             {saving ? "Adding..." : "Grant super admin"}
           </Button>
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-border bg-card">
+      <Card padding="none">
         <div className="border-b border-border px-6 py-4">
-          <h3 className="font-medium text-foreground">Current super admins</h3>
+          <SectionHeading>Current super admins</SectionHeading>
           {error && <p className="mt-2 text-sm text-rose-400">{error}</p>}
         </div>
         <div className="overflow-x-auto">
@@ -1166,7 +1168,7 @@ function SuperAdminsPanel() {
             </TableBody>
           </Table>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -1285,8 +1287,8 @@ function GraphMailPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Outbound email (Microsoft Graph)</h3>
+      <Card>
+        <SectionHeading>Outbound email (Microsoft Graph)</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           The app authenticates as itself (client-credentials flow with certificate authentication) to get
           an app-only token, then posts to{" "}
@@ -1364,10 +1366,10 @@ function GraphMailPanel() {
             {saving ? "Saving..." : "Save settings"}
           </Button>
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Certificate private key</h3>
+      <Card>
+        <SectionHeading>Certificate private key</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           The private key is a credential that can send mail as this mailbox, so it is{" "}
           <span className="text-foreground">not</span> stored in the database or editable here. It is read
@@ -1470,10 +1472,10 @@ node scripts/graph-cert-check.mjs key.pem DWH_automation-app-public.cer
             PEM with escaped newlines, is accepted too. Redeploy after changing it.
           </p>
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h3 className="font-medium text-foreground">Test</h3>
+      <Card>
+        <SectionHeading>Test</SectionHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Tests run against the saved settings and ignore the enable toggle, so you can verify before
           switching it on.
@@ -1500,7 +1502,7 @@ node scripts/graph-cert-check.mjs key.pem DWH_automation-app-public.cer
         <p className="mt-3 text-xs text-muted-foreground">
           &ldquo;Verify certificate auth&rdquo; only mints a token — it does not send mail.
         </p>
-      </div>
+      </Card>
     </div>
   )
 }

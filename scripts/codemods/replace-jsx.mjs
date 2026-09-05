@@ -33,7 +33,47 @@ const RULES = [
   { tag: "h3", className: "font-medium text-foreground", to: "SectionHeading", attrs: "", imp: HEADING("SectionHeading") },
   { tag: "div", className: ERROR_BANNER, to: "Banner", attrs: ' tone="error"', imp: BANNER, dropIcon: "AlertCircle" },
   { tag: "div", className: `m-6 ${ERROR_BANNER}`, to: "Banner", attrs: ' tone="error" className="m-6"', imp: BANNER, dropIcon: "AlertCircle" },
+  // The p-3 / rounded-md family used inside Distribution and its Daily Files
+  // panels. No icon child to drop; Banner supplies one.
+  { tag: "div", className: "rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300", to: "Banner", attrs: ' tone="error"', imp: BANNER },
+  { tag: "div", className: "mb-3 rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300", to: "Banner", attrs: ' tone="error" className="mb-3"', imp: BANNER },
+  { tag: "div", className: "rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200", to: "Banner", attrs: ' tone="warning"', imp: BANNER },
+  { tag: "div", className: "mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200", to: "Banner", attrs: ' tone="warning" className="mb-3"', imp: BANNER },
+  { tag: "div", className: "rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200", to: "Banner", attrs: ' tone="warning"', imp: BANNER },
+  { tag: "div", className: "rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200", to: "Banner", attrs: ' tone="warning"', imp: BANNER },
 ]
+
+/**
+ * Family rules. A banner div whose className carries the tone's colour tokens
+ * plus one or two extras (`mt-4`, `whitespace-pre-wrap`, `text-xs`) is still a
+ * banner. Match on the colour tokens, drop the tokens Banner supplies, keep the
+ * rest as className. Still AST-based, so the closing tag is found, not guessed.
+ * A className that is an expression (a conditional tone) is left for a person.
+ */
+const SUPPLIED = new Set([
+  "flex", "items-start", "items-center", "gap-2", "rounded-lg", "rounded-md", "border",
+  "px-4", "py-3", "p-3", "p-4", "text-sm", "text-xs",
+])
+const FAMILIES = [
+  { tone: "error", colour: /^(border-rose-500\/(30|40)|bg-rose-500\/(5|10)|text-rose-300)$/, tags: ["div", "p"] },
+  { tone: "success", colour: /^(border-emerald-500\/40|bg-emerald-500\/5|text-emerald-(200|300))$/, tags: ["div", "p"] },
+  { tone: "warning", colour: /^(border-amber-500\/(30|40)|bg-amber-500\/(5|10)|text-amber-200)$/, tags: ["div", "p"] },
+]
+const ICONS = new Set(["AlertCircle", "CheckCircle2", "AlertTriangle"])
+
+function familyRule(tag, value) {
+  const tokens = value.split(/\s+/).filter(Boolean)
+  for (const fam of FAMILIES) {
+    if (!fam.tags.includes(tag)) continue
+    const colour = tokens.filter((t) => fam.colour.test(t))
+    // Needs at least a border colour AND a background tint to count as a banner box.
+    if (!colour.some((t) => t.startsWith("border-")) || !colour.some((t) => t.startsWith("bg-"))) continue
+    const rest = tokens.filter((t) => !fam.colour.test(t) && !SUPPLIED.has(t))
+    const attrs = ` tone="${fam.tone}"` + (rest.length ? ` className="${rest.join(" ")}"` : "")
+    return { to: "Banner", attrs, imp: BANNER, dropIcon: ICONS }
+  }
+  return null
+}
 
 const args = process.argv.slice(2)
 const dry = args.includes("--dry")
@@ -62,7 +102,7 @@ function rewrite(file) {
       )
       if (cls) {
         const value = cls.initializer.text
-        const rule = RULES.find((r) => r.tag === tag && r.className === value)
+        const rule = RULES.find((r) => r.tag === tag && r.className === value) ?? familyRule(tag, value)
         const others = attrs.filter((a) => a !== cls)
         if (rule && (rule.extraAttrs || others.length === 0)) {
           const otherText = others.map((a) => " " + a.getText(sf)).join("")
@@ -71,7 +111,9 @@ function rewrite(file) {
           edits.push({ start: close.getStart(sf), end: close.getEnd(), text: `</${rule.to}>` })
           if (rule.dropIcon) {
             const first = node.children.find((c) => !(ts.isJsxText(c) && c.containsOnlyTriviaWhiteSpaces))
-            if (first && ts.isJsxSelfClosingElement(first) && first.tagName.getText(sf) === rule.dropIcon) {
+            const iconName = first && ts.isJsxSelfClosingElement(first) ? first.tagName.getText(sf) : null
+            const drop = rule.dropIcon instanceof Set ? rule.dropIcon.has(iconName) : iconName === rule.dropIcon
+            if (drop) {
               edits.push({ start: first.getStart(sf), end: first.getEnd(), text: "" })
             }
           }

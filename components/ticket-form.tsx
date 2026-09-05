@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, CheckCircle2, Loader2, Paperclip, Plus, X } from "lucide-react"
+import { Loader2, Paperclip, Plus, X } from "lucide-react"
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -10,6 +10,7 @@ import {
   type TicketDepartment,
   type TicketFormConfig,
 } from "@/lib/tickets-shared"
+import { Banner } from "@/components/kit/banner"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-60"
@@ -163,10 +164,9 @@ export function TicketForm({
 
   if (loadError) {
     return (
-      <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <Banner tone="error">
         <span className="break-words">{loadError}</span>
-      </div>
+      </Banner>
     )
   }
   if (!config) {
@@ -182,14 +182,11 @@ export function TicketForm({
   return (
     <div className="flex flex-col gap-4">
       {createdRef && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm">
-          <div className="flex items-center gap-2 text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span className="font-medium">
-              Ticket <span className="font-mono">{createdRef}</span> logged
-            </span>
-          </div>
-        </div>
+        <Banner tone="success">
+          <p className="font-medium">
+            Ticket <span className="font-mono">{createdRef}</span> logged
+          </p>
+        </Banner>
       )}
 
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
@@ -368,10 +365,9 @@ export function TicketForm({
         </div>
 
         {submitError && (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <Banner tone="error">
             <span className="break-words">{submitError}</span>
-          </div>
+          </Banner>
         )}
 
         <div>

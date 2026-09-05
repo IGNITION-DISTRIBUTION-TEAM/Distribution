@@ -20,6 +20,7 @@ import {
   type ScheduleSpec,
   type WallClock,
 } from "@/lib/cron-schedule"
+import { Banner } from "@/components/kit/banner"
 
 /**
  * Pick a schedule for a Snowflake task.
@@ -364,9 +365,9 @@ export function SchedulePicker({
       </Tabs>
 
       {switchError && (
-        <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-200">
+        <Banner tone="warning" className="mt-3 p-2">
           {switchError}
-        </p>
+        </Banner>
       )}
 
       <div className="mt-4 border-t border-border pt-3">

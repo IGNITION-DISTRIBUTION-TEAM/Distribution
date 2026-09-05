@@ -2,6 +2,7 @@
 
 import { BarChart3, Info } from "lucide-react"
 import { PageHeading } from "@/components/kit/heading"
+import { Banner } from "@/components/kit/banner"
 
 // App-styled placeholder for reports that have no data source yet (parity with
 // the original static rebuild's placeholder pages, in the portal design).
@@ -30,10 +31,10 @@ export function SpotReportPlaceholder({
         {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
       </div>
 
-      <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+      <Banner tone="warning">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{note}</span>
-      </div>
+      </Banner>
 
       {kpis.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

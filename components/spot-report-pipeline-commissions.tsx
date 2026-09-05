@@ -99,14 +99,14 @@ export function SpotReportPipelineCommissions({ override }: { override?: Payload
           </span>
         </div>
       ) : (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+        <Banner tone="warning">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             Baked snapshot dated <b>{data.snapshot_date}</b> — no workbook uploaded yet. An admin can upload the current
             Pipeline.xlsx (Financials → Upload pipeline) to make this live. <b>Provisional commissions aren&apos;t shown</b>:
             this workbook has no Rand-value or commission column, only pipeline-stage counts.
           </span>
-        </div>
+        </Banner>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

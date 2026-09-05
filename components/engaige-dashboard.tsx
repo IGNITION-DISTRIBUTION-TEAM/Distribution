@@ -1,25 +1,11 @@
 "use client"
 
+import { DepartmentShell } from "@/components/department-shell"
+import { StatTile } from "@/components/kit/stat-tile"
+import { ChartCard, ChartTip } from "@/components/kit/chart"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
 import {
   Dialog,
   DialogContent,
@@ -28,10 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import {
-  AlertCircle,
-  ArrowLeft,
   BarChart3,
-  CheckCircle2,
   ChevronDown,
   ClipboardList,
   Clock,
@@ -39,7 +22,6 @@ import {
   LayoutDashboard,
   Link2,
   Loader2,
-  LogOut,
   Play,
   Plus,
   RefreshCw,
@@ -75,6 +57,10 @@ import {
   type EngaigeAssignment,
   type EngaigeExecution,
 } from "@/lib/engaige-shared"
+import { Banner } from "@/components/kit/banner"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
+import { Card } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 const inputCls =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
@@ -88,83 +74,8 @@ const C_AQUA = "#199e70"
 
 const axisTick = { fill: "hsl(var(--muted-foreground))", fontSize: 11 }
 
-function ChartTooltip({
-  active,
-  payload,
-  label,
-  suffix,
-}: {
-  active?: boolean
-  payload?: { dataKey?: string | number; value?: number | string; color?: string }[]
-  label?: string | number
-  suffix?: string
-}) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-medium text-foreground">{String(label)}</p>
-      {payload.map((p) => (
-        <div key={String(p.dataKey)} className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-[2px]" style={{ background: String(p.color) }} />
-          <span className="text-muted-foreground">{String(p.dataKey)}</span>
-          <span className="ml-auto pl-3 font-mono text-foreground">
-            {typeof p.value === "number" ? p.value.toLocaleString() : String(p.value)}
-            {suffix ?? ""}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
 
-// Matches the chart cards on the Distribution dashboard.
-function ChartCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string
-  subtitle?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <div className="mb-2">
-        <h3 className="font-medium text-foreground">{title}</h3>
-        {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
-      </div>
-      {children}
-    </div>
-  )
-}
 
-// Same tile as the Distribution dashboard's CompactStat.
-function StatTile({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: string | number
-  accent?: "primary" | "success" | "danger" | "muted"
-}) {
-  const cls =
-    accent === "success"
-      ? "text-emerald-300"
-      : accent === "danger"
-        ? "text-rose-300"
-        : accent === "primary"
-          ? "text-primary"
-          : accent === "muted"
-            ? "text-muted-foreground"
-            : "text-foreground"
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-0.5 text-base font-semibold ${cls}`}>{value}</p>
-    </div>
-  )
-}
 
 const STATUS_ICON: Record<string, string> = {
   COMPLETED: "✅",
@@ -173,22 +84,7 @@ const STATUS_ICON: Record<string, string> = {
   CANCELLED: "⏹️",
 }
 
-function ErrorBox({ message }: { message: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span className="break-words">{message}</span>
-    </div>
-  )
-}
 
-function OkBox({ message }: { message: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
-      <CheckCircle2 className="h-4 w-4" /> {message}
-    </div>
-  )
-}
 
 function Spinner({ label }: { label: string }) {
   return (
@@ -278,7 +174,7 @@ function DashboardSection() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Dashboard</h2>
+          <PageHeading>Dashboard</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             Integration health at a glance — last 14 days.
           </p>
@@ -288,20 +184,20 @@ function DashboardSection() {
         </Button>
       </div>
 
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <StatTile label="Configurations" value={configs.length.toLocaleString()} />
-        <StatTile
+        <StatTile size="sm" label="Configurations" value={configs.length.toLocaleString()} />
+        <StatTile size="sm"
           label="Active"
           value={configs.filter((c) => c.isActive).length.toLocaleString()}
-          accent="success"
+          tone="success"
         />
-        <StatTile label="Running now" value={running.toLocaleString()} accent={running > 0 ? "primary" : "muted"} />
-        <StatTile label="Batches (14d)" value={totalBatches.toLocaleString()} />
-        <StatTile label="Success rate (14d)" value={`${successRate.toFixed(1)}%`} accent="success" />
-        <StatTile label="Records (14d)" value={processed.toLocaleString()} />
-        <StatTile label="Failed (14d)" value={failed.toLocaleString()} accent={failed > 0 ? "danger" : "muted"} />
+        <StatTile size="sm" label="Running now" value={running.toLocaleString()} tone={running > 0 ? "primary" : "muted"} />
+        <StatTile size="sm" label="Batches (14d)" value={totalBatches.toLocaleString()} />
+        <StatTile size="sm" label="Success rate (14d)" value={`${successRate.toFixed(1)}%`} tone="success" />
+        <StatTile size="sm" label="Records (14d)" value={processed.toLocaleString()} />
+        <StatTile size="sm" label="Failed (14d)" value={failed.toLocaleString()} tone={failed > 0 ? "danger" : "muted"} />
       </div>
 
       {chartData.length === 0 ? (
@@ -317,7 +213,7 @@ function DashboardSection() {
                 <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
                   axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
-                <RechartsTooltip content={<ChartTooltip />} />
+                <RechartsTooltip content={<ChartTip />} />
                 <Line type="monotone" dataKey="Processed" stroke={C_BLUE} strokeWidth={2} dot={false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
                 <Line type="monotone" dataKey="Failed" stroke={C_RED} strokeWidth={2} dot={false}
@@ -341,7 +237,7 @@ function DashboardSection() {
                 <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
                   axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
-                <RechartsTooltip content={<ChartTooltip suffix="%" />} />
+                <RechartsTooltip content={<ChartTip suffix="%" />} />
                 <Line type="monotone" dataKey="Success %" stroke={C_AQUA} strokeWidth={2} dot={false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
               </LineChart>
@@ -406,7 +302,7 @@ function BatchErrorsDialog({ batchId, onClose }: { batchId: string; onClose: () 
           <DialogTitle>Batch errors</DialogTitle>
           <DialogDescription className="font-mono text-xs">{batchId}</DialogDescription>
         </DialogHeader>
-        {error && <ErrorBox message={error} />}
+        {error && <Banner tone="error">{error}</Banner>}
         {!data && !error && <Spinner label="Loading errors…" />}
         {empty && (
           <p className="text-sm text-muted-foreground">
@@ -742,7 +638,7 @@ function ConfigsSection() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Configurations</h2>
+          <PageHeading>Configurations</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">
             Integration configs and their test executions.
           </p>
@@ -759,12 +655,12 @@ function ConfigsSection() {
         </div>
       </div>
 
-      {error && <ErrorBox message={error} />}
-      {notice && <OkBox message={notice} />}
+      {error && <Banner tone="error">{error}</Banner>}
+      {notice && <Banner tone="success">{notice}</Banner>}
 
       {showForm && (
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
-          <h3 className="font-medium text-foreground">New configuration</h3>
+          <SectionHeading>New configuration</SectionHeading>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted-foreground">Configuration name *</span>
@@ -846,16 +742,14 @@ function ConfigsSection() {
       {mapStep && (
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
           <div>
-            <h3 className="font-medium text-foreground">Map required fields</h3>
+            <SectionHeading>Map required fields</SectionHeading>
             <p className="text-sm text-muted-foreground">
               Map every field for {templateNameFromId(mapStep.templateId)} before the config can
               activate.
             </p>
           </div>
           {mapStep.columns.length === 0 && (
-            <ErrorBox
-              message={`No columns visible for ${mapStep.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then retry. See scripts/engaige.sql.`}
-            />
+            <Banner tone="error">{`No columns visible for ${mapStep.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then retry. See scripts/engaige.sql.`}</Banner>
           )}
           {Object.entries(TEMPLATE_SECTIONS[mapStep.templateId] ?? {}).map(([section, fields]) => (
             <div key={section}>
@@ -939,7 +833,7 @@ function ConfigsSection() {
             const running = c.runningCount > 0
             const open = openIds.has(c.configId)
             return (
-              <div key={c.configId} className="rounded-xl border border-border bg-card">
+              <Card padding="none" key={c.configId}>
                 {/* Collapsed header: expander on the left, all actions inline on the right. */}
                 <div className="flex flex-wrap items-center gap-2 px-4 py-3">
                   <button
@@ -1000,15 +894,9 @@ function ConfigsSection() {
                 </div>
 
                 {runMsg[c.configId] && (
-                  <div
-                    className={`mx-4 mb-3 rounded-md border px-3 py-2 text-sm ${
-                      runMsg[c.configId].ok
-                        ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-300"
-                        : "border-rose-500/40 bg-rose-500/5 text-rose-300"
-                    }`}
-                  >
+                  <Banner tone={runMsg[c.configId].ok ? "success" : "error"} className="mx-4 mb-3">
                     {runMsg[c.configId].text}
-                  </div>
+                  </Banner>
                 )}
 
                 {open && editing?.configId === c.configId && (
@@ -1077,7 +965,7 @@ function ConfigsSection() {
                     </div>
                     {editErr && (
                       <div className="mt-3">
-                        <ErrorBox message={editErr} />
+                        <Banner tone="error">{editErr}</Banner>
                       </div>
                     )}
                     <div className="mt-3 flex gap-2">
@@ -1152,7 +1040,7 @@ function ConfigsSection() {
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
 
@@ -1300,12 +1188,12 @@ function MappingsSection() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Column mappings</h2>
+        <PageHeading>Column mappings</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           Map source columns to template fields for active configurations.
         </p>
       </div>
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
       {configs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
           No active configurations. Create and activate one first.
@@ -1337,9 +1225,7 @@ function MappingsSection() {
           {showForm && selected && (
             <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
               {columns.length === 0 && (
-                <ErrorBox
-                  message={`No columns visible for ${selected.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then refresh. See scripts/engaige.sql.`}
-                />
+                <Banner tone="error">{`No columns visible for ${selected.sourceTable}. The app's Snowflake role can't see that table/view — grant USAGE on its schema and REFERENCES (or SELECT) on the object, then refresh. See scripts/engaige.sql.`}</Banner>
               )}
               <div className="grid gap-3 sm:grid-cols-3">
                 <label className="flex flex-col gap-1 text-sm">
@@ -1430,19 +1316,19 @@ function MappingsSection() {
                     <div className="border-b border-border px-4 py-2 text-sm font-semibold text-foreground">
                       {sec} ({items.length})
                     </div>
-                    <table className="w-full text-sm">
-                      <tbody>
+                    <Table>
+                      <TableBody>
                         {items.map((mp) => (
-                          <tr key={mp.mappingId} className="border-b border-border last:border-0">
-                            <td className="px-4 py-2 text-foreground">
+                          <TableRow key={mp.mappingId}>
+                            <TableCell className="px-4 text-foreground">
                               {mp.targetFieldPath.includes(".")
                                 ? mp.targetFieldPath.split(".").pop()
                                 : mp.targetFieldPath}
-                            </td>
-                            <td className="px-4 py-2 font-mono text-muted-foreground">
+                            </TableCell>
+                            <TableCell className="px-4 font-mono text-muted-foreground">
                               {mp.sourceColumn}
-                            </td>
-                            <td className="px-4 py-2 text-right">
+                            </TableCell>
+                            <TableCell className="px-4 text-right">
                               <button
                                 onClick={() => deleteMapping(mp.mappingId)}
                                 className="text-muted-foreground hover:text-rose-300"
@@ -1450,11 +1336,11 @@ function MappingsSection() {
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ))}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </div>
                 ))}
               </div>
@@ -1800,7 +1686,7 @@ function AssignmentsSection() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Task assignments</h2>
+          <PageHeading>Task assignments</PageHeading>
           <p className="mt-1 text-sm text-muted-foreground">Scheduled run windows per configuration.</p>
         </div>
         {!showForm && configs.length > 0 && (
@@ -1809,7 +1695,7 @@ function AssignmentsSection() {
           </Button>
         )}
       </div>
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
 
       {configs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
@@ -1871,7 +1757,7 @@ function AssignmentsSection() {
           {pagedConfigs.map((c) => {
             const list = byConfig.get(c.configId) ?? []
             return (
-              <div key={c.configId} className="rounded-xl border border-border bg-card p-5">
+              <Card padding="dense" key={c.configId}>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="flex items-center gap-2 font-medium text-foreground">
                     <span>{c.isActive ? "🟢" : "🔴"}</span>
@@ -1977,7 +1863,7 @@ function AssignmentsSection() {
                               ))}
                             </div>
                           )}
-                          {editError && <ErrorBox message={editError} />}
+                          {editError && <Banner tone="error">{editError}</Banner>}
                           <div className="flex gap-2">
                             <Button size="sm" onClick={saveEdit} disabled={busy}>
                               {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -2044,7 +1930,7 @@ function AssignmentsSection() {
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
 
@@ -2110,7 +1996,7 @@ function MonitoringSection() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Monitoring</h2>
+        <PageHeading>Monitoring</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">Processing history, schedules, and metrics.</p>
       </div>
       <div className="inline-flex rounded-md border border-border bg-background/40 p-0.5 text-sm">
@@ -2210,16 +2096,16 @@ function MonHistory() {
           <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
         </Button>
       </div>
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
       {summary && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="Total batches" value={summary.totalBatches.toLocaleString()} />
-          <StatTile label="Success rate" value={`${summary.successRate.toFixed(1)}%`} accent="success" />
-          <StatTile label="Total records" value={summary.totalRecords.toLocaleString()} />
-          <StatTile
+          <StatTile size="sm" label="Total batches" value={summary.totalBatches.toLocaleString()} />
+          <StatTile size="sm" label="Success rate" value={`${summary.successRate.toFixed(1)}%`} tone="success" />
+          <StatTile size="sm" label="Total records" value={summary.totalRecords.toLocaleString()} />
+          <StatTile size="sm"
             label="Failed records"
             value={summary.failedRecords.toLocaleString()}
-            accent={summary.failedRecords > 0 ? "danger" : "muted"}
+            tone={summary.failedRecords > 0 ? "danger" : "muted"}
           />
         </div>
       )}
@@ -2227,36 +2113,36 @@ function MonHistory() {
         <p className="text-sm text-muted-foreground">No processing history for these filters.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Configuration</th>
-                <th className="px-3 py-2 font-medium">Started</th>
-                <th className="px-3 py-2 font-medium">Records</th>
-                <th className="px-3 py-2 font-medium">Failed</th>
-                <th className="px-3 py-2 font-medium">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Configuration</TableHead>
+                <TableHead>Started</TableHead>
+                <TableHead>Records</TableHead>
+                <TableHead>Failed</TableHead>
+                <TableHead>Duration</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {records.map((r) => (
-                <tr key={r.batchId} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2">
+                <TableRow key={r.batchId}>
+                  <TableCell>
                     {STATUS_ICON[r.status] ?? "❔"} {r.status}
-                  </td>
-                  <td className="px-3 py-2 text-foreground">{r.configName}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{fmtLocal(r.startMs)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-foreground">{r.configName}</TableCell>
+                  <TableCell className="text-muted-foreground">{fmtLocal(r.startMs)}</TableCell>
+                  <TableCell className="text-muted-foreground">
                     {r.processedRecords}/{r.totalRecords}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">{r.failedRecords}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{r.failedRecords}</TableCell>
+                  <TableCell className="text-muted-foreground">
                     {r.durationSeconds != null ? `${r.durationSeconds}s` : "—"}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -2329,7 +2215,7 @@ function MonSchedule() {
   }
 
   if (loading) return <Spinner label="Loading schedule…" />
-  if (error) return <ErrorBox message={error} />
+  if (error) return <Banner tone="error">{error}</Banner>
 
   return (
     <div className="flex flex-col gap-6">
@@ -2384,30 +2270,30 @@ function MonSchedule() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-              <th className="px-4 py-2 font-medium">Configuration</th>
-              <th className="px-4 py-2 font-medium">Scheduled runs</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="px-4">Configuration</TableHead>
+              <TableHead className="px-4">Scheduled runs</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {summary.length === 0 ? (
-              <tr>
-                <td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={2} className="px-4 py-6 text-center text-muted-foreground">
                   No active configurations.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               summary.map((s) => (
-                <tr key={s.configName} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2 text-foreground">{s.configName}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{s.schedules}</td>
-                </tr>
+                <TableRow key={s.configName}>
+                  <TableCell className="px-4 text-foreground">{s.configName}</TableCell>
+                  <TableCell className="px-4 text-muted-foreground">{s.schedules}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   )
@@ -2463,7 +2349,7 @@ function MonMetrics() {
           <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
         </Button>
       </div>
-      {error && <ErrorBox message={error} />}
+      {error && <Banner tone="error">{error}</Banner>}
       {chartData.length === 0 ? (
         <p className="text-sm text-muted-foreground">No data for this range.</p>
       ) : (
@@ -2475,7 +2361,7 @@ function MonMetrics() {
                 <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
                   axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis domain={[0, 100]} tick={axisTick} axisLine={false} tickLine={false} />
-                <RechartsTooltip content={<ChartTooltip suffix="%" />} />
+                <RechartsTooltip content={<ChartTip suffix="%" />} />
                 <Line type="monotone" dataKey="Success %" stroke={C_BLUE} strokeWidth={2} dot={false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
               </LineChart>
@@ -2489,7 +2375,7 @@ function MonMetrics() {
                 <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={20}
                   axisLine={{ stroke: "hsl(var(--border))" }} />
                 <YAxis tick={axisTick} axisLine={false} tickLine={false} />
-                <RechartsTooltip content={<ChartTooltip suffix="s" />} />
+                <RechartsTooltip content={<ChartTip suffix="s" />} />
                 <Line type="monotone" dataKey="Avg s" stroke={C_AQUA} strokeWidth={2} dot={false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
               </LineChart>
@@ -2504,7 +2390,7 @@ function MonMetrics() {
                   <XAxis dataKey="date" tick={axisTick} tickLine={false} minTickGap={16}
                     axisLine={{ stroke: "hsl(var(--border))" }} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <RechartsTooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }} />
+                  <RechartsTooltip content={<ChartTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }} />
                   <Bar dataKey="Processed" stackId="v" fill={C_BLUE} radius={[0, 0, 0, 0]} isAnimationActive={false} />
                   <Bar dataKey="Failed" stackId="v" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
                 </BarChart>
@@ -2679,7 +2565,6 @@ function EngaigeTour({
 /* ============================== Dashboard ============================== */
 
 export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
-  const { user, logout } = useAuth()
   const [nav, setNav] = useState("dashboard")
   const [tourOpen, setTourOpen] = useState(false)
   const [tourStep, setTourStep] = useState(0)
@@ -2708,80 +2593,14 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
   }
 
   return (
-    <SidebarProvider>
-      <Sidebar className="border-r border-border">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2">
-            <Settings2 className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">EngAIge</span>
-          </div>
-        </SidebarHeader>
-        <Separator />
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Integration</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      onClick={() => setNav(item.id)}
-                      isActive={nav === item.id}
-                      tooltip={item.label}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="space-y-3">
-            <div className="px-2 text-sm">
-              <p className="font-medium text-foreground">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" /> Departments
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={logout}
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="mr-2 h-4 w-4" /> Logout
-            </Button>
-          </div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset>
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            {onBack && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onBack}
-                className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" /> Departments
-              </Button>
-            )}
-            <span className="text-sm font-medium text-muted-foreground">EngAIge Integration Manager</span>
-          </div>
+    <>
+      <DepartmentShell
+        brand={{ icon: <Settings2 />, label: "EngAIge" }}
+        nav={[{ id: "integration", label: "Integration", items: navItems }]}
+        activeId={nav}
+        onNavigate={setNav}
+        onBack={onBack}
+        headerActions={
           <Button
             variant="outline"
             size="sm"
@@ -2794,11 +2613,10 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
             <HelpCircle className="mr-2 h-4 w-4" />
             Tour
           </Button>
-        </header>
-        <main className="flex-1 overflow-auto min-w-0">
-          <div className="min-w-0 p-6">{render()}</div>
-        </main>
-      </SidebarInset>
+        }
+      >
+        {render()}
+      </DepartmentShell>
 
       {tourOpen && (
         <EngaigeTour
@@ -2808,6 +2626,6 @@ export function EngaigeDashboard({ onBack }: { onBack?: () => void }) {
           onClose={() => setTourOpen(false)}
         />
       )}
-    </SidebarProvider>
+    </>
   )
 }

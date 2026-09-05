@@ -44,6 +44,7 @@ import {
 import { Card } from "@/components/ui/card"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Banner } from "@/components/kit/banner"
 
 type Endpoint = {
   name: string
@@ -188,9 +189,9 @@ export function EndpointsSection() {
       </div>
 
       {error && (
-        <div className="whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error" className="whitespace-pre-wrap">
           {error}
-        </div>
+        </Banner>
       )}
       {note && (
         <div className="whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 text-xs text-foreground">
@@ -366,8 +367,8 @@ export function EndpointsSection() {
           {draftErrors.length > 0 ? (
             <ul className="mt-4 flex flex-col gap-2">
               {draftErrors.map((e, i) => (
-                <li key={i} className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
-                  {e}
+                <li key={i}>
+                  <Banner tone="error">{e}</Banner>
                 </li>
               ))}
             </ul>

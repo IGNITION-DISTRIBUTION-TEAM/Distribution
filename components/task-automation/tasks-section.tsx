@@ -247,9 +247,9 @@ export function TasksSection() {
       </div>
 
       {error && (
-        <div className="whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error" className="whitespace-pre-wrap">
           {error}
-        </div>
+        </Banner>
       )}
 
       {note && (

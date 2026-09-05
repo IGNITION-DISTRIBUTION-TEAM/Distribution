@@ -59,14 +59,14 @@ export function SpotReportOkr() {
       </div>
 
       {target == null ? (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+        <Banner tone="warning">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             Actuals are live from Snowflake. <b>No target is set</b> — the target comes from the &quot;Goal sheet&quot;
             in the uploaded income statement. Upload a workbook with a filled-in &quot;Average subscription sales per
             day&quot; target and the vs-target / RAG view appears.
           </span>
-        </div>
+        </Banner>
       ) : (
         <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />

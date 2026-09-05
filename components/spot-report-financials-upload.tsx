@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react"
+import { FileSpreadsheet, Loader2, Upload, X } from "lucide-react"
 import { Banner } from "@/components/kit/banner"
 import { PageHeading } from "@/components/kit/heading"
 
@@ -143,15 +143,14 @@ export function SpotReportFinancialsUpload() {
         </Banner>
       )}
       {result && (
-        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+        <Banner tone="success">
           <span>
             Stored {result.rows.toLocaleString()} values.{" "}
             {Object.entries(result.perSheet)
               .map(([s, n]) => `${s}: ${n.toLocaleString()}`)
               .join(" · ")}
           </span>
-        </div>
+        </Banner>
       )}
     </div>
   )

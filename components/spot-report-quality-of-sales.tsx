@@ -5,7 +5,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, LabelList, ResponsiveContainer,
   Tooltip as RTooltip, XAxis, YAxis,
 } from "recharts"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SERIES, BLUE, axisTick, shortDay, fmt, StatTile, ChartCard, ChartTip, useReportData } from "@/components/spot-report-kit"
 import { PageHeading } from "@/components/kit/heading"
@@ -109,13 +109,12 @@ export function SpotReportQualityOfSales({ override }: { override?: Snap } = {})
           </ResponsiveContainer>
         </ChartCard>
       ) : (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <Banner tone="warning">
           <span>
             Per-tenant quality of sales is live from Snowflake (UCONNECT_MAY_MERGE × VW_UC_USAGE). It isn&apos;t showing —
             the query returned no rows. The cohort KPIs and trend below are the baked snapshot.
           </span>
-        </div>
+        </Banner>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">

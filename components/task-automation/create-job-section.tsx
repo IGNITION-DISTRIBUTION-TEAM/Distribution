@@ -833,9 +833,9 @@ export function CreateJobSection({
         </div>
 
         {endpointsError ? (
-          <div className="whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+          <Banner tone="error" className="whitespace-pre-wrap">
             {endpointsError}
-          </div>
+          </Banner>
         ) : (
           <>
             <div className="flex flex-wrap items-end gap-3">
@@ -914,9 +914,9 @@ export function CreateJobSection({
               </div>
 
               {error && (
-                <div className="mt-3 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                <Banner tone="error" className="mt-3 whitespace-pre-wrap">
                   {error}
-                </div>
+                </Banner>
               )}
 
               <div className="mt-3 max-h-96 overflow-auto rounded-md border border-border">
@@ -1113,9 +1113,9 @@ export function CreateJobSection({
                 </Button>
               </div>
               {destError && (
-                <div className="mt-3 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+                <Banner tone="error" className="mt-3 whitespace-pre-wrap">
                   {destError}
-                </div>
+                </Banner>
               )}
               {destCols && destCols.length === 0 && !destError && (
                 <p className="mt-2 text-xs text-amber-300">
@@ -1385,10 +1385,10 @@ export function CreateJobSection({
           </p>
 
           {testResult && !testResult.ok && (
-            <div className="mt-4 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+            <Banner tone="error" className="mt-4 whitespace-pre-wrap">
               {testResult.failedAt ? `${testResult.failedAt}: ` : ""}
               {testResult.error ?? "The test load failed."}
-            </div>
+            </Banner>
           )}
 
           {testResult?.steps && testResult.steps.length > 0 && (
@@ -1483,16 +1483,16 @@ export function CreateJobSection({
           </div>
 
           {preview?.error && (
-            <div className="mt-4 whitespace-pre-wrap rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">
+            <Banner tone="error" className="mt-4 whitespace-pre-wrap">
               {preview.error}
-            </div>
+            </Banner>
           )}
 
           {preview && preview.warnings.length > 0 && (
             <ul className="mt-4 flex flex-col gap-2">
               {preview.warnings.map((w, i) => (
-                <li key={i} className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
-                  {w}
+                <li key={i}>
+                  <Banner tone="warning">{w}</Banner>
                 </li>
               ))}
             </ul>
@@ -1568,18 +1568,11 @@ export function CreateJobSection({
                   ))}
                 </ul>
               )}
-              <div
-                className={cn(
-                  "whitespace-pre-wrap rounded-md border p-3 text-xs",
-                  deployResult.deployed
-                    ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
-                    : "border-rose-500/30 bg-rose-500/5 text-rose-300"
-                )}
-              >
+              <Banner tone={deployResult.deployed ? "success" : "error"} className="whitespace-pre-wrap">
                 {deployResult.deployed
                   ? "Created. Run it below before resuming the schedule."
                   : deployResult.error ?? "Failed."}
-              </div>
+              </Banner>
             </div>
           )}
         </Card>
@@ -1632,16 +1625,9 @@ export function CreateJobSection({
           </p>
 
           {runResult && (
-            <div
-              className={cn(
-                "mt-3 whitespace-pre-wrap rounded-md border p-3 text-xs",
-                runResult.ok
-                  ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
-                  : "border-rose-500/30 bg-rose-500/5 text-rose-300"
-              )}
-            >
+            <Banner tone={runResult.ok ? "success" : "error"} className="mt-3 whitespace-pre-wrap">
               {runResult.text}
-            </div>
+            </Banner>
           )}
 
           {control && (

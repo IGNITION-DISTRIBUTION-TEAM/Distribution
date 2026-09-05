@@ -76,6 +76,10 @@ import {
   Bar,
 } from "recharts"
 import { toast } from "sonner"
+import { StatTile } from "@/components/kit/stat-tile"
+import { Banner } from "@/components/kit/banner"
+import { Card } from "@/components/ui/card"
+import { PageHeading, SectionHeading } from "@/components/kit/heading"
 
 type DailyTask = {
   TASK_INDEX: number | string
@@ -96,7 +100,7 @@ export function DailyFilesContent() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold text-foreground">Daily Files</h2>
+        <PageHeading>Daily Files</PageHeading>
         <p className="mt-1 text-sm text-muted-foreground">
           View and manage daily file drops, plus configure the tasks that drive them.
         </p>
@@ -208,10 +212,10 @@ function TrendChart() {
   }, [days])
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <Card>
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="font-medium text-foreground">Run trend</h3>
+          <SectionHeading>Run trend</SectionHeading>
           <p className="text-sm text-muted-foreground">Daily succeeded vs failed task runs.</p>
         </div>
         <Select value={days} onValueChange={setDays}>
@@ -228,9 +232,9 @@ function TrendChart() {
       </div>
 
       {error && (
-        <div className="mb-3 rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error" className="mb-3">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="h-64 w-full">
@@ -287,7 +291,7 @@ function TrendChart() {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -542,21 +546,21 @@ function UploadedToSSPanel() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Summary rows" value={filteredSummary?.length ?? 0} />
-        <SummaryCard label="Batches" value={filteredByBatch?.length ?? 0} />
-        <SummaryCard label="Lead rows by batch" value={totalNonSummary} accent="success" />
+        <StatTile label="Summary rows" value={filteredSummary?.length ?? 0} />
+        <StatTile label="Batches" value={filteredByBatch?.length ?? 0} />
+        <StatTile label="Lead rows by batch" value={totalNonSummary} tone="success" />
       </div>
 
       {/* By-batch chart */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">Leads per batch</h3>
+          <SectionHeading>Leads per batch</SectionHeading>
           <p className="text-sm text-muted-foreground">
             Count of rows for {date} grouped by <span className="font-mono">BATCH_NAME</span>{" "}
             (excludes SUMMARY rows).
@@ -611,12 +615,12 @@ function UploadedToSSPanel() {
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Summary rows — one card per row, key/value grid (no horizontal scroll) */}
       <div>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">Summary rows</h3>
+          <SectionHeading>Summary rows</SectionHeading>
         </div>
         {loading && !filteredSummary ? (
           <div className="flex h-24 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground">
@@ -820,20 +824,20 @@ function SSCheckPanel() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Batches" value={batchCount} />
-        <SummaryCard label="Total leads" value={totalLeads} accent="success" />
+        <StatTile label="Batches" value={batchCount} />
+        <StatTile label="Total leads" value={totalLeads} tone="success" />
       </div>
 
       {/* Bar chart — leads per batch */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">Leads per batch</h3>
+          <SectionHeading>Leads per batch</SectionHeading>
         </div>
         <div
           className="w-full"
@@ -884,12 +888,12 @@ function SSCheckPanel() {
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Detail table */}
       <div>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">Detail</h3>
+          <SectionHeading>Detail</SectionHeading>
         </div>
         <div className="overflow-hidden rounded-lg border border-border">
           <Table>
@@ -1127,23 +1131,23 @@ function HistoryPanel() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Total leads" value={totalCount} accent="success" />
-        <SummaryCard label="Batches" value={distinctBatches} />
-        <SummaryCard label="Campaigns" value={distinctCampaigns} />
+        <StatTile label="Total leads" value={totalCount} tone="success" />
+        <StatTile label="Batches" value={distinctBatches} />
+        <StatTile label="Campaigns" value={distinctCampaigns} />
       </div>
 
       {/* Chart */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Card>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">
+          <SectionHeading>
             {singleBatch ? `Leads per campaign — ${singleBatch}` : "Leads per batch"}
-          </h3>
+          </SectionHeading>
           <p className="text-sm text-muted-foreground">
             {date} · <span className="font-mono">ESTATUS IS NULL</span>
           </p>
@@ -1199,12 +1203,12 @@ function HistoryPanel() {
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Detail table */}
       <div>
         <div className="mb-2">
-          <h3 className="font-medium text-foreground">Detail</h3>
+          <SectionHeading>Detail</SectionHeading>
         </div>
         <div className="overflow-hidden rounded-lg border border-border">
           <Table>
@@ -1322,16 +1326,16 @@ function TaskRunsPanel() {
 
       {runs && (
         <div className="grid grid-cols-3 gap-3">
-          <SummaryCard label="Total runs" value={runs.length} />
-          <SummaryCard label="Succeeded" value={succeededCount} accent="success" />
-          <SummaryCard label="Failed" value={failedCount} accent={failedCount > 0 ? "danger" : "muted"} />
+          <StatTile label="Total runs" value={runs.length} />
+          <StatTile label="Succeeded" value={succeededCount} tone="success" />
+          <StatTile label="Failed" value={failedCount} tone={failedCount > 0 ? "danger" : "muted"} />
         </div>
       )}
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="overflow-hidden rounded-lg border border-border">
@@ -1381,30 +1385,6 @@ function TaskRunsPanel() {
   )
 }
 
-function SummaryCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: number
-  accent?: "success" | "danger" | "muted"
-}) {
-  const cls =
-    accent === "success"
-      ? "text-emerald-400"
-      : accent === "danger"
-      ? "text-rose-400"
-      : accent === "muted"
-      ? "text-muted-foreground"
-      : "text-foreground"
-  return (
-    <div className="rounded-lg border border-border bg-background/50 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${cls}`}>{value}</p>
-    </div>
-  )
-}
 
 type DiallerView = {
   TABLE_INDEX: number | string
@@ -1587,9 +1567,9 @@ function FilesPanel() {
       </div>
 
       {viewsError && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {viewsError}
-        </div>
+        </Banner>
       )}
 
       <div className="flex items-center justify-between">
@@ -1868,9 +1848,9 @@ function DiallerViewsPanel() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="overflow-hidden rounded-lg border border-border">
@@ -2132,9 +2112,9 @@ function RunningTasksPanel() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-300">
+        <Banner tone="error">
           {error}
-        </div>
+        </Banner>
       )}
 
       <div className="overflow-hidden rounded-lg border border-border">
