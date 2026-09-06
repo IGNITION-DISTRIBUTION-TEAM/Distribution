@@ -541,16 +541,11 @@ function ManualContent() {
       {/* Steps 4 and 5 — extract, then email. Snowflake only: on a file source
           both live inside the panel above as tabs, next to the other tools, so
           repeating them here would be the same two buttons twice. */}
-      {selectedCampaign && source === "snowflake" && configId != null && (
-        <Card>
-          <ExportDownloadStep campaignId={String(selectedCampaign.id)} step={4} />
-        </Card>
-      )}
-
+      {/* One scope for the pair. They are sibling cards, so a date picked in
+          step 4 and a step 5 still sitting on today would email the wrong file
+          with nothing on screen to say so. */}
       {selectedCampaign && source === "snowflake" && (
-        <Card>
-          <EmailExportStep campaignId={String(selectedCampaign.id)} step={5} />
-        </Card>
+        <ManualExportSteps campaignId={String(selectedCampaign.id)} showDownload={configId != null} />
       )}
     </div>
   )
@@ -574,17 +569,210 @@ function StepHeading({ step, title }: { step?: number; title: string }) {
   )
 }
 
-function ExportDownloadStep({ campaignId, step }: { campaignId: string; step?: number }) {
+/**
+ * The date and batch that steps 4 and 5 export.
+ *
+ * Shared by both steps rather than duplicated: picking a date in Extract and
+ * then emailing from step 5 with its own picker still on today would send the
+ * wrong file with no sign anything was wrong. `ManualContent` owns one of
+ * these and hands it to both cards; the tab mounts in FileSourcePanel show one
+ * step at a time and each keeps its own.
+ *
+ * The batch list comes from /api/history-leads, not /api/dashboard/leads-loaded
+ * — it carries `AND h.ESTATUS IS NULL`, exactly the export's own row filter, so
+ * it cannot offer a batch the export would return nothing for. leads-loaded has
+ * no ESTATUS predicate and fires seven queries per call.
+ */
+export type ExportScopeState = {
+  date: string
+  setDate: (v: string) => void
+  batchName: string | null
+  setBatchName: (v: string | null) => void
+  batches: { batchName: string; count: number }[]
+  loading: boolean
+  /** Rows the current pick would export, for the label under the controls. */
+  rowCount: number
+}
+
+function useExportScope(campaignId: string): ExportScopeState {
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [batchName, setBatchName] = useState<string | null>(null)
+  const [batches, setBatches] = useState<{ batchName: string; count: number }[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await fetch(`/api/history-leads?date=${encodeURIComponent(date)}`, {
+          cache: "no-store",
+        })
+        const d = await res.json()
+        if (cancelled) return
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+        // The route groups by batch AND campaign and takes no campaignId, so
+        // narrowing happens here — the same shape daily-files.tsx uses.
+        const rows: { batchName: string | null; campaignId: number | string; count: number }[] =
+          d.items ?? []
+        const mine = new Map<string, number>()
+        for (const r of rows) {
+          if (String(r.campaignId) !== String(campaignId)) continue
+          const name = r.batchName ?? ""
+          if (!name) continue
+          mine.set(name, (mine.get(name) ?? 0) + Number(r.count ?? 0))
+        }
+        setBatches(
+          [...mine.entries()]
+            .map(([name, count]) => ({ batchName: name, count }))
+            .sort((a, b) => b.count - a.count)
+        )
+      } catch {
+        // A failed batch list must not block the export — the picker just
+        // falls back to "All batches", which is what it did before it existed.
+        if (!cancelled) setBatches([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId, date])
+
+  // Changing the date invalidates the pick: yesterday's batch name will not
+  // exist today, and a stale one would silently export nothing.
+  useEffect(() => {
+    if (batchName !== null && !batches.some((b) => b.batchName === batchName)) {
+      setBatchName(null)
+    }
+  }, [batches, batchName])
+
+  const rowCount = batchName
+    ? batches.find((b) => b.batchName === batchName)?.count ?? 0
+    : batches.reduce((sum, b) => sum + b.count, 0)
+
+  return { date, setDate, batchName, setBatchName, batches, loading, rowCount }
+}
+
+/** The date + batch controls, rendered identically above both step buttons. */
+function ExportScopeControls({ scope }: { scope: ExportScopeState }) {
+  const [open, setOpen] = useState(false)
+  const label = scope.batchName ?? "All batches"
+
+  return (
+    <div className="mb-4 flex flex-wrap items-end gap-3">
+      <div>
+        <Label className="mb-2 block text-sm text-muted-foreground">Created on</Label>
+        <Input
+          type="date"
+          value={scope.date}
+          onChange={(e) => scope.setDate(e.target.value)}
+          className="w-44"
+        />
+      </div>
+      <div>
+        <Label className="mb-2 block text-sm text-muted-foreground">Batch</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              className="w-72 justify-between font-normal"
+            >
+              <span className="truncate">{label}</span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Search batches..." />
+              <CommandList>
+                <CommandEmpty>No batches on this date.</CommandEmpty>
+                <CommandGroup>
+                  <CommandItem
+                    value="__all__"
+                    onSelect={() => {
+                      scope.setBatchName(null)
+                      setOpen(false)
+                    }}
+                  >
+                    <Check
+                      className={cn("mr-2 h-4 w-4", scope.batchName === null ? "opacity-100" : "opacity-0")}
+                    />
+                    All batches
+                  </CommandItem>
+                  {scope.batches.map((b) => (
+                    <CommandItem
+                      key={b.batchName}
+                      value={b.batchName}
+                      onSelect={() => {
+                        scope.setBatchName(b.batchName)
+                        setOpen(false)
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          scope.batchName === b.batchName ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      <span className="truncate font-mono text-xs">{b.batchName}</span>
+                      <span className="ml-auto pl-2 text-xs text-muted-foreground">
+                        {b.count.toLocaleString()}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+      {/* Says what the buttons below will actually produce, before you press
+          one. Finding out a date was empty used to cost a click and a wait. */}
+      <p className="pb-2 text-sm text-muted-foreground">
+        {scope.loading
+          ? "Counting..."
+          : scope.rowCount > 0
+            ? `${scope.rowCount.toLocaleString()} lead${scope.rowCount === 1 ? "" : "s"}`
+            : "No leads on this date"}
+      </p>
+    </div>
+  )
+}
+
+function ExportDownloadStep({
+  campaignId,
+  step,
+  scope: shared,
+}: {
+  campaignId: string
+  step?: number
+  /** Passed in when steps 4 and 5 share one pick; own state otherwise. */
+  scope?: ExportScopeState
+}) {
+  const own = useExportScope(campaignId)
+  const scope = shared ?? own
+
+  const href =
+    `/api/distribution/export?campaignId=${encodeURIComponent(campaignId)}` +
+    `&date=${encodeURIComponent(scope.date)}` +
+    (scope.batchName ? `&batchName=${encodeURIComponent(scope.batchName)}` : "")
+
   return (
     <div>
       <StepHeading step={step} title="Extract data" />
       <p className="mb-4 text-sm text-muted-foreground">
-        Download today&apos;s distributed leads for campaign{" "}
+        Download distributed leads for campaign{" "}
         <span className="font-medium text-foreground">{campaignId}</span> in the CXM format (CSV,
-        UTF-8, no BOM).
+        UTF-8, no BOM). Pick a day and, if you want just one, a batch.
       </p>
-      <Button variant="outline" asChild>
-        <a href={`/api/distribution/export?campaignId=${encodeURIComponent(campaignId)}`}>
+      <ExportScopeControls scope={scope} />
+      <Button variant="outline" asChild disabled={scope.rowCount === 0}>
+        <a href={href}>
           <Download className="mr-2 h-4 w-4" /> Download data (CSV)
         </a>
       </Button>
@@ -592,7 +780,17 @@ function ExportDownloadStep({ campaignId, step }: { campaignId: string; step?: n
   )
 }
 
-function EmailExportStep({ campaignId, step }: { campaignId: string; step?: number }) {
+function EmailExportStep({
+  campaignId,
+  step,
+  scope: shared,
+}: {
+  campaignId: string
+  step?: number
+  scope?: ExportScopeState
+}) {
+  const own = useExportScope(campaignId)
+  const scope = shared ?? own
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -603,7 +801,9 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step?: numb
     setError(null)
     try {
       const res = await fetch(
-        `/api/distribution/export/email?campaignId=${encodeURIComponent(campaignId)}`,
+        `/api/distribution/export/email?campaignId=${encodeURIComponent(campaignId)}` +
+          `&date=${encodeURIComponent(scope.date)}` +
+          (scope.batchName ? `&batchName=${encodeURIComponent(scope.batchName)}` : ""),
         { method: "POST" }
       )
       const text = await res.text()
@@ -646,7 +846,8 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step?: numb
         compressed, and split across several emails if it still will not fit — each marked
         &ldquo;batch 1 of N&rdquo; with the batch name, and each carrying its own header row.
       </p>
-      <Button variant="outline" onClick={send} disabled={sending}>
+      <ExportScopeControls scope={scope} />
+      <Button variant="outline" onClick={send} disabled={sending || scope.rowCount === 0}>
         {sending ? (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         ) : (
@@ -657,6 +858,34 @@ function EmailExportStep({ campaignId, step }: { campaignId: string; step?: numb
       {result && <p className="mt-3 text-sm text-emerald-300">{result}</p>}
       {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
     </div>
+  )
+}
+
+/**
+ * Steps 4 and 5 as a pair, sharing one date and batch.
+ *
+ * `showDownload` keeps the original asymmetry: step 4 needs a saved config,
+ * step 5 does not.
+ */
+function ManualExportSteps({
+  campaignId,
+  showDownload,
+}: {
+  campaignId: string
+  showDownload: boolean
+}) {
+  const scope = useExportScope(campaignId)
+  return (
+    <>
+      {showDownload && (
+        <Card>
+          <ExportDownloadStep campaignId={campaignId} step={4} scope={scope} />
+        </Card>
+      )}
+      <Card>
+        <EmailExportStep campaignId={campaignId} step={5} scope={scope} />
+      </Card>
+    </>
   )
 }
 
@@ -9034,20 +9263,14 @@ function CampaignSettingsPanel() {
                 </ul>
               )}
 
-              {/* Final step — download the distributed data. */}
+              {/* Final step — download the distributed data. Was a hand-rolled
+                  copy of ExportDownloadStep with its own hardcoded "Today's"
+                  copy and no encodeURIComponent; now the same component, so it
+                  gets the date and batch pickers rather than silently
+                  exporting today. */}
               {campaignId && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background/40 p-3">
-                  <div>
-                    <div className="text-sm font-medium text-foreground">Download data</div>
-                    <div className="text-xs text-muted-foreground">
-                      Today&apos;s distributed leads for campaign {campaignId} — CXM format (CSV, UTF-8, no BOM).
-                    </div>
-                  </div>
-                  <Button variant="outline" asChild>
-                    <a href={`/api/distribution/export?campaignId=${campaignId}`}>
-                      <Download className="mr-2 h-4 w-4" /> Download data (CSV)
-                    </a>
-                  </Button>
+                <div className="mt-3 rounded-md border border-border bg-background/40 p-3">
+                  <ExportDownloadStep campaignId={campaignId} />
                 </div>
               )}
 

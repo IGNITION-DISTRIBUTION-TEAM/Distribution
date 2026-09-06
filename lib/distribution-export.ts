@@ -3,6 +3,7 @@ import { rowsToCsv, safeFilename } from "@/lib/dialler-csv"
 import type { SnowflakeColumn } from "@/lib/snowflake"
 import { CONFIGS_TABLE, CONFIG_SF } from "@/lib/distribution-steps"
 import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
+import { sastTodayIso } from "@/lib/calendar-dates"
 
 /**
  * The distribution export, shared by the download (step 4) and the email
@@ -81,10 +82,100 @@ export async function resolveLeadExpiryDays(cid: number): Promise<number> {
  */
 export type LookupTier = "full" | "noDetails" | "noLookup"
 
-// The distribution export in the agreed CXM format. `cid` is a validated
-// integer substituted into both campaign-id filters; `expiryDays` is a
-// validated integer used for the LeadExpiry column.
-export function buildQuery(cid: number, expiryDays: number, tier: LookupTier = "full"): string {
+/**
+ * What slice of the history table an export covers.
+ *
+ * `date` is a SAST wall date, 'YYYY-MM-DD', supplied by the caller. It used to
+ * be Snowflake's `CURRENT_DATE()`, which was never verifiably SAST — the SQL
+ * API request in lib/snowflake.ts sends no `timezone`, so it resolved against
+ * whatever the account's TIMEZONE parameter happens to be. Nobody noticed
+ * because lib/hll-insert.ts writes CREATEDONDATE through the same connection,
+ * so the read and the write agreed with each other. A caller-supplied wall
+ * date removes the ambiguity instead of inheriting it.
+ *
+ * `batchName` null means every batch for the day, which is the behaviour this
+ * export had before it could be narrowed.
+ */
+export type ExportScope = { date: string; batchName: string | null }
+
+export const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * A SQL string literal, escaped by doubling single quotes.
+ *
+ * There are no bind parameters anywhere in this repo, so for a batch name —
+ * which is operator-supplied text — this function IS the injection boundary.
+ * Tested directly in scripts/distribution/export-sql-tests.ts.
+ */
+export function sqlLit(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+/**
+ * Read a scope off a request's query string.
+ *
+ * One parser for both routes, so the download and the email cannot disagree
+ * about what they were asked for — the whole point of this module is that they
+ * produce the same bytes.
+ *
+ * Both params are OPTIONAL and default to today / every batch, which is what
+ * this export did before it could be narrowed. That keeps the older mount
+ * points working untouched. The default day is SAST via `sastTodayIso()`, not
+ * the server's UTC clock and not Snowflake's `CURRENT_DATE()` — see ExportScope.
+ */
+export function parseExportScope(
+  params: URLSearchParams
+): ExportScope | { error: string } {
+  const rawDate = params.get("date")
+  if (rawDate !== null && !ISO_DATE_RE.test(rawDate)) {
+    return { error: "date must be a real date in YYYY-MM-DD form" }
+  }
+  const rawBatch = params.get("batchName")
+  const batchName = rawBatch === null || rawBatch.trim() === "" ? null : rawBatch.trim()
+  if (batchName !== null && batchName.length > 200) {
+    return { error: "batchName must be 200 characters or fewer" }
+  }
+  return { date: rawDate ?? sastTodayIso(), batchName }
+}
+
+/** How a scope reads in an error message or a mail body. */
+export function describeScope(scope: ExportScope): string {
+  return scope.batchName ? `${scope.date}, batch ${scope.batchName}` : scope.date
+}
+
+/** Reject a date before it reaches a query rather than escaping it. */
+export function assertIsoDate(date: string): string {
+  if (!ISO_DATE_RE.test(date)) {
+    throw new Error(`date must be YYYY-MM-DD, got ${JSON.stringify(date)}`)
+  }
+  return date
+}
+
+/**
+ * The distribution export in the agreed CXM format.
+ *
+ * `cid` is a validated integer substituted into both campaign-id filters;
+ * `expiryDays` is a validated integer used for the LeadExpiry column; `scope`
+ * picks the day and, optionally, one batch.
+ *
+ * CREATEDONDATE AND LeadExpiry ARE ANCHORED TO THE ROW, NOT TO NOW. Both were
+ * once `CURRENT_DATE()`, which was invisible while the WHERE clause pinned
+ * every row to today — and a silent data bug the moment a date could be
+ * picked, because a back-dated export would have stamped every row with
+ * today's date and an expiry six weeks out. Anchoring on the row means a
+ * re-pull of an old day reproduces the file that originally went out.
+ */
+export function buildQuery(
+  cid: number,
+  expiryDays: number,
+  tier: LookupTier = "full",
+  scope: ExportScope
+): string {
+  const date = assertIsoDate(scope.date)
+  // Narrowing in SQL rather than filtering the grouped files afterwards: a
+  // post-filter would still drag every row of the day out of Snowflake.
+  const batchClause =
+    scope.batchName == null ? "" : `  AND BATCHNAME = ${sqlLit(scope.batchName)}\n`
   const cte =
     tier === "noLookup"
       ? ""
@@ -114,8 +205,9 @@ export function buildQuery(cid: number, expiryDays: number, tier: LookupTier = "
      , LEFT(A.IDNUMBER, 6) AS MASKID
      , CAMPAIGNID AS CAMPAIGNID
      , BATCHNAME AS BATCHNAME
-     , CURRENT_DATE() AS CREATEDONDATE
-     , CURRENT_DATE() + ${expiryDays} as LeadExpiry
+     -- The row's own load date, not the export date. See buildQuery's doc.
+     , CAST(a.CREATEDONDATE AS DATE) AS CREATEDONDATE
+     , CAST(a.CREATEDONDATE AS DATE) + ${expiryDays} as LeadExpiry
      , NULL AS BANK
      , NULL AS BANKACCOUNTTYPE
      , NULL AS BRANCHCODE
@@ -169,8 +261,8 @@ export function buildQuery(cid: number, expiryDays: number, tier: LookupTier = "
      , NULL AS "Next Dial Time"
 FROM ${HLL} a
 ${ssJoin}WHERE CAMPAIGNID in (${cid})
-  AND cast(CREATEDONDATE as date) = cast(CURRENT_DATE() AS date)
-  AND ESTATUS IS NULL
+  AND cast(CREATEDONDATE as date) = '${date}'::DATE
+${batchClause}  AND ESTATUS IS NULL
 QUALIFY ROW_NUMBER() OVER (PARTITION BY a.IDNUMBER ORDER BY score desc) = 1
 order by cast(UDM30 as int) asc`
 }
@@ -188,7 +280,7 @@ function isMissingObject(message: string): boolean {
   return /does not exist or not authorized|Object '[^']+' does not exist/i.test(message)
 }
 
-export async function buildExportFiles(cid: number): Promise<ExportResult> {
+export async function buildExportFiles(cid: number, scope: ExportScope): Promise<ExportResult> {
   const expiryDays = await resolveLeadExpiryDays(cid)
 
   // Step down only on a missing/ungranted object. Anything else is a real fault
@@ -201,7 +293,7 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
 
   for (const tier of tiers) {
     try {
-      const res = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays, tier), {
+      const res = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays, tier, scope), {
         database: "DATAWAREHOUSE",
         schema: "DISTRIBUTION_DATA_APPLICATION",
       })
@@ -218,7 +310,10 @@ export async function buildExportFiles(cid: number): Promise<ExportResult> {
   }
   if (!columns || !rows) throw new Error("Export produced no result set")
 
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  // The exported day, not the server's clock. This used to be `new Date()` in
+  // UTC while the WHERE clause used Snowflake's notion of today — two
+  // different "today"s in one function.
+  const stamp = scope.date.replace(/-/g, "")
   const fallbackName = `distribution_${cid}_${stamp}`
 
   const batchIdx = columns.findIndex((c) => c.name.toUpperCase() === "BATCHNAME")

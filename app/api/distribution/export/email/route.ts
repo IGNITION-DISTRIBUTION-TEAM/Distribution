@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { buildExportFiles, splitExportFile, type ExportFile } from "@/lib/distribution-export"
+import {
+  buildExportFiles,
+  describeScope,
+  parseExportScope,
+  splitExportFile,
+  type ExportFile,
+} from "@/lib/distribution-export"
 import {
   sendGraphMailFiles,
   TooLargeForInline,
@@ -50,14 +56,22 @@ export async function POST(request: NextRequest) {
   }
   const cid = Number(raw)
 
+  // Same parser as the download route, so the two cannot disagree about what
+  // they were asked for. Omitted means today and every batch.
+  const scope = parseExportScope(request.nextUrl.searchParams)
+  if ("error" in scope) return NextResponse.json(scope, { status: 400 })
+
   try {
-    const { files, totalRows, lookupTier, lookupNotes, columns } = await buildExportFiles(cid)
+    const { files, totalRows, lookupTier, lookupNotes, columns } = await buildExportFiles(cid, scope)
 
     if (totalRows === 0) {
+      // Names the day and batch actually asked for. This used to say "for
+      // today", which stopped being true the moment a date could be picked.
       return NextResponse.json(
         {
-          error:
-            "Nothing to send — the export returned no rows for today. Run the distribution and sync first.",
+          error: `Nothing to send — the export returned no rows for ${describeScope(
+            scope
+          )}. Run the distribution and sync first, or pick another date.`,
         },
         { status: 400 }
       )
@@ -71,7 +85,7 @@ export async function POST(request: NextRequest) {
         : `Distribution export — campaign ${cid} (${files.length} batches)`
 
     const lines = [
-      `Distributed leads for campaign ${cid}, ${totalRows.toLocaleString()} row${
+      `Distributed leads for campaign ${cid} — ${describeScope(scope)}, ${totalRows.toLocaleString()} row${
         totalRows === 1 ? "" : "s"
       } in the CXM format (CSV, UTF-8, no BOM).`,
       "",

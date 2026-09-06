@@ -84,6 +84,13 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Monitoring charts | Tooltips show the same decimals as before (not rounded) | |
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
 | Distribution | Every one of the 7 nav items | Renders | |
+| Distribution | Manual → step 4, defaults untouched | The same file you got before. **The whole change is meant to be invisible unless you move a control** | |
+| Distribution | Step 4 → pick yesterday | Batch list repopulates for that date with counts; a stale batch pick clears itself | |
+| Distribution | Step 4 → pick one batch → download | CSV contains only that batch, and the file is named after it | |
+| Distribution | Open a back-dated CSV | `CREATEDONDATE` and `LeadExpiry` carry **that day's** dates, not today's — the bug the picker would have exposed | |
+| Distribution | Change the date in step 4, then look at step 5 | Step 5 shows the **same** date and batch — they share one pick | |
+| Distribution | A date with no leads | Both buttons disable and the label reads "No leads on this date"; step 5's error names that date, not "today" | |
+| Distribution | Step 3 (Snowflake source) → Download data | Now carries the same pickers — it used to be a duplicate hardcoded to today | |
 | Distribution | Settings → save | A toast appears (toasts are intentionally kept here) | |
 | Distribution | Automation → edit a task | Schedule frequency / day / time populate (the fields whose type was stale) | |
 | Distribution | Manual → step result | Emerald or rose banner depending on outcome | |

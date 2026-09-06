@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
-import { buildExportFiles } from "@/lib/distribution-export"
+import { buildExportFiles, parseExportScope } from "@/lib/distribution-export"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 export const maxDuration = 300
 
-// GET ?campaignId=608 — export today's distributed leads for the campaign as a
+// GET ?campaignId=608&date=2026-09-01&batchName=... — export the campaign's
+// distributed leads for one day (default today), all batches or one, as a
 // UTF-8 (no BOM) CSV in the CXM format, named after the batch. Several batches
 // come back as a ZIP of per-batch CSVs.
 //
@@ -21,8 +22,13 @@ export async function GET(request: NextRequest) {
   }
   const cid = Number(raw)
 
+  // ?date= and ?batchName= are optional; omitted means today and every batch,
+  // which is what this route did before it could be narrowed.
+  const scope = parseExportScope(request.nextUrl.searchParams)
+  if ("error" in scope) return NextResponse.json(scope, { status: 400 })
+
   try {
-    const { files, totalRows, fallbackName, lookupTier } = await buildExportFiles(cid)
+    const { files, totalRows, fallbackName, lookupTier } = await buildExportFiles(cid, scope)
 
     if (files.length <= 1) {
       const only = files[0]
