@@ -84,6 +84,13 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Monitoring charts | Tooltips show the same decimals as before (not rounded) | |
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
 | Distribution | Every one of the 7 nav items | Renders | |
+| Distribution | **Before configuring anything** — download for any campaign | **Byte-identical to what you got before.** The standard layout is meant to be invisible; this is the check that matters most | |
+| Distribution | Settings → a campaign → Export layout | 55 rows, "standard" badge, field names populated from the live leads table | |
+| Distribution | Rename a column to `X"` or `X--y` | Refused inline with a reason, and Save is blocked. Neither can reach the SQL | |
+| Distribution | Delete the BATCHNAME row | Refused — the export names each file after it, and the dialler team keys on that | |
+| Distribution | Set a column's field to one that isn't on the table | Refused, rather than producing a query that fails at download time | |
+| Distribution | Spot Connect 1: add `Region Code` at 6, `REGION` at 56, `ADDRESS_RANK` → empty, `LEADEXPIRY` → the stored field, `CREATEDONDATE` → as is | 57 columns; download and diff against the Teams file | |
+| Distribution | Steps 4 and 5 after saving a layout | Both read "Layout: <config name>, 57 columns" — never a mystery which config won | |
 | Distribution | Manual → step 4, defaults untouched | The same file you got before. **The whole change is meant to be invisible unless you move a control** | |
 | Distribution | Step 4 → pick yesterday | Batch list repopulates for that date with counts; a stale batch pick clears itself | |
 | Distribution | Step 4 → pick one batch → download | CSV contains only that batch, and the file is named after it | |

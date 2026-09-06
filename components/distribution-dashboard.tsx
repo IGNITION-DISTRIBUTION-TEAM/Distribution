@@ -60,6 +60,8 @@ import { toast } from "sonner"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { DailyFilesContent } from "@/components/daily-files"
 import { DepartmentShell } from "@/components/department-shell"
+import { ExportLayoutEditor } from "@/components/distribution/export-layout-editor"
+import type { ExportLayout } from "@/lib/export-layout"
 import {
   Truck,
   Zap,
@@ -592,6 +594,8 @@ export type ExportScopeState = {
   loading: boolean
   /** Rows the current pick would export, for the label under the controls. */
   rowCount: number
+  /** Which column layout the export will use, or null while unknown. */
+  layoutLabel: string | null
 }
 
 function useExportScope(campaignId: string): ExportScopeState {
@@ -599,6 +603,36 @@ function useExportScope(campaignId: string): ExportScopeState {
   const [batchName, setBatchName] = useState<string | null>(null)
   const [batches, setBatches] = useState<{ batchName: string; count: number }[]>([])
   const [loading, setLoading] = useState(false)
+  /**
+   * Which config's column layout this campaign's export will use.
+   *
+   * Shown rather than assumed: a campaign can have several automation configs
+   * and the pick is a heuristic, so a wrong one would otherwise ship a file the
+   * dialler cannot ingest with nothing on screen to say why.
+   */
+  const [layoutLabel, setLayoutLabel] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!campaignId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/distribution/export-layout?campaignId=${encodeURIComponent(campaignId)}`,
+          { cache: "no-store" }
+        )
+        const d = await res.json()
+        if (cancelled || !res.ok) return
+        const n = d.layout?.columns?.length ?? 0
+        setLayoutLabel(d.isDefault ? `standard, ${n} columns` : `${d.configName ?? "custom"}, ${n} columns`)
+      } catch {
+        /* the export still works; this label is information, not a gate */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
 
   useEffect(() => {
     let cancelled = false
@@ -653,7 +687,7 @@ function useExportScope(campaignId: string): ExportScopeState {
     ? batches.find((b) => b.batchName === batchName)?.count ?? 0
     : batches.reduce((sum, b) => sum + b.count, 0)
 
-  return { date, setDate, batchName, setBatchName, batches, loading, rowCount }
+  return { date, setDate, batchName, setBatchName, batches, loading, rowCount, layoutLabel }
 }
 
 /** The date + batch controls, rendered identically above both step buttons. */
@@ -733,13 +767,16 @@ function ExportScopeControls({ scope }: { scope: ExportScopeState }) {
       </div>
       {/* Says what the buttons below will actually produce, before you press
           one. Finding out a date was empty used to cost a click and a wait. */}
-      <p className="pb-2 text-sm text-muted-foreground">
-        {scope.loading
-          ? "Counting..."
-          : scope.rowCount > 0
-            ? `${scope.rowCount.toLocaleString()} lead${scope.rowCount === 1 ? "" : "s"}`
-            : "No leads on this date"}
-      </p>
+      <div className="pb-2 text-sm text-muted-foreground">
+        <div>
+          {scope.loading
+            ? "Counting..."
+            : scope.rowCount > 0
+              ? `${scope.rowCount.toLocaleString()} lead${scope.rowCount === 1 ? "" : "s"}`
+              : "No leads on this date"}
+        </div>
+        {scope.layoutLabel && <div className="text-xs">Layout: {scope.layoutLabel}</div>}
+      </div>
     </div>
   )
 }
@@ -8041,6 +8078,7 @@ type CampaignConfig = {
   SOURCE_OBJECT?: string | null
   SOURCE_LOAD_FROM?: string | null
   SOURCE_MAPPING_JSON?: string | null
+  EXPORT_LAYOUT_JSON?: string | null
   LEAD_EXPIRY_DAYS?: number | string | null
   BATCH_NAME_TEMPLATE?: string | null
   IS_ACTIVE?: boolean | null
@@ -8099,6 +8137,8 @@ function CampaignSettingsPanel() {
   // other than the upload target. Blank means "the upload target".
   const [sourceLoadFrom, setSourceLoadFrom] = useState("")
   const [sourceMapping, setSourceMapping] = useState<Record<string, string>>({})
+  // The CXM export layout. null until the editor loads it for the campaign.
+  const [exportLayout, setExportLayout] = useState<ExportLayout | null>(null)
   // Lead expiry: LEADEXPIRY = today + this many days (default 45).
   const [leadExpiryDays, setLeadExpiryDays] = useState("45")
   // Batch name template: {date} → today as YYYYMMDD. Editable per campaign.
@@ -8322,6 +8362,7 @@ function CampaignSettingsPanel() {
     setSourceObject("")
     setSourceLoadFrom("")
     setSourceMapping({})
+    setExportLayout(null)
     setLeadExpiryDays("45")
     setBatchTemplate("BATCH_ONAIR_ULTRA5{date}")
     setHllCols([]); setViewCols([]); setColsMsg(null)
@@ -8359,6 +8400,7 @@ function CampaignSettingsPanel() {
     setSourceObject(c.SOURCE_OBJECT ?? "")
     setSourceLoadFrom(c.SOURCE_LOAD_FROM ?? "")
     try {
+      setExportLayout(c.EXPORT_LAYOUT_JSON ? JSON.parse(c.EXPORT_LAYOUT_JSON) : null)
       const parsedMap = c.SOURCE_MAPPING_JSON ? JSON.parse(c.SOURCE_MAPPING_JSON) : {}
       for (const a of ["CAMPAIGNID", "CREATEDONDATE", "LEADEXPIRY", "BATCHNAME"]) delete parsedMap[a]
       setSourceMapping(parsedMap)
@@ -8435,6 +8477,7 @@ function CampaignSettingsPanel() {
           updateHllProcedures: updateHllProcs, syncProcedure,
           syncSourceView, syncTargetTable, syncColumns, syncBatchSize: syncBatch,
           sourceKind, sourceObject, sourceLoadFrom, sourceMapping,
+        exportLayout,
           leadExpiryDays: Number(leadExpiryDays) || 45, batchNameTemplate: batchTemplate, isActive,
         }),
       })
@@ -9010,6 +9053,19 @@ function CampaignSettingsPanel() {
                   </div>
                 </div>
               )}
+            </div>
+
+            <Separator />
+
+            {/* The CXM export layout. Its own section rather than inside the
+                source-mapping block above: that one only shows for a Snowflake
+                source, but the export runs for every campaign. */}
+            <div>
+              <ExportLayoutEditor
+                campaignId={campaignId}
+                layout={exportLayout}
+                onChange={setExportLayout}
+              />
             </div>
 
             <Separator />
