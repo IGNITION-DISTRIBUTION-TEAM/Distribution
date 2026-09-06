@@ -85,7 +85,6 @@ import {
   Settings as SettingsIcon,
   DatabaseZap,
   Mail,
-  TrendingUp,
   Recycle,
   Plus,
   Pencil,
@@ -121,7 +120,6 @@ const navItems: NavItem[] = [
   { id: "daily-files", label: "Daily Files", icon: <Files className="h-4 w-4" /> },
   { id: "temp-upload", label: "Temp Upload", icon: <DatabaseZap className="h-4 w-4" /> },
   { id: "recycle", label: "Recycle", icon: <Recycle className="h-4 w-4" /> },
-  { id: "forecasting", label: "Forecasting", icon: <TrendingUp className="h-4 w-4" /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon className="h-4 w-4" /> },
 ]
 
@@ -4790,27 +4788,6 @@ function DatePresets({
   )
 }
 
-function ForecastingContent() {
-  return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <PageHeading>Forecasting</PageHeading>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Forecast lead volume, sales, and conversion trends.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-        <TrendingUp className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h3 className="mt-3 font-medium text-foreground">Not yet implemented</h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tell me what to forecast (metric, source table, horizon, grouping) and I'll wire it up.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 type TempUploadResult = {
   ok?: boolean
   ran?: boolean
@@ -9157,8 +9134,6 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
         return <TempUploadContent />
       case "recycle":
         return <RecycleContent />
-      case "forecasting":
-        return <ForecastingContent />
       case "settings":
         return <SettingsContent />
       default:

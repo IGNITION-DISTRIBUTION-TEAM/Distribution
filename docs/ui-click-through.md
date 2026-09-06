@@ -83,7 +83,7 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Tour button in the header | Tour opens and drives the nav | |
 | EngAIge | Monitoring charts | Tooltips show the same decimals as before (not rounded) | |
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
-| Distribution | Every one of the 9 nav items | Renders | |
+| Distribution | Every one of the 7 nav items | Renders | |
 | Distribution | Settings → save | A toast appears (toasts are intentionally kept here) | |
 | Distribution | Automation → edit a task | Schedule frequency / day / time populate (the fields whose type was stale) | |
 | Distribution | Manual → step result | Emerald or rose banner depending on outcome | |
