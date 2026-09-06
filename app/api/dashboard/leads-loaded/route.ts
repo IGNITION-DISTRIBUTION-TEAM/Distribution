@@ -176,8 +176,14 @@ export async function GET(request: NextRequest) {
       ),
       // Batch × rank. UDM30 is the rank, written by the last update-HLL
       // procedure — it is NULL until that has run, which is why unranked is a
-      // labelled bucket rather than dropped. It is not stored as a number, so
-      // the ordering casts defensively.
+      // labelled bucket rather than dropped.
+      //
+      // ORDER BY the grouping keys and nothing else. Ordering by
+      // TRY_TO_NUMBER(UDM30::VARCHAR) — copied from /api/leads/count-check,
+      // where it is valid because that query groups by the raw column — fails
+      // here with 002024: this one groups by the COALESCE expression, so raw
+      // UDM30 is neither grouped nor aggregated. Rank order is applied in
+      // BatchRankChart's pivot anyway, so nothing needed it here.
       executeSnowflakeQuery<{ BATCHNAME: string | null; RANK: string | null; CNT: number | string }>(
         `SELECT
            BATCHNAME,
@@ -186,7 +192,7 @@ export async function GET(request: NextRequest) {
          FROM ${HISTORY_TABLE}
          ${where}
          GROUP BY 1, 2
-         ORDER BY BATCHNAME, TRY_TO_NUMBER(UDM30::VARCHAR) NULLS LAST, RANK`,
+         ORDER BY 1, 2`,
         SF_OPTS
       ),
     ])
