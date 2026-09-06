@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { TABLE, SF_OPTS, ensureTable } from "@/app/api/distribution/tasks/route"
+import { cronAuthed } from "@/lib/cron-auth"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -8,18 +9,11 @@ export const maxDuration = 300
 
 // Vercel Cron hits this on a schedule (see vercel.json). It runs every Active
 // task whose frequency interval has elapsed since its last run. Interval-based
-// (timezone-safe). Secured by CRON_SECRET (Vercel sends it as a Bearer token;
-// x-cron-secret also accepted).
-function authed(request: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const auth = request.headers.get("authorization")
-  const q = request.nextUrl.searchParams.get("secret")
-  return request.headers.get("x-cron-secret") === secret || auth === `Bearer ${secret}` || q === secret
-}
+// (timezone-safe). Secured by CRON_SECRET via cronAuthed (Vercel sends it as a
+// Bearer token; x-cron-secret also accepted).
 
 async function handle(request: NextRequest) {
-  if (!authed(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!cronAuthed(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   let due: { ID: number | string }[] = []
   try {

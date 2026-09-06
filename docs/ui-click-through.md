@@ -46,6 +46,13 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Spot | Rates / Airtime Rates | Pages open; confirmation dialog shows current row count | |
 | Task Automation | Start Create job, pick a file, click Current jobs, click back | Wizard state **survived**; nav item reads "Editing <NAME>" when a job is open | |
 | Task Automation | Current jobs / Tasks / SFTP endpoints tables | Shared table style; the wizard's three preview grids keep sticky headers when scrolled | |
+| Calendar | Open, before any task exists | Three tables self-create on the first request; "Nothing is on the calendar yet" info banner, no error | |
+| Calendar | Recipients → add yourself → Upcoming → New task, dated today | Green banner naming the recipient count; the mail arrives | |
+| Calendar | Edit that task's date, then delete it | Two more mails — an "Updated:" with a `Date: A → B` line, then a "Cancelled:" | |
+| Calendar | Save an edit that changes nothing | Grey "Nothing changed, so no email was sent" — no mail | |
+| Calendar | Notifications tab | One row per attempt above, all "Sent". If email is off they read "Not sent / disabled in App settings" — that is the tell | |
+| Calendar | With an empty Recipients list, create a task | Grey banner: saved, nobody notified. **Not** an error | |
+| Calendar | Reminders | `curl -H "x-cron-secret: $CRON_SECRET" <app>/api/cron/calendar` → `{ok:true, considered, sent}`. Run it twice: the second says `considered: 0` (already claimed) | |
 | Tickets | As a **non**-super-admin | "Departments" and "Customize form" nav items are **absent** | |
 | Tickets | Log a ticket → save | Emerald "Ticket <ref> logged" banner | |
 | Tickets | Customize form → save | Emerald "Form saved." banner | |

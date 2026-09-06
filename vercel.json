@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/distribution",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/calendar",
+      "schedule": "0,30 * * * *"
     }
   ]
 }

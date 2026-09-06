@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { BarChart3, Briefcase, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
+import { BarChart3, Briefcase, CalendarDays, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -79,6 +79,16 @@ const DEPARTMENTS: Department[] = [
     label: "Task Automation",
     description: "Scheduled jobs. First up: SFTP files into Snowflake tables.",
     icon: Workflow,
+    enabled: true,
+  },
+  {
+    id: "calendar",
+    // Says "shared" and "email" because three other things in this portal are
+    // already called tasks — scheduled procedures, the daily checklist, and
+    // SFTP jobs. This is the one people put dates on.
+    label: "Calendar",
+    description: "Shared team calendar. Dated tasks with email reminders.",
+    icon: CalendarDays,
     enabled: true,
   },
 ]
