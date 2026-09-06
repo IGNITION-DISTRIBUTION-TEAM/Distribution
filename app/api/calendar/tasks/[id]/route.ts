@@ -19,8 +19,16 @@ import {
   validateDueTime,
   validateTaskRecipients,
   validateTitle,
+  recurrenceSets,
   type CalendarTask,
 } from "@/lib/calendar-store"
+import {
+  describeRecurrence,
+  isRecurring,
+  nextOccurrence,
+  normalizeRecurrence,
+} from "@/lib/calendar-recurrence"
+import { sastTodayIso } from "@/lib/calendar-dates"
 import { notifyTaskDeleted, notifyTaskUpdated, resolveRecipients } from "@/lib/calendar-notify"
 
 export const dynamic = "force-dynamic"
@@ -35,13 +43,18 @@ export const runtime = "nodejs"
  */
 
 /** The change list the update email carries — `Field: old → new`, ticket-notify's shape. */
-function describeChanges(before: CalendarTask, after: CalendarTask): string[] {
+function describeChanges(
+  before: CalendarTask,
+  after: CalendarTask,
+  /** True when a roll-forward already reported the date move in its own words. */
+  skipDate = false
+): string[] {
   const out: string[] = []
   const line = (label: string, a: string, b: string) => {
     if (a !== b) out.push(`${label}: ${a || "(none)"} → ${b || "(none)"}`)
   }
   line("Title", before.title, after.title)
-  line("Date", before.dueDate, after.dueDate)
+  if (!skipDate) line("Date", before.dueDate, after.dueDate)
   line("Time", before.dueTime ?? "(all day)", after.dueTime ?? "(all day)")
   line("Status", before.status, after.status)
   line("Assigned to", before.assignee ?? "", after.assignee ?? "")
@@ -49,6 +62,9 @@ function describeChanges(before: CalendarTask, after: CalendarTask): string[] {
   if (before.recipientsMode !== after.recipientsMode ||
       before.recipients.join(",") !== after.recipients.join(",")) {
     out.push("Notification list changed")
+  }
+  if (describeRecurrence(before.recurrence) !== describeRecurrence(after.recurrence)) {
+    out.push(`Repeats: ${describeRecurrence(before.recurrence)} → ${describeRecurrence(after.recurrence)}`)
   }
   if (before.remindEnabled !== after.remindEnabled) {
     out.push(`Reminder: ${before.remindEnabled ? "on" : "off"} → ${after.remindEnabled ? "on" : "off"}`)
@@ -85,9 +101,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     sets.push(`DESCRIPTION = ${olit(description)}`)
   }
+  let newDueDate: string | null = null
   if (body.dueDate !== undefined) {
     const dueDate = validateDueDate(body.dueDate)
     if (typeof dueDate !== "string") return NextResponse.json(dueDate, { status: 400 })
+    newDueDate = dueDate
     sets.push(`DUE_DATE = ${lit(dueDate)}`)
   }
   if (body.dueTime !== undefined) {
@@ -97,7 +115,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     sets.push(`DUE_TIME = ${olit(dueTime)}`)
   }
-  if (body.status !== undefined) sets.push(`STATUS = ${lit(normStatus(body.status))}`)
+  // Held rather than pushed: ticking off a RECURRING task does not close it, it
+  // moves it to its next occurrence, and that decision needs the stored rule.
+  const newStatus = body.status === undefined ? null : normStatus(body.status)
   if (body.assignee !== undefined) {
     sets.push(`ASSIGNEE = ${olit(typeof body.assignee === "string" ? body.assignee.trim() : null)}`)
   }
@@ -115,8 +135,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.remindDaysBefore !== undefined) {
     sets.push(`REMIND_DAYS_BEFORE = ${normDaysBefore(body.remindDaysBefore)}`)
   }
-  if (sets.length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
-  sets.push("UPDATED_AT = CURRENT_TIMESTAMP()", `UPDATED_BY = ${lit(guard.email)}`)
+  // Status and recurrence are appended later (both need the stored row), so a
+  // PATCH carrying only one of them is legitimate with nothing in `sets` yet.
+  if (sets.length === 0 && body.recurrence === undefined && newStatus === null) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
+  }
 
   try {
     await ensureCalendarTables()
@@ -125,6 +148,51 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const before = await loadTask(taskId)
     if (!before) return NextResponse.json({ error: "Task not found" }, { status: 404 })
 
+    // Resolved here rather than with the other fields because the rule's
+    // defaults are anchored to the task's date — which is whatever this request
+    // sets, or the stored one if it is not changing it.
+    let rule = before.recurrence
+    if (body.recurrence !== undefined) {
+      rule = normalizeRecurrence(body.recurrence, newDueDate ?? before.dueDate)
+      sets.push(...recurrenceSets(rule))
+    }
+
+    /**
+     * Ticking off a recurring task.
+     *
+     * "Done" on a weekly standup means done with THIS week's, not with the
+     * standup — so the row rolls to its next occurrence and stays open, and
+     * REMINDER_SENT_FOR (which holds a date, not a flag) stops matching, so
+     * next week's reminder re-arms by itself. When the rule has run past its
+     * until date there is no next occurrence and the series really does close.
+     *
+     * The trade this makes: no per-occurrence history. Rolling the row forward
+     * leaves no record that this week's standup happened. That is a second
+     * table if it is ever wanted, not a tweak to this one.
+     */
+    let rolledTo: string | null = null
+    let seriesEnded = false
+    if (newStatus !== null) {
+      const from = newDueDate ?? before.dueDate
+      if (newStatus === "done" && isRecurring(rule)) {
+        rolledTo = nextOccurrence(rule, from, sastTodayIso())
+        if (rolledTo) {
+          // Drop any DUE_DATE this request set explicitly: Snowflake rejects a
+          // SET list that names the same column twice, and the roll wins.
+          for (let i = sets.length - 1; i >= 0; i--) {
+            if (sets[i].startsWith("DUE_DATE =")) sets.splice(i, 1)
+          }
+          sets.push(`DUE_DATE = ${lit(rolledTo)}`, "STATUS = 'open'")
+        } else {
+          seriesEnded = true
+          sets.push(`STATUS = ${lit(newStatus)}`)
+        }
+      } else {
+        sets.push(`STATUS = ${lit(newStatus)}`)
+      }
+    }
+
+    sets.push("UPDATED_AT = CURRENT_TIMESTAMP()", `UPDATED_BY = ${lit(guard.email)}`)
     await executeSnowflakeQuery(
       `UPDATE ${ITEMS_TABLE} SET ${sets.join(", ")} WHERE ID = ${taskId}`,
       CAL_SF
@@ -133,7 +201,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const after = await loadTask(taskId)
     if (!after) return NextResponse.json({ ok: true, notified: false, recipientCount: 0 })
 
-    const changes = describeChanges(before, after)
+    const changes = describeChanges(before, after, rolledTo !== null)
+    if (rolledTo) changes.unshift(`Done for ${before.dueDate}. Next: ${rolledTo}.`)
+    if (seriesEnded) changes.unshift("This was the last occurrence — the series has finished.")
     if (changes.length === 0) {
       // Nothing a reader would care about moved. Do not spend an email on it.
       return NextResponse.json({ ok: true, notified: false, recipientCount: 0, unchanged: true })
@@ -141,7 +211,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const to = resolveRecipients(after, (await loadRecipients(true)).map((r) => r.email))
     const notified = await notifyTaskUpdated(after, to, guard.email, changes)
-    return NextResponse.json({ ok: true, notified, recipientCount: to.length })
+    return NextResponse.json({
+      ok: true,
+      notified,
+      recipientCount: to.length,
+      rolledTo,
+      seriesEnded,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/calendar/tasks PATCH] error:", message)

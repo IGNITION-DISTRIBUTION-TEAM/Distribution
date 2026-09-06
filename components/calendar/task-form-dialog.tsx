@@ -33,7 +33,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import type { CalendarTask, MutationResult, RecipientsMode } from "@/components/calendar/types"
+import type {
+  CalendarTask,
+  MutationResult,
+  RecipientsMode,
+  RecurKind,
+} from "@/components/calendar/types"
+import {
+  NO_RECURRENCE,
+  describeRecurrence,
+  normalizeRecurrence,
+  upcomingOccurrences,
+} from "@/lib/calendar-recurrence"
+import { formatDateShort } from "@/lib/calendar-dates"
 
 const EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/
 const HOUSE_DOMAIN = "@ignitiongroup.co.za"
@@ -49,7 +61,23 @@ type Form = {
   recipients: string[]
   remindEnabled: boolean
   remindDaysBefore: string
+  recurKind: RecurKind
+  recurInterval: string
+  recurWeekdays: number[]
+  recurDayOfMonth: string
+  recurUntil: string
 }
+
+/** Monday first — a weekday picker that starts on Sunday reads wrong here. */
+const WEEKDAY_PICKER: { value: number; label: string }[] = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 0, label: "Sun" },
+]
 
 function formFor(task: CalendarTask | null, today: string): Form {
   if (!task) {
@@ -64,6 +92,11 @@ function formFor(task: CalendarTask | null, today: string): Form {
       recipients: [],
       remindEnabled: true,
       remindDaysBefore: "0",
+      recurKind: "none",
+      recurInterval: "1",
+      recurWeekdays: [],
+      recurDayOfMonth: "",
+      recurUntil: "",
     }
   }
   return {
@@ -77,7 +110,27 @@ function formFor(task: CalendarTask | null, today: string): Form {
     recipients: [...task.recipients],
     remindEnabled: task.remindEnabled,
     remindDaysBefore: String(task.remindDaysBefore),
+    recurKind: task.recurrence.kind,
+    recurInterval: String(task.recurrence.interval),
+    recurWeekdays: [...task.recurrence.weekdays],
+    recurDayOfMonth: task.recurrence.dayOfMonth === null ? "" : String(task.recurrence.dayOfMonth),
+    recurUntil: task.recurrence.until ?? "",
   }
+}
+
+/** The form's five recurrence fields as the rule the API and the preview want. */
+function ruleOf(form: Form) {
+  if (form.recurKind === "none") return NO_RECURRENCE
+  return normalizeRecurrence(
+    {
+      kind: form.recurKind,
+      interval: Number(form.recurInterval) || 1,
+      weekdays: form.recurWeekdays,
+      dayOfMonth: form.recurDayOfMonth === "" ? undefined : Number(form.recurDayOfMonth),
+      until: form.recurUntil || null,
+    },
+    form.dueDate
+  )
 }
 
 export function TaskFormDialog({
@@ -147,6 +200,7 @@ export function TaskFormDialog({
         recipients: form.recipients,
         remindEnabled: form.remindEnabled,
         remindDaysBefore: Number(form.remindDaysBefore) || 0,
+        recurrence: ruleOf(form),
       }
       const res = await fetch(task ? `/api/calendar/tasks/${task.id}` : "/api/calendar/tasks", {
         method: task ? "PATCH" : "POST",
@@ -173,6 +227,10 @@ export function TaskFormDialog({
         ? teamCount + form.recipients.length
         : teamCount
   const outsiders = form.recipients.filter((e) => !e.endsWith(HOUSE_DOMAIN))
+  const preview =
+    form.recurKind === "none" || !/^\d{4}-\d{2}-\d{2}$/.test(form.dueDate)
+      ? []
+      : upcomingOccurrences(ruleOf(form), form.dueDate, 3)
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -237,6 +295,132 @@ export function TaskFormDialog({
                 All day
               </label>
             </div>
+          </div>
+
+          {/* ---- repeats ---- */}
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[12rem] flex-1">
+                <label className="mb-1 block text-xs text-muted-foreground">Repeats</label>
+                <Select
+                  value={form.recurKind}
+                  onValueChange={(v) => set("recurKind", v as RecurKind)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Does not repeat</SelectItem>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.recurKind !== "none" && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">every</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={99}
+                    className="w-20"
+                    value={form.recurInterval}
+                    onChange={(e) => set("recurInterval", e.target.value)}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {form.recurKind === "daily" ? "day(s)" : form.recurKind === "weekly" ? "week(s)" : "month(s)"}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {form.recurKind === "weekly" && (
+              <div className="mt-3">
+                <label className="mb-1 block text-xs text-muted-foreground">On</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {WEEKDAY_PICKER.map((d) => {
+                    const on = form.recurWeekdays.includes(d.value)
+                    return (
+                      <Button
+                        key={d.value}
+                        type="button"
+                        size="sm"
+                        variant={on ? "default" : "outline"}
+                        aria-pressed={on}
+                        onClick={() =>
+                          set(
+                            "recurWeekdays",
+                            on
+                              ? form.recurWeekdays.filter((w) => w !== d.value)
+                              : [...form.recurWeekdays, d.value]
+                          )
+                        }
+                      >
+                        {d.label}
+                      </Button>
+                    )
+                  })}
+                </div>
+                {form.recurWeekdays.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Nothing picked, so it repeats on whatever weekday the date above falls on.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {form.recurKind === "monthly" && (
+              <div className="mt-3 flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Day of the month</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={31}
+                    className="w-24"
+                    placeholder={form.dueDate.slice(8, 10)}
+                    value={form.recurDayOfMonth}
+                    onChange={(e) => set("recurDayOfMonth", e.target.value)}
+                  />
+                </div>
+                <p className="pb-2 text-xs text-muted-foreground">
+                  Blank uses the date above. A day past the end of a short month falls on its last
+                  day, then goes back.
+                </p>
+              </div>
+            )}
+
+            {form.recurKind !== "none" && (
+              <div className="mt-3 flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Stop repeating after (optional)
+                  </label>
+                  <Input
+                    type="date"
+                    className="w-44"
+                    value={form.recurUntil}
+                    onChange={(e) => set("recurUntil", e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* The preview is the point of this box: a rule is easy to describe
+                and easy to get wrong, and the next few real dates settle it. */}
+            {form.recurKind !== "none" && (
+              <div className="mt-3 text-xs text-muted-foreground">
+                <div className="text-foreground">{describeRecurrence(ruleOf(form))}</div>
+                {preview.length > 0 ? (
+                  <div className="mt-0.5">
+                    After {formatDateShort(form.dueDate)}: {preview.map(formatDateShort).join(" · ")}
+                  </div>
+                ) : (
+                  <div className="mt-0.5">No further dates — check the stop date.</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div>

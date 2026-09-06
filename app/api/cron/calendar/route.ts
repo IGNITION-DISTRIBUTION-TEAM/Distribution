@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { cronAuthed } from "@/lib/cron-auth"
 import { daysBetween, sastTodayIso } from "@/lib/calendar-dates"
+import { isRecurring, nextOccurrence } from "@/lib/calendar-recurrence"
 import {
   CAL_SF,
   ITEMS_TABLE,
   REMIND_AT,
   ensureCalendarTables,
+  lit,
   loadTeamEmails,
   rowToTask,
 } from "@/lib/calendar-store"
@@ -35,15 +37,83 @@ export const maxDuration = 300
 const BATCH = 60
 const PACE_MS = 1500
 
+/**
+ * Roll every overdue recurring series onto its next occurrence.
+ *
+ * Runs BEFORE the reminder pass, and that order matters: the reminder query
+ * refuses anything already past its date, so a series left sitting on
+ * yesterday would be skipped, advanced, and only reminded on the next tick
+ * half an hour later. Advancing first means it is reminded on this one.
+ *
+ * Safe to run twice. `nextOccurrence` is asked for the next date that is also
+ * today or later, so a series three weeks overdue lands on the real next
+ * occurrence in one step rather than being walked forward three times — and
+ * once its date is today or later, the WHERE clause below stops matching it.
+ *
+ * Returns how many rows moved. Failures are logged and skipped: one unparseable
+ * rule must not stop the rest of the calendar from working.
+ */
+async function advanceRecurring(today: string): Promise<number> {
+  const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+    `SELECT ID, TITLE, DUE_DATE,
+            COALESCE(RECUR_KIND, 'none') AS RECUR_KIND,
+            COALESCE(RECUR_INTERVAL, 1) AS RECUR_INTERVAL,
+            RECUR_WEEKDAYS, RECUR_DAY_OF_MONTH, RECUR_UNTIL
+       FROM ${ITEMS_TABLE}
+      WHERE COALESCE(STATUS, 'open') = 'open'
+        AND COALESCE(RECUR_KIND, 'none') <> 'none'
+        AND DUE_DATE IS NOT NULL
+        AND DUE_DATE < ${lit(today)}
+      ORDER BY ID
+      LIMIT ${BATCH}`,
+    CAL_SF
+  )
+
+  let moved = 0
+  for (const row of rows) {
+    const task = rowToTask(row)
+    if (!isRecurring(task.recurrence)) continue
+    try {
+      const next = nextOccurrence(task.recurrence, task.dueDate, today)
+      if (next) {
+        // The date guard makes this a no-op if another invocation got here
+        // first, so two overlapping runs cannot step the series twice.
+        await executeSnowflakeQuery(
+          `UPDATE ${ITEMS_TABLE}
+              SET DUE_DATE = ${lit(next)}, UPDATED_AT = CURRENT_TIMESTAMP(), UPDATED_BY = 'cron'
+            WHERE ID = ${task.id} AND DUE_DATE = ${lit(task.dueDate)}`,
+          CAL_SF
+        )
+      } else {
+        // Past its until date: the series is over, so close it rather than
+        // leaving it overdue forever.
+        await executeSnowflakeQuery(
+          `UPDATE ${ITEMS_TABLE}
+              SET STATUS = 'done', UPDATED_AT = CURRENT_TIMESTAMP(), UPDATED_BY = 'cron'
+            WHERE ID = ${task.id} AND COALESCE(STATUS, 'open') = 'open'`,
+          CAL_SF
+        )
+      }
+      moved++
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[/api/cron/calendar] advancing task ${task.id} failed:`, message)
+    }
+  }
+  return moved
+}
+
 async function handle(request: NextRequest) {
   if (!cronAuthed(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const today = sastTodayIso()
   let due: Record<string, unknown>[] = []
   let team: string[] = []
+  let advanced = 0
 
   try {
     await ensureCalendarTables()
+    advanced = await advanceRecurring(today)
     // Everything below is evaluated in SAST. SYSDATE() is UTC, which is what
     // makes CONVERT_TIMEZONE('UTC', …) correct — the same idiom as the
     // distribution cron.
@@ -127,7 +197,7 @@ async function handle(request: NextRequest) {
     if (PACE_MS > 0) await new Promise((r) => setTimeout(r, PACE_MS))
   }
 
-  return NextResponse.json({ ok: true, today, considered: due.length, sent, failed, results })
+  return NextResponse.json({ ok: true, today, advanced, considered: due.length, sent, failed, results })
 }
 
 export async function GET(request: NextRequest) {

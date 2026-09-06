@@ -5,6 +5,7 @@ import {
   type RecipientsMode,
 } from "@/lib/calendar-store"
 import { formatDateShort, formatWhen } from "@/lib/calendar-dates"
+import { describeRecurrence, isRecurring } from "@/lib/calendar-recurrence"
 
 /**
  * Calendar email, sent from the DWH_automation mailbox.
@@ -132,6 +133,9 @@ async function trySend(input: {
 /** The block of detail every mail repeats, so a reader never has to open the app. */
 function detailLines(task: CalendarTask): string[] {
   const lines = [`When: ${formatWhen(task.dueDate, task.dueTime)}`]
+  // A recurring task's date is only its NEXT occurrence, so a reader who is not
+  // told it repeats will read "Friday" as the whole story.
+  if (isRecurring(task.recurrence)) lines.push(`Repeats: ${describeRecurrence(task.recurrence)}`)
   if (task.assignee) lines.push(`Assigned to: ${task.assignee}`)
   if (task.description) lines.push("", task.description)
   return lines
@@ -234,7 +238,7 @@ export async function notifyTaskReminder(
     to,
     subject: `[Calendar] ${wording}: ${task.title}`,
     lines: [
-      `Reminder — ${wording.toLowerCase()}.`,
+      `Reminder — ${wording.toLowerCase()}${isRecurring(task.recurrence) ? " (this repeats)" : ""}.`,
       "",
       task.title,
       ...detailLines(task),

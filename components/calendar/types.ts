@@ -5,6 +5,18 @@
  * that module imports lib/snowflake, and pulling a server module's type into a
  * "use client" file drags its import graph along with it.
  */
+export type RecurKind = "none" | "daily" | "weekly" | "monthly"
+
+export type Recurrence = {
+  kind: RecurKind
+  interval: number
+  /** 0 = Sunday … 6 = Saturday. Weekly only. */
+  weekdays: number[]
+  /** The anchor day, clamped per month. Monthly only. */
+  dayOfMonth: number | null
+  until: string | null
+}
+
 export type RecipientsMode = "team" | "custom" | "both"
 export type TaskStatus = "open" | "done" | "cancelled"
 
@@ -21,6 +33,7 @@ export type CalendarTask = {
   remindEnabled: boolean
   remindDaysBefore: number
   reminderSentFor: string | null
+  recurrence: Recurrence
   createdAt: string | null
   createdBy: string | null
   updatedAt: string | null
@@ -56,4 +69,8 @@ export type MutationResult = {
   notified: boolean
   recipientCount: number
   unchanged?: boolean
+  /** Set when ticking off a recurring task moved it to its next occurrence. */
+  rolledTo?: string | null
+  /** Set when that was the series' last occurrence. */
+  seriesEnded?: boolean
 }

@@ -30,6 +30,11 @@
  */
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { isValidIsoDate, isValidTime } from "@/lib/calendar-dates"
+import {
+  NO_RECURRENCE,
+  normalizeRecurrence,
+  type Recurrence,
+} from "@/lib/calendar-recurrence"
 
 export const CAL_SF = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 export const ITEMS_TABLE = `${CAL_SF.database}.${CAL_SF.schema}.TSK_CALENDAR_ITEMS`
@@ -61,6 +66,13 @@ const ITEM_COLUMNS: [string, string][] = [
   ["REMIND_DAYS_BEFORE", "NUMBER"], // 0 = the morning it is due
   ["REMINDER_SENT_FOR", "VARCHAR"], // the DUE_DATE a reminder was sent for, not a flag
   ["REMINDER_SENT_AT", "TIMESTAMP_NTZ"],
+  // Recurrence. One row per series, DUE_DATE always the next occurrence — see
+  // lib/calendar-recurrence.ts for why there are no per-occurrence rows.
+  ["RECUR_KIND", "VARCHAR"], // 'none' | 'daily' | 'weekly' | 'monthly'
+  ["RECUR_INTERVAL", "NUMBER"], // every N of those
+  ["RECUR_WEEKDAYS", "VARCHAR"], // weekly: JSON number[], 0 = Sunday
+  ["RECUR_DAY_OF_MONTH", "NUMBER"], // monthly: the anchor day, clamped per month
+  ["RECUR_UNTIL", "VARCHAR"], // inclusive last date, or NULL for open-ended
   ["CREATED_AT", "TIMESTAMP_NTZ"],
   ["CREATED_BY", "VARCHAR"],
   ["UPDATED_AT", "TIMESTAMP_NTZ"],
@@ -164,6 +176,7 @@ export type CalendarTask = {
   remindEnabled: boolean
   remindDaysBefore: number
   reminderSentFor: string | null
+  recurrence: Recurrence
   createdAt: string | null
   createdBy: string | null
   updatedAt: string | null
@@ -261,6 +274,38 @@ export function validateTaskRecipients(value: unknown): string[] | { error: stri
   return out
 }
 
+/**
+ * The five recurrence columns as SQL literals, in a fixed order.
+ *
+ * One place, because POST spells them as an INSERT column list and PATCH as
+ * SET clauses, and a rule written by one that the other cannot read back would
+ * be a series that silently stops repeating.
+ */
+export const RECUR_COLUMN_NAMES = [
+  "RECUR_KIND",
+  "RECUR_INTERVAL",
+  "RECUR_WEEKDAYS",
+  "RECUR_DAY_OF_MONTH",
+  "RECUR_UNTIL",
+] as const
+
+export function recurrenceValues(rule: Recurrence): string[] {
+  return [
+    lit(rule.kind),
+    String(rule.interval),
+    rule.kind === "weekly" ? lit(JSON.stringify(rule.weekdays)) : "NULL",
+    rule.kind === "monthly" ? nlit(rule.dayOfMonth) : "NULL",
+    olit(rule.until),
+  ]
+}
+
+export function recurrenceSets(rule: Recurrence): string[] {
+  const values = recurrenceValues(rule)
+  return RECUR_COLUMN_NAMES.map((name, i) => `${name} = ${values[i]}`)
+}
+
+export { NO_RECURRENCE }
+
 export function parseId(raw: string | null): number | null {
   if (raw == null) return null
   const n = parseInt(raw, 10)
@@ -310,6 +355,16 @@ export function rowToTask(row: Record<string, unknown>): CalendarTask {
     remindEnabled: bool(row.REMIND_ENABLED, true),
     remindDaysBefore: normDaysBefore(row.REMIND_DAYS_BEFORE ?? 0),
     reminderSentFor: str(row.REMINDER_SENT_FOR),
+    recurrence: normalizeRecurrence(
+      {
+        kind: row.RECUR_KIND,
+        interval: row.RECUR_INTERVAL,
+        weekdays: row.RECUR_WEEKDAYS,
+        dayOfMonth: row.RECUR_DAY_OF_MONTH,
+        until: row.RECUR_UNTIL,
+      },
+      String(row.DUE_DATE ?? "")
+    ),
     createdAt: str(row.CREATED_AT),
     createdBy: str(row.CREATED_BY),
     updatedAt: str(row.UPDATED_AT),
@@ -350,7 +405,11 @@ const TASK_SELECT = `SELECT ID, TITLE, DESCRIPTION, DUE_DATE, DUE_TIME,
        COALESCE(RECIPIENTS_MODE, 'team') AS RECIPIENTS_MODE, RECIPIENTS_JSON,
        COALESCE(REMIND_ENABLED, TRUE) AS REMIND_ENABLED,
        COALESCE(REMIND_DAYS_BEFORE, 0) AS REMIND_DAYS_BEFORE,
-       REMINDER_SENT_FOR, CREATED_AT, CREATED_BY, UPDATED_AT, UPDATED_BY
+       REMINDER_SENT_FOR,
+       COALESCE(RECUR_KIND, 'none') AS RECUR_KIND,
+       COALESCE(RECUR_INTERVAL, 1) AS RECUR_INTERVAL,
+       RECUR_WEEKDAYS, RECUR_DAY_OF_MONTH, RECUR_UNTIL,
+       CREATED_AT, CREATED_BY, UPDATED_AT, UPDATED_BY
   FROM ${ITEMS_TABLE}`
 
 export async function loadTask(id: number): Promise<CalendarTask | null> {

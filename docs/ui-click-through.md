@@ -52,6 +52,11 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Calendar | Save an edit that changes nothing | Grey "Nothing changed, so no email was sent" — no mail | |
 | Calendar | Notifications tab | One row per attempt above, all "Sent". If email is off they read "Not sent / disabled in App settings" — that is the tell | |
 | Calendar | With an empty Recipients list, create a task | Grey banner: saved, nobody notified. **Not** an error | |
+| Calendar | New task → Repeats: Weekly → pick Mon and Wed | The preview under the box lists the next three real dates; the summary reads "Every week on Monday and Wednesday" | |
+| Calendar | Repeats: Monthly, day 31, dated 31 January | Preview shows 28 Feb then **31** Mar — it clamps for February and comes back, it does not stick on the 28th | |
+| Calendar | Tick off a recurring task | It does **not** disappear — the banner says "done for this time — next on ...", and the row moves to that date | |
+| Calendar | Delete a recurring task | The confirm says the whole series goes, not just this occurrence | |
+| Calendar | An overdue recurring task, then run the cron | `advanced` in the response counts it; the row lands on today or later. Running the cron twice must **not** step it a second time | |
 | Calendar | Reminders | `curl -H "x-cron-secret: $CRON_SECRET" <app>/api/cron/calendar` → `{ok:true, considered, sent}`. Run it twice: the second says `considered: 0` (already claimed) | |
 | Tickets | As a **non**-super-admin | "Departments" and "Customize form" nav items are **absent** | |
 | Tickets | Log a ticket → save | Emerald "Ticket <ref> logged" banner | |

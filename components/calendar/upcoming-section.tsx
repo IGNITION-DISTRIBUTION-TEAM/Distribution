@@ -14,7 +14,7 @@
  * if a browser clock is simply wrong.
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { CalendarPlus, Check, Loader2, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react"
+import { CalendarPlus, Check, Loader2, Pencil, RefreshCw, Repeat, Trash2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -41,6 +41,7 @@ import {
   sastTodayIso,
   type CalendarGroup,
 } from "@/lib/calendar-dates"
+import { describeRecurrence, isRecurring } from "@/lib/calendar-recurrence"
 import { TaskFormDialog } from "@/components/calendar/task-form-dialog"
 import type { CalendarTask, MutationResult, TeamRecipient } from "@/components/calendar/types"
 
@@ -50,21 +51,29 @@ function outcomeBanner(
   verb: string
 ): { tone: "success" | "info" | "warning"; text: string } {
   if (result.unchanged) return { tone: "info", text: `Nothing changed, so no email was sent.` }
+
+  // A recurring task that was ticked off has not gone anywhere — say where it
+  // went, or the row reappearing on a later date looks like a bug.
+  const what = result.rolledTo
+    ? `done for this time — next on ${formatDateLabel(result.rolledTo)}`
+    : result.seriesEnded
+      ? "done. That was the series' last occurrence"
+      : verb
   if (result.notified) {
     return {
       tone: "success",
-      text: `Task ${verb}. Notified ${result.recipientCount} recipient${result.recipientCount === 1 ? "" : "s"}.`,
+      text: `Task ${what}. Notified ${result.recipientCount} recipient${result.recipientCount === 1 ? "" : "s"}.`,
     }
   }
   if (result.recipientCount === 0) {
     return {
       tone: "info",
-      text: `Task ${verb}. Nobody is on the notification list yet — add teammates under Recipients.`,
+      text: `Task ${what}. Nobody is on the notification list yet — add teammates under Recipients.`,
     }
   }
   return {
     tone: "warning",
-    text: `Task ${verb}, but the email could not be sent. Check the Notifications tab for the reason.`,
+    text: `Task ${what}, but the email could not be sent. Check the Notifications tab for the reason.`,
   }
 }
 
@@ -205,6 +214,12 @@ export function UpcomingSection({
         </TableCell>
         <TableCell className="whitespace-nowrap">
           <div>{formatDateLabel(task.dueDate)}</div>
+          {isRecurring(task.recurrence) && (
+            <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+              <Repeat className="h-3 w-3 shrink-0" />
+              {describeRecurrence(task.recurrence)}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             {task.dueTime ?? "All day"}
             {task.remindEnabled
@@ -225,7 +240,13 @@ export function UpcomingSection({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={task.status === "open" ? "Mark done" : "Reopen"}
+              aria-label={
+                task.status !== "open"
+                  ? "Reopen"
+                  : isRecurring(task.recurrence)
+                    ? "Done for this occurrence"
+                    : "Mark done"
+              }
               disabled={busyId === task.id}
               onClick={() => void setStatus(task, task.status === "open" ? "done" : "open")}
             >
@@ -371,6 +392,9 @@ export function UpcomingSection({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this task?</AlertDialogTitle>
             <AlertDialogDescription>
+              {deleting && isRecurring(deleting.recurrence)
+                ? "This deletes the whole repeating series, not just this occurrence. "
+                : ""}
               This will delete &ldquo;{deleting?.title}&rdquo; from the shared calendar
               {deleteReach(deleting) > 0
                 ? ` and email ${deleteReach(deleting)} ${deleteReach(deleting) === 1 ? "person" : "people"}.`

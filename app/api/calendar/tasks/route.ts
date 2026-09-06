@@ -20,7 +20,10 @@ import {
   validateDueTime,
   validateTaskRecipients,
   validateTitle,
+  RECUR_COLUMN_NAMES,
+  recurrenceValues,
 } from "@/lib/calendar-store"
+import { normalizeRecurrence } from "@/lib/calendar-recurrence"
 import { notifyTaskCreated, resolveRecipients } from "@/lib/calendar-notify"
 
 export const dynamic = "force-dynamic"
@@ -99,6 +102,10 @@ export async function POST(request: NextRequest) {
   const recipients = validateTaskRecipients(body.recipients)
   if (!Array.isArray(recipients)) return NextResponse.json(recipients, { status: 400 })
 
+  // Never rejects — an unreadable rule reads as "does not repeat", which is the
+  // safe direction. The start date seeds the defaults, so picking Weekly and
+  // touching nothing else means "the weekday this task starts on".
+  const recurrence = normalizeRecurrence(body.recurrence, dueDate)
   const mode = normMode(body.recipientsMode)
   const remindEnabled = body.remindEnabled === undefined ? true : Boolean(body.remindEnabled)
   const remindDays = normDaysBefore(body.remindDaysBefore)
@@ -112,10 +119,12 @@ export async function POST(request: NextRequest) {
       `INSERT INTO ${ITEMS_TABLE}
          (TITLE, DESCRIPTION, DUE_DATE, DUE_TIME, STATUS, ASSIGNEE,
           RECIPIENTS_MODE, RECIPIENTS_JSON, REMIND_ENABLED, REMIND_DAYS_BEFORE,
+          ${RECUR_COLUMN_NAMES.join(", ")},
           CREATED_AT, CREATED_BY, UPDATED_AT, UPDATED_BY)
        SELECT ${lit(title)}, ${olit(description)}, ${lit(dueDate)}, ${olit(dueTime)},
               'open', ${olit(assignee)}, ${lit(mode)}, ${lit(JSON.stringify(recipients))},
               ${blit(remindEnabled)}, ${remindDays},
+              ${recurrenceValues(recurrence).join(", ")},
               CURRENT_TIMESTAMP(), ${lit(guard.email)}, CURRENT_TIMESTAMP(), ${lit(guard.email)}`,
       CAL_SF
     )

@@ -12,6 +12,10 @@
  *      reminder arrived a day early.
  *   2. resolveRecipients. Get this wrong and either the wrong people are
  *      emailed or nobody is, and "nobody" looks exactly like "email is off".
+ *   3. nextOccurrence. A recurring task is a single row that rolls forward, so
+ *      this function IS the series — there is no list of dates anywhere to
+ *      check it against. Month-end clamping and the weekly anchor are the two
+ *      places it would go wrong quietly.
  *
  * Everything else here is SQL and Graph calls, which no offline test can
  * exercise: nothing in this repo executes SQL or sends mail.
@@ -29,6 +33,14 @@ import {
   sastTodayIso,
 } from "../../lib/calendar-dates"
 import { dueWording, resolveRecipients } from "../../lib/calendar-notify"
+import {
+  NO_RECURRENCE,
+  describeRecurrence,
+  nextOccurrence,
+  normalizeRecurrence,
+  upcomingOccurrences,
+  type Recurrence,
+} from "../../lib/calendar-recurrence"
 
 let failures = 0
 function check(name: string, ok: boolean, detail = "") {
@@ -226,6 +238,202 @@ console.log("\ndueWording")
   // than "Due in -2 days" — the cron will not select it, but nothing else
   // guarantees that.
   check("a negative reads as today, not a negative count", dueWording(-2) === "Due today")
+}
+
+/* ---- 8. Recurrence rules ------------------------------------------------ */
+
+const rule = (r: Partial<Recurrence>): Recurrence => ({ ...NO_RECURRENCE, ...r })
+
+console.log("\nnormalizeRecurrence")
+{
+  check("junk becomes 'does not repeat'", normalizeRecurrence(undefined).kind === "none")
+  check("an unknown kind becomes 'none'", normalizeRecurrence({ kind: "hourly" }).kind === "none")
+  check(
+    "weekly with no days picked uses the start date's weekday",
+    // 2026-09-11 is a Friday (5).
+    JSON.stringify(normalizeRecurrence({ kind: "weekly" }, "2026-09-11").weekdays) === "[5]"
+  )
+  check(
+    "monthly with no day picked uses the start date's day",
+    normalizeRecurrence({ kind: "monthly" }, "2026-09-11").dayOfMonth === 11
+  )
+  check("interval floors at 1", normalizeRecurrence({ kind: "daily", interval: 0 }).interval === 1)
+  check("interval caps at 99", normalizeRecurrence({ kind: "daily", interval: 5000 }).interval === 99)
+  check(
+    "weekdays arrive as a JSON string from Snowflake",
+    JSON.stringify(normalizeRecurrence({ kind: "weekly", weekdays: "[1,3]" }).weekdays) === "[1,3]"
+  )
+  check(
+    "out-of-range weekdays are dropped",
+    JSON.stringify(normalizeRecurrence({ kind: "weekly", weekdays: [1, 9, -2, 3] }).weekdays) ===
+      "[1,3]"
+  )
+  check(
+    "a bad until date is dropped rather than ending the series",
+    normalizeRecurrence({ kind: "daily", until: "2026-02-31" }).until === null
+  )
+}
+
+console.log("\nnextOccurrence — daily")
+{
+  check(
+    "every day",
+    nextOccurrence(rule({ kind: "daily", interval: 1 }), "2026-09-11") === "2026-09-12"
+  )
+  check(
+    "every 3 days",
+    nextOccurrence(rule({ kind: "daily", interval: 3 }), "2026-09-11") === "2026-09-14"
+  )
+  check(
+    "crosses a month end",
+    nextOccurrence(rule({ kind: "daily", interval: 1 }), "2026-09-30") === "2026-10-01"
+  )
+  // The catch-up case: three weeks overdue, one step, lands on or after today.
+  const caught = nextOccurrence(rule({ kind: "daily", interval: 1 }), "2026-08-20", "2026-09-11")
+  check("a stale series catches up to today in one step", caught === "2026-09-11", String(caught))
+  check(
+    "a stale series with an interval lands on the cycle, not on today",
+    nextOccurrence(rule({ kind: "daily", interval: 7 }), "2026-08-20", "2026-09-11") === "2026-09-17"
+  )
+  check(
+    "'none' never has a next occurrence",
+    nextOccurrence(NO_RECURRENCE, "2026-09-11") === null
+  )
+}
+
+console.log("\nnextOccurrence — weekly")
+{
+  // 2026-09-14 is a Monday, 2026-09-16 a Wednesday, 2026-09-11 a Friday.
+  const monWed = rule({ kind: "weekly", interval: 1, weekdays: [1, 3] })
+  check("from Monday, the next is Wednesday", nextOccurrence(monWed, "2026-09-14") === "2026-09-16")
+  check(
+    "from Wednesday, the next is the following Monday",
+    nextOccurrence(monWed, "2026-09-16") === "2026-09-21"
+  )
+  const everyFri = rule({ kind: "weekly", interval: 1, weekdays: [5] })
+  check("a single weekday steps a week", nextOccurrence(everyFri, "2026-09-11") === "2026-09-18")
+
+  // Fortnightly is anchored to the WEEK: both days of one week, then skip one.
+  const fortnight = rule({ kind: "weekly", interval: 2, weekdays: [1, 3] })
+  check(
+    "fortnightly keeps both days inside the same week",
+    nextOccurrence(fortnight, "2026-09-14") === "2026-09-16"
+  )
+  check(
+    "then skips a whole week rather than drifting",
+    nextOccurrence(fortnight, "2026-09-16") === "2026-09-28",
+    String(nextOccurrence(fortnight, "2026-09-16"))
+  )
+  // Sunday is 0 but the week starts Monday, so a Sunday-only rule must not
+  // jump backwards into the week just gone.
+  const sundays = rule({ kind: "weekly", interval: 1, weekdays: [0] })
+  check("Sunday-only moves forward", nextOccurrence(sundays, "2026-09-13") === "2026-09-20")
+}
+
+console.log("\nnextOccurrence — monthly")
+{
+  const the12th = rule({ kind: "monthly", interval: 1, dayOfMonth: 12 })
+  check("the 12th, next month", nextOccurrence(the12th, "2026-09-12") === "2026-10-12")
+  check(
+    "every 3 months",
+    nextOccurrence(rule({ kind: "monthly", interval: 3, dayOfMonth: 12 }), "2026-09-12") ===
+      "2026-12-12"
+  )
+  check(
+    "crosses a year end",
+    nextOccurrence(the12th, "2026-12-12") === "2027-01-12"
+  )
+
+  // The clamp, and the reason the ANCHOR is stored rather than the last date
+  // used: a series on the 31st must come BACK to the 31st after February.
+  const the31st = rule({ kind: "monthly", interval: 1, dayOfMonth: 31 })
+  check("January 31 → February 28 in a common year", nextOccurrence(the31st, "2026-01-31") === "2026-02-28")
+  check("February 28 → March 31, not March 28", nextOccurrence(the31st, "2026-02-28") === "2026-03-31")
+  check("March 31 → April 30", nextOccurrence(the31st, "2026-03-31") === "2026-04-30")
+  check("April 30 → May 31", nextOccurrence(the31st, "2026-04-30") === "2026-05-31")
+  check("and February 29 in a leap year", nextOccurrence(the31st, "2024-01-31") === "2024-02-29")
+
+  const the30th = rule({ kind: "monthly", interval: 1, dayOfMonth: 30 })
+  check("the 30th also clamps in February", nextOccurrence(the30th, "2026-01-30") === "2026-02-28")
+  check("and comes back to the 30th", nextOccurrence(the30th, "2026-02-28") === "2026-03-30")
+}
+
+console.log("\nnextOccurrence — until")
+{
+  const ends = rule({ kind: "daily", interval: 1, until: "2026-09-13" })
+  check("inside the window", nextOccurrence(ends, "2026-09-11") === "2026-09-12")
+  check("the last day is included", nextOccurrence(ends, "2026-09-12") === "2026-09-13")
+  check("past it there is nothing", nextOccurrence(ends, "2026-09-13") === null)
+}
+
+console.log("\nupcomingOccurrences")
+{
+  check(
+    "three weekly dates",
+    JSON.stringify(
+      upcomingOccurrences(rule({ kind: "weekly", interval: 1, weekdays: [5] }), "2026-09-11", 3)
+    ) === '["2026-09-18","2026-09-25","2026-10-02"]'
+  )
+  check(
+    "stops at the until date rather than padding",
+    upcomingOccurrences(
+      rule({ kind: "daily", interval: 1, until: "2026-09-13" }),
+      "2026-09-11",
+      5
+    ).length === 2
+  )
+  check("a non-repeating rule yields nothing", upcomingOccurrences(NO_RECURRENCE, "2026-09-11", 3).length === 0)
+}
+
+console.log("\ndescribeRecurrence")
+{
+  check("none", describeRecurrence(NO_RECURRENCE) === "Does not repeat")
+  check("daily", describeRecurrence(rule({ kind: "daily", interval: 1 })) === "Every day")
+  check("every 3 days", describeRecurrence(rule({ kind: "daily", interval: 3 })) === "Every 3 days")
+  check(
+    "weekly on two days, Monday first",
+    describeRecurrence(rule({ kind: "weekly", interval: 1, weekdays: [3, 1] })) ===
+      "Every week on Monday and Wednesday",
+    describeRecurrence(rule({ kind: "weekly", interval: 1, weekdays: [3, 1] }))
+  )
+  check(
+    "Sunday sorts last, not first",
+    describeRecurrence(rule({ kind: "weekly", interval: 1, weekdays: [0, 1] })) ===
+      "Every week on Monday and Sunday"
+  )
+  check(
+    "fortnightly",
+    describeRecurrence(rule({ kind: "weekly", interval: 2, weekdays: [5] })) ===
+      "Every 2 weeks on Friday"
+  )
+  check(
+    "monthly ordinal",
+    describeRecurrence(rule({ kind: "monthly", interval: 1, dayOfMonth: 12 })) ===
+      "Every month on the 12th"
+  )
+  check(
+    "1st, 2nd, 3rd",
+    ["1st", "2nd", "3rd"].every((suffix, i) =>
+      describeRecurrence(rule({ kind: "monthly", interval: 1, dayOfMonth: i + 1 })).endsWith(suffix)
+    )
+  )
+  check(
+    "11th, 12th, 13th are not 11st/12nd/13rd",
+    [11, 12, 13].every((d) =>
+      describeRecurrence(rule({ kind: "monthly", interval: 1, dayOfMonth: d })).endsWith(`the ${d}th`)
+    )
+  )
+  check(
+    "a late day says what happens in February",
+    describeRecurrence(rule({ kind: "monthly", interval: 1, dayOfMonth: 31 })).includes(
+      "or the last day"
+    )
+  )
+  check(
+    "until is appended",
+    describeRecurrence(rule({ kind: "daily", interval: 1, until: "2026-12-31" })) ===
+      "Every day, until 2026-12-31"
+  )
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)
