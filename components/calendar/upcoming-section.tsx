@@ -3,9 +3,12 @@
 /**
  * The calendar itself: one card per date group, a table of tasks inside each.
  *
- * A grouped list rather than a month grid. A month grid answers "what does
- * October look like"; a team that has to act answers "what is due today" far
- * more often, and a grid makes that the hardest question on the page.
+ * A grouped list, and the reason it survives now that a month grid exists: a
+ * grid answers "what does October look like", but "what is overdue" and "what
+ * is due today" are the questions a team acting on this asks far more often,
+ * and a grid makes both of them a scan. The Overdue group in particular has no
+ * equivalent in a month view — an overdue task sits on a cell you have to page
+ * backwards to find.
  *
  * Grouping is computed against sastTodayIso() — the date it is in
  * Johannesburg, not on the viewer's laptop — so a person working from a UTC
@@ -13,7 +16,7 @@
  * its own `today` and that one wins when present, which keeps the list honest
  * if a browser clock is simply wrong.
  */
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { CalendarPlus, Check, Loader2, Pencil, RefreshCw, Repeat, Trash2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -38,44 +41,12 @@ import {
   GROUP_ORDER,
   formatDateLabel,
   groupFor,
-  sastTodayIso,
   type CalendarGroup,
 } from "@/lib/calendar-dates"
 import { describeRecurrence, isRecurring } from "@/lib/calendar-recurrence"
 import { TaskFormDialog } from "@/components/calendar/task-form-dialog"
-import type { CalendarTask, MutationResult, TeamRecipient } from "@/components/calendar/types"
-
-/** How a mutation's outcome is reported — the point of the whole feature. */
-function outcomeBanner(
-  result: MutationResult,
-  verb: string
-): { tone: "success" | "info" | "warning"; text: string } {
-  if (result.unchanged) return { tone: "info", text: `Nothing changed, so no email was sent.` }
-
-  // A recurring task that was ticked off has not gone anywhere — say where it
-  // went, or the row reappearing on a later date looks like a bug.
-  const what = result.rolledTo
-    ? `done for this time — next on ${formatDateLabel(result.rolledTo)}`
-    : result.seriesEnded
-      ? "done. That was the series' last occurrence"
-      : verb
-  if (result.notified) {
-    return {
-      tone: "success",
-      text: `Task ${what}. Notified ${result.recipientCount} recipient${result.recipientCount === 1 ? "" : "s"}.`,
-    }
-  }
-  if (result.recipientCount === 0) {
-    return {
-      tone: "info",
-      text: `Task ${what}. Nobody is on the notification list yet — add teammates under Recipients.`,
-    }
-  }
-  return {
-    tone: "warning",
-    text: `Task ${what}, but the email could not be sent. Check the Notifications tab for the reason.`,
-  }
-}
+import { outcomeBanner, useCalendarTasks } from "@/components/calendar/use-calendar-tasks"
+import type { CalendarTask } from "@/components/calendar/types"
 
 export function UpcomingSection({
   /** Told after each load, so the shell can warn once for the whole department. */
@@ -83,42 +54,15 @@ export function UpcomingSection({
 }: {
   onMailEnabled?: (enabled: boolean) => void
 }) {
-  const [tasks, setTasks] = useState<CalendarTask[]>([])
-  const [team, setTeam] = useState<TeamRecipient[]>([])
-  const [today, setToday] = useState(() => sastTodayIso())
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [note, setNote] = useState<{ tone: "success" | "info" | "warning"; text: string } | null>(null)
+  const {
+    tasks, today, loading, error, note, busyId, activeTeamCount,
+    setNote, reload, setStatus, remove, deleteReach, notifyLabel,
+  } = useCalendarTasks({ onMailEnabled })
 
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarTask | null>(null)
   const [deleting, setDeleting] = useState<CalendarTask | null>(null)
-  const [busyId, setBusyId] = useState<number | null>(null)
   const [showDone, setShowDone] = useState(false)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch("/api/calendar/tasks", { cache: "no-store" })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
-      setTasks(d.tasks ?? [])
-      setTeam(d.team ?? [])
-      if (typeof d.today === "string" && d.today) setToday(d.today)
-      onMailEnabled?.(d.mailEnabled !== false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [onMailEnabled])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const activeTeamCount = team.filter((r) => r.active).length
 
   const { groups, done } = useMemo(() => {
     const groups = new Map<CalendarGroup, CalendarTask[]>()
@@ -136,64 +80,11 @@ export function UpcomingSection({
     return { groups, done }
   }, [tasks, today])
 
-  const afterMutation = (result: MutationResult, verb: string) => {
-    setNote(outcomeBanner(result, verb))
-    void load()
-  }
-
-  /** Tick a task off, or put it back. A status change is an edit, so it mails. */
-  const setStatus = async (task: CalendarTask, status: "open" | "done") => {
-    setBusyId(task.id)
-    setNote(null)
-    try {
-      const res = await fetch(`/api/calendar/tasks/${task.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
-      afterMutation(d as MutationResult, status === "done" ? "marked done" : "reopened")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
   const confirmDelete = async () => {
     if (!deleting) return
     const task = deleting
-    setBusyId(task.id)
     setDeleting(null)
-    setNote(null)
-    try {
-      const res = await fetch(`/api/calendar/tasks/${task.id}`, { method: "DELETE" })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
-      afterMutation(d as MutationResult, "deleted")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  /** How many people a delete would email — said out loud before it happens. */
-  const deleteReach = (task: CalendarTask | null) => {
-    if (!task) return 0
-    if (task.recipientsMode === "custom") return task.recipients.length
-    if (task.recipientsMode === "both") {
-      const emails = new Set([...team.filter((r) => r.active).map((r) => r.email), ...task.recipients])
-      return emails.size
-    }
-    return activeTeamCount
-  }
-
-  const notifyLabel = (task: CalendarTask) => {
-    if (task.recipientsMode === "custom") return `${task.recipients.length} custom`
-    if (task.recipientsMode === "both") return `Team + ${task.recipients.length}`
-    return `Team (${activeTeamCount})`
+    await remove(task)
   }
 
   const renderRows = (list: CalendarTask[]) =>
@@ -310,7 +201,7 @@ export function UpcomingSection({
             >
               <CalendarPlus className="mr-2 h-4 w-4" /> New task
             </Button>
-            <Button variant="outline" size="icon" aria-label="Refresh" onClick={() => void load()} disabled={loading}>
+            <Button variant="outline" size="icon" aria-label="Refresh" onClick={() => void reload()} disabled={loading}>
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </Button>
           </>
@@ -384,7 +275,10 @@ export function UpcomingSection({
         today={today}
         teamCount={activeTeamCount}
         onClose={() => setFormOpen(false)}
-        onSaved={(result, mode) => afterMutation(result, mode)}
+        onSaved={(result, mode) => {
+          setNote(outcomeBanner(result, mode))
+          void reload()
+        }}
       />
 
       <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>

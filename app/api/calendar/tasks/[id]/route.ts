@@ -24,6 +24,7 @@ import {
 } from "@/lib/calendar-store"
 import {
   describeRecurrence,
+  firstOccurrenceFrom,
   isRecurring,
   nextOccurrence,
   normalizeRecurrence,
@@ -41,6 +42,15 @@ export const runtime = "nodejs"
  * does): this is a shared calendar with concurrent editors, so an index-based
  * delete would eventually delete somebody else's row.
  */
+
+/** The DUE_DATE a half-built SET list is going to write, if it writes one. */
+function lastDueDateIn(sets: string[]): string | null {
+  for (let i = sets.length - 1; i >= 0; i--) {
+    const m = /^DUE_DATE = '(\d{4}-\d{2}-\d{2})'$/.exec(sets[i])
+    if (m) return m[1]
+  }
+  return null
+}
 
 /** The change list the update email carries — `Field: old → new`, ticket-notify's shape. */
 function describeChanges(
@@ -152,9 +162,40 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // defaults are anchored to the task's date — which is whatever this request
     // sets, or the stored one if it is not changing it.
     let rule = before.recurrence
-    if (body.recurrence !== undefined) {
-      rule = normalizeRecurrence(body.recurrence, newDueDate ?? before.dueDate)
+    const ruleChanged = body.recurrence !== undefined
+    if (ruleChanged) {
+      rule = normalizeRecurrence(body.recurrence, newDueDate ?? before.seriesStart)
       sets.push(...recurrenceSets(rule))
+    }
+
+    /**
+     * Keep the series' origin and its current date consistent with the rule.
+     *
+     * SERIES_START is what the month grid anchors the recurrence to, so it has
+     * to move when a user deliberately moves the task — dragging a weekly
+     * series onto a Tuesday IS re-anchoring it, and its old Mondays should
+     * stop being drawn. It must NOT move when the series merely rolls forward;
+     * that is handled further down and never comes through here.
+     *
+     * Then DUE_DATE is re-seated onto the rule. Change the weekdays without
+     * touching the date and the stored date is suddenly not one the rule
+     * produces — the grid would draw the series everywhere except on its own
+     * due date. `firstOccurrenceFrom` is the fix, and it is a no-op when the
+     * date is already an occurrence.
+     */
+    let seriesStart = before.seriesStart
+    if (newDueDate !== null) {
+      seriesStart = newDueDate
+      sets.push(`SERIES_START = ${lit(seriesStart)}`)
+    }
+    if ((ruleChanged || newDueDate !== null) && isRecurring(rule)) {
+      const seated = firstOccurrenceFrom(rule, seriesStart, newDueDate ?? before.dueDate)
+      if (seated && seated !== (newDueDate ?? before.dueDate)) {
+        for (let i = sets.length - 1; i >= 0; i--) {
+          if (sets[i].startsWith("DUE_DATE =")) sets.splice(i, 1)
+        }
+        sets.push(`DUE_DATE = ${lit(seated)}`)
+      }
     }
 
     /**
@@ -173,7 +214,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     let rolledTo: string | null = null
     let seriesEnded = false
     if (newStatus !== null) {
-      const from = newDueDate ?? before.dueDate
+      // Reads the date as it will be AFTER any re-seating above, so a single
+      // request that both edits the rule and ticks the task off still rolls
+      // from a real occurrence.
+      const from = lastDueDateIn(sets) ?? newDueDate ?? before.dueDate
       if (newStatus === "done" && isRecurring(rule)) {
         rolledTo = nextOccurrence(rule, from, sastTodayIso())
         if (rolledTo) {

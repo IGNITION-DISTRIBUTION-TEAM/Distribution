@@ -187,7 +187,13 @@ export function DepartmentShell({
 
       {/* SidebarInset is the page's <main>. */}
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+        {/* data-print-hide: the only print concession in the shell. A printed
+            page has no use for a sidebar trigger and a breadcrumb, and the
+            rule that acts on it lives in app/globals.css. No screen effect. */}
+        <header
+          data-print-hide
+          className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-6"
+        >
           <div className="flex min-w-0 items-center gap-3">
             <SidebarTrigger />
             <span className="truncate text-sm font-medium text-foreground">{headerTitle}</span>

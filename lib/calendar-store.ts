@@ -73,6 +73,15 @@ const ITEM_COLUMNS: [string, string][] = [
   ["RECUR_WEEKDAYS", "VARCHAR"], // weekly: JSON number[], 0 = Sunday
   ["RECUR_DAY_OF_MONTH", "NUMBER"], // monthly: the anchor day, clamped per month
   ["RECUR_UNTIL", "VARCHAR"], // inclusive last date, or NULL for open-ended
+  /**
+   * Where the series BEGAN, as opposed to DUE_DATE which is where it has got
+   * to. The month grid needs a stable origin: anchoring the recurrence on a
+   * date that rolls forward would draw a weekly standup on every Monday back
+   * to 1970. Set on create, re-anchored only when a user explicitly moves the
+   * task, and never touched by a roll-forward. NULL on rows that predate this
+   * column, so readers COALESCE it to DUE_DATE.
+   */
+  ["SERIES_START", "VARCHAR"],
   ["CREATED_AT", "TIMESTAMP_NTZ"],
   ["CREATED_BY", "VARCHAR"],
   ["UPDATED_AT", "TIMESTAMP_NTZ"],
@@ -177,6 +186,8 @@ export type CalendarTask = {
   remindDaysBefore: number
   reminderSentFor: string | null
   recurrence: Recurrence
+  /** The series' origin — see SERIES_START. Always set on read. */
+  seriesStart: string
   createdAt: string | null
   createdBy: string | null
   updatedAt: string | null
@@ -355,6 +366,9 @@ export function rowToTask(row: Record<string, unknown>): CalendarTask {
     remindEnabled: bool(row.REMIND_ENABLED, true),
     remindDaysBefore: normDaysBefore(row.REMIND_DAYS_BEFORE ?? 0),
     reminderSentFor: str(row.REMINDER_SENT_FOR),
+    // Defaults are seeded from the series' START, not its current due date —
+    // the two differ for any series that has already rolled, and the start is
+    // what the rule is anchored to everywhere else.
     recurrence: normalizeRecurrence(
       {
         kind: row.RECUR_KIND,
@@ -363,8 +377,9 @@ export function rowToTask(row: Record<string, unknown>): CalendarTask {
         dayOfMonth: row.RECUR_DAY_OF_MONTH,
         until: row.RECUR_UNTIL,
       },
-      String(row.DUE_DATE ?? "")
+      String(row.SERIES_START ?? row.DUE_DATE ?? "")
     ),
+    seriesStart: String(row.SERIES_START ?? row.DUE_DATE ?? ""),
     createdAt: str(row.CREATED_AT),
     createdBy: str(row.CREATED_BY),
     updatedAt: str(row.UPDATED_AT),
@@ -409,6 +424,7 @@ const TASK_SELECT = `SELECT ID, TITLE, DESCRIPTION, DUE_DATE, DUE_TIME,
        COALESCE(RECUR_KIND, 'none') AS RECUR_KIND,
        COALESCE(RECUR_INTERVAL, 1) AS RECUR_INTERVAL,
        RECUR_WEEKDAYS, RECUR_DAY_OF_MONTH, RECUR_UNTIL,
+       COALESCE(SERIES_START, DUE_DATE) AS SERIES_START,
        CREATED_AT, CREATED_BY, UPDATED_AT, UPDATED_BY
   FROM ${ITEMS_TABLE}`
 
@@ -429,6 +445,27 @@ export async function loadTasks(sinceIso: string): Promise<CalendarTask[]> {
   const rows = await executeSnowflakeQuery<Record<string, unknown>>(
     `${TASK_SELECT}
       WHERE COALESCE(STATUS, 'open') = 'open' OR DUE_DATE >= ${lit(sinceIso)}
+      ORDER BY DUE_DATE, DUE_TIME NULLS FIRST, ID`,
+    CAL_SF
+  )
+  return rows.map(rowToTask)
+}
+
+/**
+ * The tasks a month grid needs for one window.
+ *
+ * Two things, unioned: anything whose own date falls in the window, plus EVERY
+ * open recurring series regardless of where its date has got to. A series is
+ * one row holding its next occurrence, so a weekly standup due in October has
+ * to come back for a September window too — the client expands the rule across
+ * the visible days. Expanding it here instead would mean shipping the same
+ * arithmetic twice, once in SQL.
+ */
+export async function loadTasksInRange(fromIso: string, toIso: string): Promise<CalendarTask[]> {
+  const rows = await executeSnowflakeQuery<Record<string, unknown>>(
+    `${TASK_SELECT}
+      WHERE (DUE_DATE BETWEEN ${lit(fromIso)} AND ${lit(toIso)})
+         OR (COALESCE(STATUS, 'open') = 'open' AND COALESCE(RECUR_KIND, 'none') <> 'none')
       ORDER BY DUE_DATE, DUE_TIME NULLS FIRST, ID`,
     CAL_SF
   )

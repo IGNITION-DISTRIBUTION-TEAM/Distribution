@@ -109,3 +109,83 @@
     animation: spin 1.5s linear infinite !important;
   }
 }
+
+/* Print, in one place.
+ *
+ * Added for the Calendar month grid, which is the first thing in this portal
+ * anyone would reasonably put on paper. Nothing else here had print styles, so
+ * a printed page was a screenshot of a viewport: a sidebar down the left, a
+ * header bar, and the content clipped at whatever the window happened to be.
+ *
+ * Three rules, and they are all about undoing the app shell rather than
+ * styling the calendar:
+ *
+ *  1. Hide the chrome. The sidebar is matched by its own vendored attribute so
+ *     components/ui/sidebar.tsx needs no edit; the shell header carries a
+ *     data-print-hide, which is the single print-only change in a file shared
+ *     by all nine departments.
+ *  2. Unclip. The shell's content region is `overflow-auto` with a fixed
+ *     height, which on paper means one viewport and the rest thrown away.
+ *  3. Let the grid break across pages sensibly rather than cutting a week in
+ *     half.
+ */
+@media print {
+  [data-print-hide],
+  [data-sidebar="sidebar"],
+  [data-sidebar="trigger"],
+  [data-sidebar="rail"] {
+    display: none !important;
+  }
+
+  /* The shell is a fixed-height flex column with its own scroll region. On
+     paper there is no viewport to fit, so every ancestor has to stop
+     constraining and stop scrolling or the page ends at the fold. */
+  html,
+  body,
+  main,
+  main > div {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Ink, not screen. The dark theme's card tints print as grey blocks that
+     cost toner and make the text worse, so borders carry the structure. */
+  * {
+    background: transparent !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+
+  [class*="rounded"] {
+    border-color: #999 !important;
+  }
+
+  /* A week should not be split across two sheets. */
+  .grid {
+    break-inside: avoid;
+  }
+
+  /* The two things the flattening above would otherwise destroy on the month
+     grid: today's filled pill and the dimming on the previous/next month's
+     days. Both carried colour on screen; on paper they need edges instead, or
+     a printed month has no "you are here" and no visible month boundary. */
+  [data-today] {
+    outline: 2px solid #000 !important;
+    outline-offset: -2px;
+  }
+
+  [data-outside] {
+    opacity: 0.45 !important;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}

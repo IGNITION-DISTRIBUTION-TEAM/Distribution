@@ -121,3 +121,77 @@ export function groupFor(iso: string, today: string): CalendarGroup {
   const toSunday = dow === 0 ? 0 : 7 - dow
   return iso <= addDaysIso(today, toSunday) ? "week" : "later"
 }
+
+/* ------------------------------------------------------- month arithmetic */
+
+/**
+ * Month maths for the grid, in the same UTC-string style as everything above.
+ *
+ * Not date-fns. It sits in package.json as react-day-picker's peer dependency
+ * and no source file imports it; becoming the first importer would pull locale
+ * formatting into a module that builds its month names by hand precisely so a
+ * viewer's locale cannot reach them.
+ *
+ * Not `Date.setMonth` either. It overflows — the repo already documents the
+ * failure at components/distribution-dashboard.tsx:4705, where stepping a
+ * month back from 31 August lands in March. Everything here builds the month
+ * from parts and clamps the day, which is the same rule the monthly recurrence
+ * anchor follows.
+ */
+
+/** Days in a civil month. `mo` is 1-12. Mirrors lib/cron-schedule.ts. */
+function daysInCivilMonth(y: number, mo: number): number {
+  if (mo === 2) return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28
+  return [4, 6, 9, 11].includes(mo) ? 30 : 31
+}
+
+const pad = (n: number, width = 2) => String(n).padStart(width, "0")
+
+/** The 1st of the month containing `iso`. */
+export function startOfMonthIso(iso: string): string {
+  return `${iso.slice(0, 7)}-01`
+}
+
+/**
+ * `n` months on (or back), with the day clamped to the target month's length.
+ *
+ * 31 January plus one month is 28 February, not 3 March. Callers that want a
+ * repeating series should still anchor on the stored day rather than chaining
+ * this, or the clamp compounds and the series never returns to the 31st.
+ */
+export function addMonthsIso(iso: string, n: number): string {
+  const y = Number(iso.slice(0, 4))
+  const mo = Number(iso.slice(5, 7))
+  const d = Number(iso.slice(8, 10))
+  const total = y * 12 + (mo - 1) + n
+  const ny = Math.floor(total / 12)
+  const nmo = (total % 12) + 1
+  return `${pad(ny, 4)}-${pad(nmo)}-${pad(Math.min(d, daysInCivilMonth(ny, nmo)))}`
+}
+
+/**
+ * The 42 dates a month grid draws: six rows of seven, starting on the Monday
+ * of the week containing the 1st.
+ *
+ * Always 42, never 35. A month that fits in five rows would otherwise make the
+ * whole page change height as you page through the year, and the row that
+ * appears and disappears is the one under the cursor.
+ */
+export function monthGridDays(iso: string): string[] {
+  const first = startOfMonthIso(iso)
+  const dow = dayOfWeek(first) // 0 = Sunday
+  const start = addDaysIso(first, dow === 0 ? -6 : 1 - dow)
+  return Array.from({ length: 42 }, (_, i) => addDaysIso(start, i))
+}
+
+/** 'September 2026'. Keeps MONTH_NAMES private, like the other formatters. */
+export function formatMonthLabel(iso: string): string {
+  const mo = Number(iso.slice(5, 7))
+  if (!Number.isInteger(mo) || mo < 1 || mo > 12) return iso
+  return `${MONTH_NAMES[mo - 1]} ${iso.slice(0, 4)}`
+}
+
+/** Is this date inside the month `iso` names? Used to dim the grid's edges. */
+export function isSameMonth(iso: string, monthIso: string): boolean {
+  return iso.slice(0, 7) === monthIso.slice(0, 7)
+}

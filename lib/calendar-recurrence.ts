@@ -25,7 +25,7 @@
  * scripts/calendar/calendar-tests.ts.
  */
 import { daysInMonth } from "@/lib/cron-schedule"
-import { addDaysIso, dayOfWeek, isValidIsoDate } from "@/lib/calendar-dates"
+import { addDaysIso, dayOfWeek, daysBetween, isValidIsoDate } from "@/lib/calendar-dates"
 
 export const RECUR_KINDS = ["none", "daily", "weekly", "monthly"] as const
 export type RecurKind = (typeof RECUR_KINDS)[number]
@@ -140,14 +140,46 @@ export function normalizeRecurrence(raw: unknown, startDate?: string): Recurrenc
 const iso = (y: number, mo: number, d: number) =>
   `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`
 
+/**
+ * The monthly anchor day, with ONE fallback.
+ *
+ * `normalizeRecurrence` always sets `dayOfMonth` for a monthly rule, so this
+ * only fires on a malformed rule — but it used to fire three different ways in
+ * this file (the previous occurrence's day here, a bare `1` in the describer),
+ * and `occursOn` would have been a fourth. Two readers disagreeing about the
+ * fallback would put a series on the grid on days it never fires, so they now
+ * share this.
+ */
+export function monthAnchorDay(rule: Recurrence, fallbackIso: string): number {
+  if (rule.dayOfMonth != null) return rule.dayOfMonth
+  const d = Number(fallbackIso.slice(8, 10))
+  return Number.isInteger(d) && d >= 1 && d <= 31 ? d : 1
+}
+
 /** The Monday of the week containing `date`. Weeks start Monday here. */
-function mondayOf(date: string): string {
+export function mondayOf(date: string): string {
   const dow = dayOfWeek(date) // 0 = Sunday
   return addDaysIso(date, dow === 0 ? -6 : 1 - dow)
 }
 
 /** Runaway guard. A monthly series stepping by 1 needs 12 steps a year. */
 const MAX_STEPS = 500
+
+/**
+ * Day-at-a-time scans are bounded by the widest gap a rule can leave: 99
+ * months, the interval cap. Generous, and still finite.
+ */
+const MAX_SCAN_DAYS = 3200
+
+/**
+ * Modulo that is never negative.
+ *
+ * JavaScript's `%` keeps the sign of the dividend, so `-3 % 7` is `-3`, not
+ * `4`. Every predicate below compares a date against an anchor it may fall
+ * BEFORE — which is the whole point of a grid you can page backwards — so a
+ * bare `%` would silently mis-answer every past cell.
+ */
+const mod = (a: number, n: number) => ((a % n) + n) % n
 
 /**
  * The first occurrence strictly after `after`, and no earlier than `notBefore`.
@@ -199,13 +231,13 @@ export function nextOccurrence(
       weekStart = addDaysIso(weekStart, 7 * rule.interval)
     }
   } else {
-    const anchor = rule.dayOfMonth ?? Number(after.slice(8, 10))
+    const anchorDay = monthAnchorDay(rule, after)
     let y = Number(after.slice(0, 4))
     let mo = Number(after.slice(5, 7))
     for (let i = 0; i < MAX_STEPS; i++) {
       // Clamp per month, from the anchor — February gets the 28th, March gets
       // the 31st back again.
-      const day = Math.min(anchor, daysInMonth(y, mo))
+      const day = Math.min(anchorDay, daysInMonth(y, mo))
       const cand = iso(y, mo, day)
       if (cand > after && cand >= floor) {
         candidate = cand
@@ -222,6 +254,109 @@ export function nextOccurrence(
   if (candidate === null) return null
   if (rule.until && candidate > rule.until) return null
   return candidate
+}
+
+/* ------------------------------------------- expanding a series to a window */
+
+/**
+ * Is `iso` an occurrence of this rule, anchored at `anchor`?
+ *
+ * THE COUNTERPART TO `nextOccurrence`, AND THE REASON THE GRID WORKS.
+ * `nextOccurrence` walks forward from the previous occurrence, which is all a
+ * rolling row ever needs. A month grid asks the opposite question — "is the
+ * 14th one of these?" — of 42 arbitrary dates, most of which the row has
+ * already passed or not yet reached.
+ *
+ * The two are two implementations of one rule, so they must agree. They do
+ * because every step `nextOccurrence` takes is a whole multiple of the rule's
+ * period, which is exactly the congruence tested here; see the invariant test
+ * in scripts/calendar/calendar-tests.ts, which is what stops them drifting
+ * apart in some later edit.
+ *
+ * `anchor` is the series' START, not its current due date. Anchoring on a date
+ * that rolls would still be arithmetically congruent, but it would also draw a
+ * weekly standup on every Monday back to 1970.
+ */
+export function occursOn(rule: Recurrence, anchor: string, iso: string): boolean {
+  if (rule.kind === "none") return false
+  if (!isValidIsoDate(anchor) || !isValidIsoDate(iso)) return false
+  // A series does not exist before it started, and stops after its end date.
+  if (iso < anchor) return false
+  if (rule.until && iso > rule.until) return false
+
+  const n = rule.interval
+  if (rule.kind === "daily") {
+    return mod(daysBetween(anchor, iso), n) === 0
+  }
+
+  if (rule.kind === "weekly") {
+    const days = rule.weekdays.length > 0 ? rule.weekdays : [dayOfWeek(anchor)]
+    if (!days.includes(dayOfWeek(iso))) return false
+    // Whole weeks between the two Mondays. Both are Mondays, so this divides
+    // exactly — matching nextOccurrence, which steps weekStart by 7 * interval.
+    const weeks = daysBetween(mondayOf(anchor), mondayOf(iso)) / 7
+    return mod(weeks, n) === 0
+  }
+
+  const y = Number(iso.slice(0, 4))
+  const mo = Number(iso.slice(5, 7))
+  const anchorDay = monthAnchorDay(rule, anchor)
+  // The same clamp nextOccurrence applies, so 28 February IS an occurrence of
+  // a series anchored on the 31st — and March goes back to the 31st.
+  if (Number(iso.slice(8, 10)) !== Math.min(anchorDay, daysInMonth(y, mo))) return false
+  const months = (y - Number(anchor.slice(0, 4))) * 12 + (mo - Number(anchor.slice(5, 7)))
+  return mod(months, n) === 0
+}
+
+/**
+ * The first occurrence on or after `from`.
+ *
+ * This is what keeps DUE_DATE honest when the RULE changes but the date does
+ * not. Switch a series from Mondays to Tuesdays and its stored date is
+ * suddenly not a date the rule produces — the grid would then draw the series
+ * everywhere except on its own due date. The PATCH handler re-seats DUE_DATE
+ * through here so that cannot happen.
+ */
+export function firstOccurrenceFrom(
+  rule: Recurrence,
+  anchor: string,
+  from: string
+): string | null {
+  if (rule.kind === "none" || !isValidIsoDate(anchor) || !isValidIsoDate(from)) return null
+  let cursor = from < anchor ? anchor : from
+  // Bounded: the widest gap any supported rule can leave is 99 months, and the
+  // day-by-day walk only has to cross one period.
+  for (let i = 0; i < MAX_SCAN_DAYS; i++) {
+    if (rule.until && cursor > rule.until) return null
+    if (occursOn(rule, anchor, cursor)) return cursor
+    cursor = addDaysIso(cursor, 1)
+  }
+  return null
+}
+
+/**
+ * Every occurrence of this rule between `from` and `to`, inclusive.
+ *
+ * Scans the window a day at a time rather than stepping the rule. The grid's
+ * window is 42 days, so the cost is nothing, and stepping backwards through a
+ * monthly clamp — where February's 28th has to know it stands in for the 31st
+ * — is exactly the kind of arithmetic that goes wrong quietly. A predicate
+ * asked once per visible day cannot.
+ */
+export function occurrencesInRange(
+  rule: Recurrence,
+  anchor: string,
+  from: string,
+  to: string
+): string[] {
+  if (rule.kind === "none" || !isValidIsoDate(from) || !isValidIsoDate(to)) return []
+  const out: string[] = []
+  let cursor = from
+  for (let i = 0; i < MAX_SCAN_DAYS && cursor <= to; i++) {
+    if (occursOn(rule, anchor, cursor)) out.push(cursor)
+    cursor = addDaysIso(cursor, 1)
+  }
+  return out
 }
 
 /** The next `count` occurrences after `after` — the form's "next few dates" preview. */
@@ -277,7 +412,7 @@ export function describeRecurrence(rule: Recurrence): string {
     const on = names.length > 0 ? ` on ${joinWords(names)}` : ""
     base = rule.interval === 1 ? `Every week${on}` : `Every ${rule.interval} weeks${on}`
   } else {
-    const day = rule.dayOfMonth ?? 1
+    const day = monthAnchorDay(rule, "")
     const on = ` on the ${ordinal(day)}`
     base = rule.interval === 1 ? `Every month${on}` : `Every ${rule.interval} months${on}`
     // Say what happens in February rather than letting somebody find out.

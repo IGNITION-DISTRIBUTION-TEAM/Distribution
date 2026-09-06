@@ -16,6 +16,11 @@
  *      this function IS the series — there is no list of dates anywhere to
  *      check it against. Month-end clamping and the weekly anchor are the two
  *      places it would go wrong quietly.
+ *   4. occursOn, and its AGREEMENT with nextOccurrence. The month grid draws
+ *      from one and the reminder cron rolls from the other; if they ever
+ *      disagree, a task is drawn on days it never fires on, or fires on a day
+ *      it was never drawn. The invariant test at the end is the only thing
+ *      standing between those two implementations and silent drift.
  *
  * Everything else here is SQL and Graph calls, which no offline test can
  * exercise: nothing in this repo executes SQL or sends mail.
@@ -31,13 +36,23 @@ import {
   isValidIsoDate,
   isValidTime,
   sastTodayIso,
+  addMonthsIso,
+  formatMonthLabel,
+  isSameMonth,
+  monthGridDays,
+  startOfMonthIso,
 } from "../../lib/calendar-dates"
 import { dueWording, resolveRecipients } from "../../lib/calendar-notify"
+import { buildIcs, escapeText, foldLine, rruleFor } from "../../lib/calendar-ics"
+import type { CalendarTask } from "../../lib/calendar-store"
 import {
   NO_RECURRENCE,
   describeRecurrence,
+  firstOccurrenceFrom,
   nextOccurrence,
   normalizeRecurrence,
+  occursOn,
+  occurrencesInRange,
   upcomingOccurrences,
   type Recurrence,
 } from "../../lib/calendar-recurrence"
@@ -434,6 +449,398 @@ console.log("\ndescribeRecurrence")
     describeRecurrence(rule({ kind: "daily", interval: 1, until: "2026-12-31" })) ===
       "Every day, until 2026-12-31"
   )
+}
+
+/* ---- 9. Month arithmetic for the grid ----------------------------------- */
+
+console.log("\nmonth arithmetic")
+{
+  check("startOfMonthIso", startOfMonthIso("2026-09-23") === "2026-09-01")
+  check("addMonthsIso forward", addMonthsIso("2026-09-12", 1) === "2026-10-12")
+  check("addMonthsIso back", addMonthsIso("2026-09-12", -1) === "2026-08-12")
+  check("addMonthsIso across a year end", addMonthsIso("2026-12-15", 1) === "2027-01-15")
+  check("addMonthsIso back across a year start", addMonthsIso("2026-01-15", -1) === "2025-12-15")
+  check("addMonthsIso by 12", addMonthsIso("2026-02-28", 12) === "2027-02-28")
+  // The bug this function exists to avoid: Date.setMonth on 31 August plus one
+  // lands on 1 October, and minus six lands in March.
+  check("31 Aug + 1 month clamps to 30 Sep", addMonthsIso("2026-08-31", 1) === "2026-09-30")
+  check("31 Jan + 1 month clamps to 28 Feb", addMonthsIso("2026-01-31", 1) === "2026-02-28")
+  check("31 Jan + 1 month in a leap year", addMonthsIso("2024-01-31", 1) === "2024-02-29")
+  check("31 Aug - 6 months is 28 Feb, not March", addMonthsIso("2026-08-31", -6) === "2026-02-28")
+  check("formatMonthLabel", formatMonthLabel("2026-09-01") === "September 2026")
+  check("isSameMonth", isSameMonth("2026-09-30", "2026-09-01"))
+  check("isSameMonth rejects the next month", !isSameMonth("2026-10-01", "2026-09-01"))
+}
+
+console.log("\nmonthGridDays")
+{
+  // September 2026: the 1st is a Tuesday, so the grid opens on Monday 31 Aug.
+  const sep = monthGridDays("2026-09-01")
+  check("always 42 cells", sep.length === 42, String(sep.length))
+  check("starts on the Monday before the 1st", sep[0] === "2026-08-31", sep[0])
+  check("every cell is a Monday-started week", dayOfWeek(sep[0]) === 1)
+  check("the last cell is a Sunday", dayOfWeek(sep[41]) === 0)
+  check("cells are consecutive", sep.every((d, i) => i === 0 || d === addDaysIso(sep[i - 1], 1)))
+  check("contains the whole month", sep.includes("2026-09-01") && sep.includes("2026-09-30"))
+
+  // A month starting ON a Monday must not drop a leading week.
+  const jun = monthGridDays("2026-06-01")
+  check("a month starting on Monday starts on the 1st", jun[0] === "2026-06-01", jun[0])
+  check("and still has 42 cells", jun.length === 42)
+
+  // February 2026 is 28 days starting Sunday — the tightest case, and the one
+  // that would be 5 rows if the count were not fixed.
+  const feb = monthGridDays("2026-02-01")
+  check("a short month is still 42 cells", feb.length === 42)
+  check("a Sunday 1st opens the week before", feb[0] === "2026-01-26", feb[0])
+  check("and still contains the whole month", feb.includes("2026-02-28"))
+
+  check("the day of the month does not matter", monthGridDays("2026-09-23")[0] === sep[0])
+}
+
+/* ---- 10. occursOn -------------------------------------------------------- */
+
+console.log("\noccursOn")
+{
+  const anchor = "2026-09-14" // a Monday
+  const daily = rule({ kind: "daily", interval: 1 })
+  check("the anchor itself occurs", occursOn(daily, anchor, anchor))
+  check("the day after occurs", occursOn(daily, anchor, "2026-09-15"))
+  // The lower bound: a series does not exist before it started.
+  check("nothing before the anchor occurs", !occursOn(daily, anchor, "2026-09-13"))
+  check("'none' never occurs", !occursOn(NO_RECURRENCE, anchor, anchor))
+
+  const every3 = rule({ kind: "daily", interval: 3 })
+  check("every 3 days: +3 occurs", occursOn(every3, anchor, "2026-09-17"))
+  check("every 3 days: +2 does not", !occursOn(every3, anchor, "2026-09-16"))
+  check("every 3 days: +30 occurs", occursOn(every3, anchor, "2026-10-14"))
+
+  const mondays = rule({ kind: "weekly", interval: 1, weekdays: [1] })
+  check("weekly: a later Monday occurs", occursOn(mondays, anchor, "2026-09-28"))
+  check("weekly: a Tuesday does not", !occursOn(mondays, anchor, "2026-09-29"))
+
+  const fortnight = rule({ kind: "weekly", interval: 2, weekdays: [1, 3] })
+  check("fortnightly: the anchor week's Wednesday occurs", occursOn(fortnight, anchor, "2026-09-16"))
+  check("fortnightly: the NEXT week's Monday does not", !occursOn(fortnight, anchor, "2026-09-21"))
+  check("fortnightly: the week after that does", occursOn(fortnight, anchor, "2026-09-28"))
+
+  const the31st = rule({ kind: "monthly", interval: 1, dayOfMonth: 31 })
+  check("monthly 31: January occurs", occursOn(the31st, "2026-01-31", "2026-01-31"))
+  // The clamp has to work in BOTH directions or the grid and the roll disagree.
+  check("monthly 31: 28 Feb stands in for it", occursOn(the31st, "2026-01-31", "2026-02-28"))
+  check("monthly 31: 27 Feb does not", !occursOn(the31st, "2026-01-31", "2026-02-27"))
+  check("monthly 31: March is back to the 31st", occursOn(the31st, "2026-01-31", "2026-03-31"))
+  check("monthly 31: 30 Mar does not", !occursOn(the31st, "2026-01-31", "2026-03-30"))
+  check("monthly 31: 30 Apr stands in", occursOn(the31st, "2026-01-31", "2026-04-30"))
+
+  const untilRule = rule({ kind: "daily", interval: 1, until: "2026-09-20" })
+  check("until: the last day occurs", occursOn(untilRule, anchor, "2026-09-20"))
+  check("until: the day after does not", !occursOn(untilRule, anchor, "2026-09-21"))
+
+  check("a malformed date never occurs", !occursOn(daily, anchor, "2026-02-31"))
+}
+
+/* ---- 11. firstOccurrenceFrom and occurrencesInRange --------------------- */
+
+console.log("\nfirstOccurrenceFrom")
+{
+  const mondays = rule({ kind: "weekly", interval: 1, weekdays: [1] })
+  check(
+    "from a Wednesday, the next Monday",
+    firstOccurrenceFrom(mondays, "2026-09-14", "2026-09-16") === "2026-09-21"
+  )
+  check(
+    "from an occurrence, that same day",
+    firstOccurrenceFrom(mondays, "2026-09-14", "2026-09-21") === "2026-09-21"
+  )
+  check(
+    "a `from` before the anchor is pulled up to it",
+    firstOccurrenceFrom(mondays, "2026-09-14", "2026-01-01") === "2026-09-14"
+  )
+  check(
+    "past the until date there is nothing",
+    firstOccurrenceFrom(
+      rule({ kind: "daily", interval: 1, until: "2026-09-20" }),
+      "2026-09-14",
+      "2026-09-25"
+    ) === null
+  )
+  // The reason this function exists: the rule changed, the stored date did not.
+  const tuesdays = rule({ kind: "weekly", interval: 1, weekdays: [2] })
+  check(
+    "re-seats a date the new rule no longer produces",
+    firstOccurrenceFrom(tuesdays, "2026-09-14", "2026-09-14") === "2026-09-15",
+    String(firstOccurrenceFrom(tuesdays, "2026-09-14", "2026-09-14"))
+  )
+}
+
+console.log("\noccurrencesInRange")
+{
+  const mondays = rule({ kind: "weekly", interval: 1, weekdays: [1] })
+  const sep = occurrencesInRange(mondays, "2026-09-07", "2026-09-01", "2026-09-30")
+  check(
+    "every Monday of September from the 7th",
+    JSON.stringify(sep) === '["2026-09-07","2026-09-14","2026-09-21","2026-09-28"]',
+    JSON.stringify(sep)
+  )
+  check(
+    "nothing before the anchor, even inside the window",
+    !occurrencesInRange(mondays, "2026-09-07", "2026-09-01", "2026-09-30").includes("2026-08-31")
+  )
+  check(
+    "daily fills the window",
+    occurrencesInRange(rule({ kind: "daily", interval: 1 }), "2026-09-01", "2026-09-01", "2026-09-30")
+      .length === 30
+  )
+  check(
+    "a non-repeating rule yields nothing",
+    occurrencesInRange(NO_RECURRENCE, "2026-09-01", "2026-09-01", "2026-09-30").length === 0
+  )
+  check(
+    "an inverted window yields nothing",
+    occurrencesInRange(mondays, "2026-09-07", "2026-09-30", "2026-09-01").length === 0
+  )
+  // The grid's real call: 42 cells, a fortnightly two-day rule.
+  const grid = monthGridDays("2026-09-01")
+  const got = occurrencesInRange(
+    rule({ kind: "weekly", interval: 2, weekdays: [1, 3] }),
+    "2026-09-14",
+    grid[0],
+    grid[41]
+  )
+  check(
+    "a fortnightly pair across a whole grid window",
+    JSON.stringify(got) === '["2026-09-14","2026-09-16","2026-09-28","2026-09-30"]',
+    JSON.stringify(got)
+  )
+}
+
+/* ---- 12. THE INVARIANT: occursOn and nextOccurrence must agree ---------- */
+
+console.log("\ncongruence invariant (the grid and the cron must agree)")
+{
+  const cases: { name: string; rule: Recurrence; start: string }[] = [
+    { name: "every day", rule: rule({ kind: "daily", interval: 1 }), start: "2026-09-14" },
+    { name: "every 5 days", rule: rule({ kind: "daily", interval: 5 }), start: "2026-09-14" },
+    { name: "weekly on Mon", rule: rule({ kind: "weekly", interval: 1, weekdays: [1] }), start: "2026-09-14" },
+    { name: "fortnightly Mon+Wed", rule: rule({ kind: "weekly", interval: 2, weekdays: [1, 3] }), start: "2026-09-14" },
+    { name: "every 3 weeks Fri+Sun", rule: rule({ kind: "weekly", interval: 3, weekdays: [5, 0] }), start: "2026-09-13" },
+    { name: "monthly on the 12th", rule: rule({ kind: "monthly", interval: 1, dayOfMonth: 12 }), start: "2026-09-12" },
+    { name: "monthly on the 31st", rule: rule({ kind: "monthly", interval: 1, dayOfMonth: 31 }), start: "2026-01-31" },
+    { name: "every 2 months on the 30th", rule: rule({ kind: "monthly", interval: 2, dayOfMonth: 30 }), start: "2026-01-30" },
+    { name: "quarterly on the 29th", rule: rule({ kind: "monthly", interval: 3, dayOfMonth: 29 }), start: "2026-01-29" },
+  ]
+
+  for (const c of cases) {
+    // Roll the series forward the way the cron and the tick-off do, and assert
+    // every landing is a date the GRID would have drawn.
+    let cursor = c.start
+    let steps = 0
+    let bad: string | null = null
+    for (let i = 0; i < 40; i++) {
+      const next = nextOccurrence(c.rule, cursor)
+      if (!next) break
+      if (!occursOn(c.rule, c.start, next)) {
+        bad = next
+        break
+      }
+      cursor = next
+      steps++
+    }
+    check(
+      `${c.name}: 40 rolls all land on drawn dates`,
+      bad === null && steps === 40,
+      bad ? `nextOccurrence produced ${bad}, which occursOn rejects` : `only ${steps} steps`
+    )
+
+    // And the converse: every date the grid draws in a wide window is one the
+    // roll would actually reach. This is the direction that catches occursOn
+    // being too GENEROUS.
+    const window = occurrencesInRange(c.rule, c.start, c.start, addMonthsIso(c.start, 14))
+    const reachable = new Set<string>([c.start])
+    let walk: string | null = c.start
+    for (let i = 0; i < 500 && walk; i++) {
+      walk = nextOccurrence(c.rule, walk)
+      if (walk) reachable.add(walk)
+    }
+    const orphan = window.find((d) => !reachable.has(d))
+    check(
+      `${c.name}: every drawn date is reachable by rolling`,
+      orphan === undefined,
+      orphan ? `occursOn draws ${orphan}, which nextOccurrence never reaches` : ""
+    )
+  }
+}
+
+/* ---- 13. The .ics export ------------------------------------------------ */
+
+/** A task, with only the fields a given check cares about spelled out. */
+const task = (over: Partial<CalendarTask>): CalendarTask => ({
+  id: 1,
+  title: "Standup",
+  description: null,
+  dueDate: "2026-09-14",
+  dueTime: null,
+  status: "open",
+  assignee: null,
+  recipientsMode: "team",
+  recipients: [],
+  remindEnabled: true,
+  remindDaysBefore: 0,
+  reminderSentFor: null,
+  recurrence: NO_RECURRENCE,
+  seriesStart: "2026-09-14",
+  createdAt: null,
+  createdBy: null,
+  updatedAt: null,
+  updatedBy: null,
+  ...over,
+})
+
+console.log("\nescapeText")
+{
+  // Each of these would break the line grammar if it went through raw. The
+  // semicolon case is a regression guard: "\;" in TypeScript is just ";", so
+  // the obvious spelling of this function silently escapes nothing.
+  check("escapes a semicolon", escapeText("a;b") === "a\\;b", escapeText("a;b"))
+  check("escapes a comma", escapeText("a,b") === "a\\,b", escapeText("a,b"))
+  check("escapes a backslash", escapeText("a\\b") === "a\\\\b", escapeText("a\\b"))
+  check("turns a newline into \\n", escapeText("a\nb") === "a\\nb", escapeText("a\nb"))
+  check("turns CRLF into one \\n", escapeText("a\r\nb") === "a\\nb", escapeText("a\r\nb"))
+  // Order matters: escaping the backslash last would double-escape the others.
+  check("a backslash before a comma survives once", escapeText("a\\,b") === "a\\\\\\,b", escapeText("a\\,b"))
+  check("leaves ordinary text alone", escapeText("Q3 review") === "Q3 review")
+}
+
+console.log("\nfoldLine")
+{
+  check("a short line is untouched", JSON.stringify(foldLine("SUMMARY:hi")) === '["SUMMARY:hi"]')
+  const long = `SUMMARY:${"x".repeat(200)}`
+  const folded = foldLine(long)
+  check("a long line is split", folded.length > 1, String(folded.length))
+  check("the first part is at most 75 octets", Buffer.byteLength(folded[0]) <= 75)
+  check(
+    "continuations start with a space and fit",
+    folded.slice(1).every((l) => l.startsWith(" ") && Buffer.byteLength(l) <= 75)
+  )
+  check(
+    "unfolding restores the original",
+    folded.map((l, i) => (i === 0 ? l : l.slice(1))).join("") === long
+  )
+  // Folding counts BYTES. An emoji is 4 octets, so a naive character count
+  // would emit lines Outlook reads as over-long.
+  const emoji = `SUMMARY:${"\u{1F600}".repeat(40)}`
+  const eFolded = foldLine(emoji)
+  check(
+    "multi-byte characters are measured in octets",
+    eFolded.every((l) => Buffer.byteLength(l) <= 75),
+    JSON.stringify(eFolded.map((l) => Buffer.byteLength(l)))
+  )
+  check(
+    "and are never split mid-character",
+    eFolded.map((l, i) => (i === 0 ? l : l.slice(1))).join("") === emoji
+  )
+}
+
+console.log("\nrruleFor")
+{
+  check("a one-off has no rule", rruleFor(task({})) === null)
+  check(
+    "daily",
+    rruleFor(task({ recurrence: rule({ kind: "daily", interval: 1 }) })) === "FREQ=DAILY"
+  )
+  check(
+    "every 3 days",
+    rruleFor(task({ recurrence: rule({ kind: "daily", interval: 3 }) })) === "FREQ=DAILY;INTERVAL=3"
+  )
+  check(
+    "weekly on Mon and Wed, Monday first",
+    rruleFor(task({ recurrence: rule({ kind: "weekly", interval: 1, weekdays: [3, 1] }) })) ===
+      "FREQ=WEEKLY;BYDAY=MO,WE",
+    String(rruleFor(task({ recurrence: rule({ kind: "weekly", interval: 1, weekdays: [3, 1] }) })))
+  )
+  check(
+    "Sunday is SU and sorts last",
+    rruleFor(task({ recurrence: rule({ kind: "weekly", interval: 1, weekdays: [0, 1] }) })) ===
+      "FREQ=WEEKLY;BYDAY=MO,SU"
+  )
+  check(
+    "fortnightly",
+    rruleFor(task({ recurrence: rule({ kind: "weekly", interval: 2, weekdays: [5] }) })) ===
+      "FREQ=WEEKLY;BYDAY=FR;INTERVAL=2"
+  )
+  check(
+    "monthly carries BYMONTHDAY",
+    rruleFor(task({ recurrence: rule({ kind: "monthly", interval: 1, dayOfMonth: 12 }) })) ===
+      "FREQ=MONTHLY;BYMONTHDAY=12"
+  )
+  check(
+    "until is appended",
+    rruleFor(task({ recurrence: rule({ kind: "daily", interval: 1, until: "2026-12-31" }) })) ===
+      "FREQ=DAILY;UNTIL=20261231"
+  )
+}
+
+console.log("\nbuildIcs")
+{
+  const now = new Date("2026-09-06T10:30:00Z")
+
+  /**
+   * Undo the 75-octet folding, the way any real consumer does before reading
+   * a property. Asserting against the raw text would make every check below
+   * depend on where a line happens to wrap.
+   */
+  const unfold = (ics: string) => ics.replace(/\r\n /g, "")
+
+  const one = unfold(buildIcs([task({})], { name: "Team", now }))
+
+  check("CRLF line endings", one.includes("\r\n") && !/[^\r]\n/.test(one))
+  check("ends with CRLF", one.endsWith("\r\n"))
+  check("opens and closes the calendar", one.startsWith("BEGIN:VCALENDAR") && one.includes("END:VCALENDAR"))
+  check("declares the version", one.includes("VERSION:2.0"))
+  check("carries a VTIMEZONE for SAST", one.includes("TZID:Africa/Johannesburg"))
+  check("the zone is a flat +02:00 with no DAYLIGHT rule", one.includes("TZOFFSETTO:+0200") && !one.includes("BEGIN:DAYLIGHT"))
+  check("pins DTSTAMP from the injected clock", one.includes("DTSTAMP:20260906T103000Z"))
+  check("the UID is stable and per task", one.includes("UID:calendar-1@ignitiongroup.co.za"))
+  check("says it is a snapshot in the description", one.includes("does not update"))
+
+  // All-day: a DATE value, and DTEND is the EXCLUSIVE next day.
+  check("all-day uses VALUE=DATE", one.includes("DTSTART;VALUE=DATE:20260914"))
+  check("and an exclusive DTEND", one.includes("DTEND;VALUE=DATE:20260915"), "DTEND missing or wrong")
+
+  const timed = unfold(buildIcs([task({ dueTime: "14:30" })], { name: "Team", now }))
+  check(
+    "a timed task carries the zone",
+    timed.includes("DTSTART;TZID=Africa/Johannesburg:20260914T143000"),
+    "DTSTART wrong"
+  )
+  check("and is zero-length rather than a guessed span", timed.includes("DTEND;TZID=Africa/Johannesburg:20260914T143000"))
+
+  // The detail that needs SERIES_START: a rolled series must import from its
+  // ORIGIN, or Outlook shows a series that started late and lost its history.
+  const rolled = unfold(buildIcs(
+    [task({
+      dueDate: "2026-11-02",
+      seriesStart: "2026-09-14",
+      recurrence: rule({ kind: "weekly", interval: 1, weekdays: [1] }),
+    })],
+    { name: "Team", now }
+  ))
+  check("a recurring series starts at its series start", rolled.includes("DTSTART;VALUE=DATE:20260914"))
+  check("not at the date it has rolled to", !rolled.includes("DTSTART;VALUE=DATE:20261102"))
+  check("and carries the RRULE", rolled.includes("RRULE:FREQ=WEEKLY;BYDAY=MO"))
+
+  // A title full of the reserved characters must survive intact.
+  const nasty = unfold(buildIcs(
+    [task({ title: "Review: A, B; C\\D", description: "line one\nline two" })],
+    { name: "Team", now }
+  ))
+  check("a reserved-character title is escaped", nasty.includes("SUMMARY:Review: A\\, B\\; C\\\\D"), "SUMMARY wrong")
+  check("a multi-line description becomes one folded line", nasty.includes("line one\\nline two"))
+
+  check("cancelled tasks say so", unfold(buildIcs([task({ status: "cancelled" })], { name: "T", now })).includes("STATUS:CANCELLED"))
+  check("one VEVENT per task", (buildIcs([task({ id: 1 }), task({ id: 2 })], { name: "T", now }).match(/BEGIN:VEVENT/g) ?? []).length === 2)
+  check("an empty calendar is still valid", buildIcs([], { name: "T", now }).includes("END:VCALENDAR"))
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)

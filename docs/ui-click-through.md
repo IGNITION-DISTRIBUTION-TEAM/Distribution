@@ -46,6 +46,18 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Spot | Rates / Airtime Rates | Pages open; confirmation dialog shows current row count | |
 | Task Automation | Start Create job, pick a file, click Current jobs, click back | Wizard state **survived**; nav item reads "Editing <NAME>" when a job is open | |
 | Task Automation | Current jobs / Tasks / SFTP endpoints tables | Shared table style; the wizard's three preview grids keep sticky headers when scrolled | |
+| Calendar | Open | Lands on **Month**, not Upcoming. Six rows always, even for a 28-day February | |
+| Calendar | Page back a month, then forward | Data loads for both — before this the payload only covered open-plus-30-days, so a past month was simply empty | |
+| Calendar | A weekly series, viewed in the month grid | Appears on **every** matching weekday in view, including ones already past, each with a repeat icon | |
+| Calendar | A monthly series anchored on the 31st, paged Jan → Feb → Mar | 31 Jan, **28** Feb, **31** Mar — it clamps and comes back | |
+| Calendar | Drag a one-off task onto another day | It moves; the banner names the recipient count. No confirm | |
+| Calendar | Drag a **recurring** task onto another day | A confirm first, saying it re-anchors the whole series. Cancel leaves it where it was | |
+| Calendar | Click empty space in a day cell | The create dialog opens with that date already filled in | |
+| Calendar | A day with more than three tasks | A "+N more" popover lists the whole day; the chips in it are not draggable | |
+| Calendar | Ctrl-P on the month | One page, no sidebar, no header, nothing clipped. Today is outlined; the previous/next month's days are faded | |
+| Calendar | Export to Outlook → import the .ics | A recurring series arrives as a repeating event starting at its **series start**, not the date it has rolled to. A timed task lands at the right SAST hour | |
+| Calendar | Then edit that task in the portal | Outlook does **not** update. That is expected — the file is a snapshot, and the button says so | |
+| Calendar | Upcoming, after all of the above | Still groups Overdue / Today / Tomorrow / This week / Later, unchanged by the refactor onto the shared hook | |
 | Calendar | Open, before any task exists | Three tables self-create on the first request; "Nothing is on the calendar yet" info banner, no error | |
 | Calendar | Recipients → add yourself → Upcoming → New task, dated today | Green banner naming the recipient count; the mail arrives | |
 | Calendar | Edit that task's date, then delete it | Two more mails — an "Updated:" with a `Date: A → B` line, then a "Cancelled:" | |

@@ -34,6 +34,8 @@ export type CalendarTask = {
   remindDaysBefore: number
   reminderSentFor: string | null
   recurrence: Recurrence
+  /** Where the series began, as opposed to where it has rolled to. */
+  seriesStart: string
   createdAt: string | null
   createdBy: string | null
   updatedAt: string | null

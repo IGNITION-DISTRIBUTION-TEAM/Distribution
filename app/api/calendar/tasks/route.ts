@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { readGraphMailConfig } from "@/lib/graph-mail"
-import { addDaysIso, sastTodayIso } from "@/lib/calendar-dates"
+import { addDaysIso, isValidIsoDate, sastTodayIso } from "@/lib/calendar-dates"
 import {
   CAL_SF,
   ITEMS_TABLE,
@@ -12,6 +12,7 @@ import {
   loadRecipients,
   loadTask,
   loadTasks,
+  loadTasksInRange,
   normDaysBefore,
   normMode,
   olit,
@@ -54,13 +55,42 @@ async function mailEnabled(): Promise<boolean> {
   }
 }
 
+/**
+ * GET — the task list.
+ *
+ * Two shapes, and the difference matters for cost. WITHOUT `from`/`to` it
+ * answers everything open plus the last 30 days, along with the recipient list
+ * and whether mail is on: one shot, which is what the Upcoming list wants.
+ * WITH `from`/`to` it answers only the tasks for that window, because the month
+ * grid pages — and `mailEnabled` is a Snowflake read of the Graph config, so
+ * returning it on every prev/next click would spend three queries to redraw 42
+ * days. The shell holds the shared bits and asks for them once.
+ */
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "calendar")
   if (guard instanceof NextResponse) return guard
 
+  const params = request.nextUrl.searchParams
+  const fromRaw = params.get("from")
+  const toRaw = params.get("to")
+  const ranged = fromRaw !== null || toRaw !== null
+  if (ranged && (!isValidIsoDate(fromRaw) || !isValidIsoDate(toRaw))) {
+    return NextResponse.json(
+      { error: "from and to must both be real dates in YYYY-MM-DD form" },
+      { status: 400 }
+    )
+  }
+
   try {
     await ensureCalendarTables()
     const today = sastTodayIso()
+
+    if (ranged && isValidIsoDate(fromRaw) && isValidIsoDate(toRaw)) {
+      // Ordered, so a caller that swaps them still gets the window they meant.
+      const [from, to] = fromRaw <= toRaw ? [fromRaw, toRaw] : [toRaw, fromRaw]
+      return NextResponse.json({ tasks: await loadTasksInRange(from, to), today })
+    }
+
     const [tasks, team, enabled] = await Promise.all([
       loadTasks(addDaysIso(today, -HISTORY_DAYS)),
       loadRecipients(),
@@ -119,12 +149,12 @@ export async function POST(request: NextRequest) {
       `INSERT INTO ${ITEMS_TABLE}
          (TITLE, DESCRIPTION, DUE_DATE, DUE_TIME, STATUS, ASSIGNEE,
           RECIPIENTS_MODE, RECIPIENTS_JSON, REMIND_ENABLED, REMIND_DAYS_BEFORE,
-          ${RECUR_COLUMN_NAMES.join(", ")},
+          ${RECUR_COLUMN_NAMES.join(", ")}, SERIES_START,
           CREATED_AT, CREATED_BY, UPDATED_AT, UPDATED_BY)
        SELECT ${lit(title)}, ${olit(description)}, ${lit(dueDate)}, ${olit(dueTime)},
               'open', ${olit(assignee)}, ${lit(mode)}, ${lit(JSON.stringify(recipients))},
               ${blit(remindEnabled)}, ${remindDays},
-              ${recurrenceValues(recurrence).join(", ")},
+              ${recurrenceValues(recurrence).join(", ")}, ${lit(dueDate)},
               CURRENT_TIMESTAMP(), ${lit(guard.email)}, CURRENT_TIMESTAMP(), ${lit(guard.email)}`,
       CAL_SF
     )

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { isValidEmail } from "@/lib/auth-gate"
+import { readGraphMailConfig } from "@/lib/graph-mail"
 import {
   CAL_SF,
   MAX_TEAM_RECIPIENTS,
@@ -33,12 +34,32 @@ export const runtime = "nodejs"
  * CREATED_BY on every row, and TSK_CALENDAR_NOTIFICATIONS recording every send.
  */
 
+/** Is Graph mail switched on? Only the boolean — no config detail leaves here. */
+async function mailEnabled(): Promise<boolean> {
+  try {
+    const config = await readGraphMailConfig()
+    return Boolean(config.enabled && config.mailbox)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * GET — the list, plus whether mail is on at all.
+ *
+ * The flag rides along here rather than on the task list because the two
+ * things belong together: this endpoint answers "who gets emailed", and "is
+ * anyone getting emailed" is the same question one level up. It also means the
+ * shell can learn both in one call and the month grid's paged, per-window task
+ * fetch does not have to carry a Snowflake read of the Graph config.
+ */
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "calendar")
   if (guard instanceof NextResponse) return guard
   try {
     await ensureCalendarTables()
-    return NextResponse.json({ recipients: await loadRecipients() })
+    const [recipients, enabled] = await Promise.all([loadRecipients(), mailEnabled()])
+    return NextResponse.json({ recipients, mailEnabled: enabled })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("[/api/calendar/recipients GET] error:", message)
