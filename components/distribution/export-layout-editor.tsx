@@ -57,6 +57,17 @@ export function ExportLayoutEditor({
   const [problems, setProblems] = useState<Problem[]>([])
   const [checking, setChecking] = useState(false)
 
+  /**
+   * What the server says this campaign resolves to right now.
+   *
+   * Held here rather than pushed into the parent on load, and that is not a
+   * detail: the parent nulls its copy whenever it loads a config, so seeding it
+   * from here raced with that and left the table empty. Now `null` in the
+   * parent means exactly "not customised" — the standard layout, saved as NULL
+   * — and it only becomes a value when somebody actually edits something.
+   */
+  const [fetched, setFetched] = useState<ExportLayout | null>(null)
+
   const load = useCallback(async () => {
     if (!campaignId) return
     setLoading(true)
@@ -71,16 +82,13 @@ export function ExportLayoutEditor({
       setMeta({ sourceColumns: d.sourceColumns ?? [], transforms: d.transforms ?? [], presets: d.presets ?? [] })
       setDefaults(d.defaultLayout ?? null)
       setIsDefault(Boolean(d.isDefault))
-      if (!layout && d.layout) onChange(d.layout)
+      setFetched(d.layout ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-    // `layout` is deliberately absent: this seeds it once per campaign and must
-    // not refire when the user starts editing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, onChange])
+  }, [campaignId])
 
   useEffect(() => {
     void load()
@@ -94,6 +102,8 @@ export function ExportLayoutEditor({
    * guards the save.
    */
   useEffect(() => {
+    // Only an edited layout needs checking — what the server just resolved is
+    // valid by construction, and re-posting it on load would be noise.
     if (!layout || !campaignId) return
     const t = setTimeout(async () => {
       setChecking(true)
@@ -114,31 +124,32 @@ export function ExportLayoutEditor({
     return () => clearTimeout(t)
   }, [layout, campaignId])
 
-  const columns = layout?.columns ?? []
+  /** The parent's copy once edited, otherwise whatever the server resolved. */
+  const effective = layout ?? fetched
+  const columns = effective?.columns ?? []
 
   const update = (i: number, patch: Partial<ColumnSpec>) => {
-    if (!layout) return
-    const next = layout.columns.map((c, idx) => (idx === i ? { ...c, ...patch } : c))
-    onChange({ columns: next })
+    if (!effective) return
+    onChange({ columns: effective.columns.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) })
   }
 
   const move = (i: number, delta: number) => {
-    if (!layout) return
+    if (!effective) return
     const j = i + delta
-    if (j < 0 || j >= layout.columns.length) return
-    const next = [...layout.columns]
+    if (j < 0 || j >= effective.columns.length) return
+    const next = [...effective.columns]
     ;[next[i], next[j]] = [next[j], next[i]]
     onChange({ columns: next })
   }
 
   const remove = (i: number) => {
-    if (!layout) return
-    onChange({ columns: layout.columns.filter((_, idx) => idx !== i) })
+    if (!effective) return
+    onChange({ columns: effective.columns.filter((_, idx) => idx !== i) })
   }
 
   const insertAfter = (i: number) => {
-    if (!layout) return
-    const next = [...layout.columns]
+    if (!effective) return
+    const next = [...effective.columns]
     next.splice(i + 1, 0, { out: "NEW_COLUMN", kind: "null" })
     onChange({ columns: next })
   }
@@ -167,7 +178,7 @@ export function ExportLayoutEditor({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{columns.length} columns</Badge>
-          {isDefault && <Badge variant="outline">standard</Badge>}
+          {isDefault && layout === null && <Badge variant="outline">standard</Badge>}
           {checking && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           <Button
             type="button"
@@ -185,7 +196,7 @@ export function ExportLayoutEditor({
       {generalProblems.length > 0 && (
         <Banner tone="error">{generalProblems.map((p) => p.message).join(" · ")}</Banner>
       )}
-      {!error && problems.length === 0 && !isDefault && (
+      {!error && problems.length === 0 && layout !== null && (
         <Banner tone="success">
           This layout is valid. It takes effect on the next download or email for this campaign.
         </Banner>

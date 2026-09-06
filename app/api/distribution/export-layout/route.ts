@@ -3,6 +3,7 @@ import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { HLL_TABLE } from "@/lib/hll-insert"
 import { resolveExportLayout } from "@/lib/distribution-export"
+import { ensureConfigsTable } from "@/lib/distribution-steps"
 import { PRESETS, TRANSFORMS, defaultLayout, validateLayout } from "@/lib/export-layout"
 
 export const dynamic = "force-dynamic"
@@ -30,6 +31,11 @@ export async function GET(request: NextRequest) {
   const cid = Number(raw)
 
   try {
+    // Self-migrate first: EXPORT_LAYOUT_JSON is a new column, and until
+    // something adds it every read of it errors and falls back silently. This
+    // is an admin screen, so paying two round trips here is the cheap place to
+    // make sure the column exists before anyone tries to save one.
+    await ensureConfigsTable()
     const [resolved, columns] = await Promise.all([
       resolveExportLayout(cid),
       loadHllColumns(),
