@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/select"
 import {
   ResponsiveContainer,
+  BarChart,
+  Bar,
   LineChart,
   Line,
   XAxis,
@@ -4349,6 +4351,7 @@ type DashboardData = {
     avgUdm8Lda: number | null
   }
   byBatch: { batchName: string; count: number }[]
+  byBatchRank: { batchName: string; rank: string; count: number }[]
   byStatus: { status: string; count: number }[]
   byCampaign: { campaignId: string; count: number }[]
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
@@ -5537,6 +5540,7 @@ export function DistributedDashboardPanel() {
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<string[]>([])
+  const [selectedBatches, setSelectedBatches] = useState<string[]>([])
   const [startDate, setStartDate] = useState(todayLocalIso())
   const [endDate, setEndDate] = useState(todayLocalIso())
 
@@ -5592,6 +5596,7 @@ export function DistributedDashboardPanel() {
           startDate,
           endDate,
         })
+        if (selectedBatches.length > 0) params.set("batchNames", selectedBatches.join(","))
         const res = await fetch(`/api/dashboard/leads-loaded?${params.toString()}`, {
           cache: "no-store",
         })
@@ -5612,7 +5617,7 @@ export function DistributedDashboardPanel() {
     return () => {
       cancelled = true
     }
-  }, [selectedCampaignIds, startDate, endDate, reloadKey])
+  }, [selectedCampaignIds, startDate, endDate, selectedBatches, reloadKey])
 
   const selectedCampaigns = useMemo(
     () => campaigns.filter((c) => selectedCampaignIds.includes(c.id)),
@@ -5750,6 +5755,18 @@ export function DistributedDashboardPanel() {
               }}
             />
           </div>
+        </div>
+
+        {/* Options come from data.byBatch, which the route computes WITHOUT the
+            batch predicate — so picking one batch never empties the list you
+            picked it from. */}
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <MultiSelectFilter
+            label="Batch"
+            options={(data?.byBatch ?? []).map((b) => b.batchName)}
+            selected={selectedBatches}
+            onChange={setSelectedBatches}
+          />
         </div>
       </Card>
 
@@ -7461,6 +7478,132 @@ function ScoreDateHeatgrid({
   )
 }
 
+/**
+ * Leads per batch, split by rank (UDM30).
+ *
+ * Rank is ORDINAL, so the segments use one hue light-to-dark rather than a
+ * categorical palette: eight unrelated colours would say ranks 1-8 are
+ * unordered categories, and a batch skewed to good ranks would not read as
+ * anything. Blue rather than the app's green, so a full bar does not read as
+ * the score heatgrid's "more is greener".
+ *
+ * `(unranked)` is grey and last, deliberately outside the ramp — a missing
+ * value is not a rank. UDM30 is NULL until the last update-HLL procedure runs,
+ * so a large unranked segment on a recent load is the field being honest.
+ */
+const RANK_UNRANKED = "(unranked)"
+const RANK_OVERFLOW = "13+"
+const RANK_MAX = 12
+
+/** Same ramp as the EngAIge schedule heatmap. Index 0 (rank 1) is brightest. */
+function rankColor(i: number, n: number): string {
+  if (n <= 1) return "hsl(213 75% 52%)"
+  return `hsl(213 75% ${58 - (i / (n - 1)) * 26}%)`
+}
+
+function BatchRankChart({ rows }: { rows: { batchName: string; rank: string; count: number }[] }) {
+  const chartMotion = useChartMotion()
+
+  const { data, rankKeys, colours } = useMemo(() => {
+    const all = Array.from(new Set(rows.map((r) => r.rank)))
+    const numbered = all
+      .filter((r) => r !== RANK_UNRANKED)
+      .sort((a, b) => {
+        const na = Number(a)
+        const nb = Number(b)
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb
+        return a.localeCompare(b)
+      })
+    // Cap the stack so it stays readable if the rank field turns out to be
+    // high-cardinality. Keeps rank order rather than taking the biggest.
+    const kept = numbered.slice(0, RANK_MAX)
+    const overflow = new Set(numbered.slice(RANK_MAX))
+    const keys = [
+      ...kept,
+      ...(overflow.size > 0 ? [RANK_OVERFLOW] : []),
+      ...(all.includes(RANK_UNRANKED) ? [RANK_UNRANKED] : []),
+    ]
+
+    const byBatch = new Map<string, Record<string, string | number>>()
+    for (const r of rows) {
+      const key =
+        r.rank === RANK_UNRANKED ? RANK_UNRANKED : overflow.has(r.rank) ? RANK_OVERFLOW : r.rank
+      const row = byBatch.get(r.batchName) ?? { batchName: r.batchName }
+      row[key] = ((row[key] as number) ?? 0) + r.count
+      byBatch.set(r.batchName, row)
+    }
+    const total = (row: Record<string, string | number>) =>
+      keys.reduce((a, k) => a + ((row[k] as number) ?? 0), 0)
+
+    const rampLength = kept.length + (overflow.size > 0 ? 1 : 0)
+    const colourFor: Record<string, string> = {}
+    keys.forEach((k, i) => {
+      colourFor[k] = k === RANK_UNRANKED ? "hsl(220 10% 34%)" : rankColor(i, rampLength)
+    })
+
+    return {
+      data: Array.from(byBatch.values()).sort((a, b) => total(b) - total(a)),
+      rankKeys: keys,
+      colours: colourFor,
+    }
+  }, [rows])
+
+  return (
+    <Card>
+      <div className="mb-2">
+        <SectionHeading>Leads per batch by rank</SectionHeading>
+        <p className="text-sm text-muted-foreground">
+          {data.length} batch{data.length === 1 ? "" : "es"} · rank from{" "}
+          <span className="font-mono text-xs">UDM30</span>, brightest is rank 1
+          {rankKeys.includes(RANK_UNRANKED) &&
+            " · unranked leads are grey, and stay unranked until the update-HLL procedure runs"}
+        </p>
+      </div>
+      <div
+        className="w-full"
+        style={{ height: Math.max(220, data.length * 32 + 60) }}
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+            <YAxis
+              type="category"
+              dataKey="batchName"
+              width={320}
+              interval={0}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "0.5rem",
+                fontSize: "0.875rem",
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+            {rankKeys.map((k) => (
+              <Bar
+                key={k}
+                dataKey={k}
+                name={k === RANK_UNRANKED || k === RANK_OVERFLOW ? k : `Rank ${k}`}
+                stackId="rank"
+                fill={colours[k]}
+                // A hairline in the surface colour reads as a gap between
+                // segments, which is what keeps adjacent ramp steps apart.
+                stroke="hsl(var(--card))"
+                strokeWidth={1}
+                {...chartMotion}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
+  )
+}
+
 function DashboardSummary({
   data,
   campaigns,
@@ -7568,6 +7711,8 @@ function DashboardSummary({
       {data.avgScoreByDay.length > 0 && (
         <AvgScoreLineChart data={avgScoreSeries} filterNote={dateFilterNote} />
       )}
+
+      {data.byBatchRank.length > 0 && <BatchRankChart rows={data.byBatchRank} />}
 
       {/* Status breakdown table */}
       {data.byStatus.length > 0 && (

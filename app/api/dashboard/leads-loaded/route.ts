@@ -7,6 +7,15 @@ export const dynamic = "force-dynamic"
 const HISTORY_TABLE = "DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED"
 const SF_OPTS = { database: "DATAWAREHOUSE", schema: "DISTRIBUTION_DATA_APPLICATION" } as const
 
+// Same helpers as app/api/dashboard/sales-stats/route.ts. Note inClause emits
+// its own leading AND, so it appends AFTER the date predicate — the opposite
+// convention to campaignFilter below, which carries a trailing AND.
+function escSql(s: string): string {
+  return s.replace(/'/g, "''")
+}
+const inClause = (col: string, vals: string[]) =>
+  vals.length > 0 ? `AND ${col} IN (${vals.map((v) => `'${escSql(v)}'`).join(",")})` : ""
+
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "distribution")
   if (guard instanceof NextResponse) return guard
@@ -15,6 +24,14 @@ export async function GET(request: NextRequest) {
   const campaignIdsRaw = searchParams.get("campaignIds") ?? searchParams.get("campaignId")
   const startDate = searchParams.get("startDate") ?? searchParams.get("date")
   const endDate = searchParams.get("endDate") ?? startDate
+  const batchNames = Array.from(
+    new Set(
+      (searchParams.get("batchNames") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  )
 
   // No campaignIds at all means EVERY campaign — the report defaults to the
   // whole book rather than refusing to load until something is picked.
@@ -58,13 +75,16 @@ export async function GET(request: NextRequest) {
   // over every id and sidesteps the 200-campaign cap.
   const campaignFilter =
     ids.length > 0 ? `campaignid IN (${ids.map((id) => Number(id)).join(",")}) AND` : ""
-  const where = `
+  // Everything except the batch list itself is filtered by batch.
+  const whereNoBatch = `
     WHERE ${campaignFilter}
       CAST(CREATEDONDATE AS DATE) BETWEEN '${startDate}' AND '${endDate}'
   `
+  const where = `${whereNoBatch} ${inClause("BATCHNAME", batchNames)}`
 
   try {
-    const [totals, byBatch, byStatus, byCampaign, byScoreDate, avgScoreByDay] = await Promise.all([
+    const [totals, byBatch, byStatus, byCampaign, byScoreDate, avgScoreByDay, byBatchRank] =
+      await Promise.all([
       executeSnowflakeQuery<{
         TOTAL: number | string
         DISTINCT_BATCHES: number | string
@@ -93,9 +113,11 @@ export async function GET(request: NextRequest) {
         SF_OPTS
       ),
       executeSnowflakeQuery<{ BATCHNAME: string | null; CNT: number | string }>(
+        // whereNoBatch on purpose: this feeds the batch picker, so it has to keep
+        // listing every batch in the campaign/date window even while one is picked.
         `SELECT BATCHNAME, COUNT(*) AS CNT
          FROM ${HISTORY_TABLE}
-         ${where}
+         ${whereNoBatch}
          GROUP BY BATCHNAME
          ORDER BY CNT DESC`,
         SF_OPTS
@@ -152,6 +174,21 @@ export async function GET(request: NextRequest) {
          ORDER BY 1`,
         SF_OPTS
       ),
+      // Batch × rank. UDM30 is the rank, written by the last update-HLL
+      // procedure — it is NULL until that has run, which is why unranked is a
+      // labelled bucket rather than dropped. It is not stored as a number, so
+      // the ordering casts defensively.
+      executeSnowflakeQuery<{ BATCHNAME: string | null; RANK: string | null; CNT: number | string }>(
+        `SELECT
+           BATCHNAME,
+           COALESCE(NULLIF(TRIM(UDM30::VARCHAR), ''), '(unranked)') AS RANK,
+           COUNT(*) AS CNT
+         FROM ${HISTORY_TABLE}
+         ${where}
+         GROUP BY 1, 2
+         ORDER BY BATCHNAME, TRY_TO_NUMBER(UDM30::VARCHAR) NULLS LAST, RANK`,
+        SF_OPTS
+      ),
     ])
 
     const t = totals[0] ?? {}
@@ -178,6 +215,11 @@ export async function GET(request: NextRequest) {
         avgAvailableSpend: numFloat(t.AVG_AVAILABLE_SPEND),
         avgUdm8Lda: numFloat(t.AVG_UDM8_LDA),
       },
+      byBatchRank: byBatchRank.map((r) => ({
+        batchName: r.BATCHNAME ?? "(unnamed)",
+        rank: r.RANK ?? "(unranked)",
+        count: num(r.CNT),
+      })),
       byBatch: byBatch.map((r) => ({
         batchName: r.BATCHNAME ?? "(unnamed)",
         count: num(r.CNT),
