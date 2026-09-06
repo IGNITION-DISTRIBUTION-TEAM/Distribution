@@ -23,6 +23,15 @@ import {
   sqlLit,
   type ExportScope,
 } from "../../lib/distribution-export"
+import {
+  DEFAULT_LAYOUT,
+  PRESETS,
+  TRANSFORMS,
+  defaultLayout,
+  renderSelectList,
+  validateLayout,
+  type ExportLayout,
+} from "../../lib/export-layout"
 import { rowsToCsv } from "../../lib/dialler-csv"
 import type { SnowflakeColumn } from "../../lib/snowflake"
 
@@ -124,13 +133,16 @@ console.log("\nbuildQuery — CREATEDONDATE and LeadExpiry")
   // every row with today's date and an expiry six weeks out.
   check(
     "CREATEDONDATE is the row's own load date",
-    sql.includes("CAST(a.CREATEDONDATE AS DATE) AS CREATEDONDATE"),
+    sql.includes('CAST(a.CREATEDONDATE AS DATE) AS "CREATEDONDATE"'),
   )
   check(
-    "LeadExpiry is measured from the load date",
-    sql.includes("CAST(a.CREATEDONDATE AS DATE) + 45 as LeadExpiry"),
+    "LEADEXPIRY is measured from the load date",
+    sql.includes('CAST(a.CREATEDONDATE AS DATE) + 45 AS "LEADEXPIRY"'),
   )
-  check("the expiry days value is substituted", buildQuery(1, 30, "full", scope()).includes("+ 30 as LeadExpiry"))
+  check(
+    "the expiry days value is substituted",
+    buildQuery(1, 30, "full", scope()).includes('+ 30 AS "LEADEXPIRY"')
+  )
 }
 
 /* ---- 5. The batch predicate -------------------------------------------- */
@@ -140,7 +152,7 @@ console.log("\nbuildQuery — the batch")
   const all = buildQuery(11381, 45, "full", scope())
   check("no BATCHNAME clause when no batch is picked", !all.includes("AND BATCHNAME ="))
   // BATCHNAME is still SELECTed — the grouping into per-batch files reads it.
-  check("but BATCHNAME is still projected", all.includes("BATCHNAME AS BATCHNAME"))
+  check("but BATCHNAME is still projected", all.includes('a.BATCHNAME AS "BATCHNAME"'))
 
   const one = buildQuery(11381, 45, "full", scope({ batchName: "BATCH_ONAIR_ULTRA520260901" }))
   check(
@@ -243,6 +255,182 @@ console.log("\nCSV encoding — the 'UTF-8, no BOM' claim the UI makes")
     "base64 round-trips to the same bytes (the Graph transport)",
     Buffer.from(attachmentBytes.toString("base64"), "base64").equals(downloadBytes)
   )
+}
+
+/* ---- 8. The default layout must reproduce the file we already ship ------ */
+
+/**
+ * The 55 headers from a real export off the Teams channel, in order.
+ *
+ * This is ground truth, not a restatement of the code: it is what the dialler
+ * team actually received. If DEFAULT_LAYOUT ever stops producing exactly this,
+ * the "nothing changes until you configure something" promise is broken.
+ */
+const SHIPPED_HEADERS = [
+  "First Name", "Last Name", "Contact No", "Email ID", "Address", "IDNUMBER",
+  "MASKID", "CAMPAIGNID", "BATCHNAME", "CREATEDONDATE", "LEADEXPIRY", "BANK",
+  "BANKACCOUNTTYPE", "BRANCHCODE", "SERIAL_NUMBER", "DEBIT_DAY", "AVERAGESPEND",
+  "MARKETING_OFFER_DESC", "ORDERDATE", "ADDRESS_RANK", "SOURCEORDER",
+  "DEVICE_VALUE", "CONTRACTTYPE", "PAYDAY", "SOURCE", "UPGRADE_DATE",
+  "ACTIVATIONDATE", "MVNX_NUMBER", "LTE_COVERAGE", "INSURANCEPRICE", "PREMIUM",
+  "PROVINCE", "HANDSETPRICE", "PROVINCE_RANK", "DEVICE_TYPE", "DATE_OF_PURCHASE",
+  "TAKEUP_PROB", "MATOGEN_SCORE", "SCORE", "SCOREGROUP", "OPTINSTATUS",
+  "PROPENSITYTOCONNECT", "SKILL", "BANK_ACCOUNT_MASKED", "HLL_ID",
+  "CURRENT_PACKAGE", "DATA_DAY_RANK", "DEVICE_DETAILS", "PROVIDER_ACCOUNT_NUMBER",
+  "SS_LEADCUSTOMERID", "CONTACTNUMBER2", "CONTACTNUMBER3", "COMMENT", "EXTRADATA",
+  "Next Dial Time",
+]
+
+console.log("\nDEFAULT_LAYOUT vs the file the dialler team received")
+{
+  const got = DEFAULT_LAYOUT.columns.map((c) => c.out)
+  check("55 columns", got.length === 55, String(got.length))
+  check(
+    "every header matches, in order",
+    JSON.stringify(got) === JSON.stringify(SHIPPED_HEADERS),
+    got.map((h, i) => (h === SHIPPED_HEADERS[i] ? null : `${i}: ${h} != ${SHIPPED_HEADERS[i]}`))
+      .filter(Boolean)
+      .join("; ")
+  )
+  // LEADEXPIRY is upper case because the old query's unquoted `as LeadExpiry`
+  // was folded by Snowflake. Storing the pretty spelling would silently rename
+  // a column in every file.
+  check("LEADEXPIRY keeps the folded spelling", got.includes("LEADEXPIRY") && !got.includes("LeadExpiry"))
+  check("the default passes its own validator", validateLayout(DEFAULT_LAYOUT, null).ok)
+}
+
+console.log("\nrenderSelectList — the default renders the expressions it used to")
+{
+  const sql = buildQuery(11381, 45, "full", scope())
+  const expected = [
+    'RTRIM(LTRIM(a.CUSTOMERNAME)) AS "First Name"',
+    'DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(a.CELLNUMBER) AS "Contact No"',
+    `REGEXP_REPLACE(a.UDM7, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS "Address"`,
+    'RTRIM(IFNULL(A.IDNUMBER, CELLNUMBER)) AS "IDNUMBER"',
+    'LEFT(a.IDNUMBER, 6) AS "MASKID"',
+    'CAST(NULL AS NUMBER(38, 0)) AS "PROVINCE_RANK"',
+    'a.PROPENSITYTOCONNECT::INT AS "PROPENSITYTOCONNECT"',
+    'NULL AS "Next Dial Time"',
+  ]
+  for (const frag of expected) {
+    check(`renders ${frag.slice(0, 46)}…`, sql.includes(frag), "missing")
+  }
+  // The one that would have shipped a broken query: IDNUMBER exists on the
+  // base table AND on the joined SilverSurfer CTE, so an unqualified
+  // reference is ambiguous and Snowflake refuses the whole statement.
+  check("every source column is qualified with the table alias", !/(?<![.\w])LEFT\(IDNUMBER/.test(sql))
+  check("the typed NULLs keep their type", (sql.match(/CAST\(NULL AS NUMBER\(38, 0\)\)/g) ?? []).length === 2)
+  check(
+    "SS_LEADCUSTOMERID is the lookup on the full tier",
+    sql.includes('LEADCUSTOMERID AS "SS_LEADCUSTOMERID"')
+  )
+  check(
+    "and NULL when the lookup is unavailable",
+    buildQuery(1, 45, "noLookup", scope()).includes('NULL AS "SS_LEADCUSTOMERID"')
+  )
+}
+
+/* ---- 9. The layout grammar is the security boundary --------------------- */
+
+const known = new Set([
+  "CUSTOMERNAME", "LASTNAME", "CELLNUMBER", "EMAIL", "UDM7", "UDM3", "UDM6",
+  "UDM9", "UDM30", "IDNUMBER", "CAMPAIGNID", "BATCHNAME", "CREATEDONDATE",
+  "SCORE", "SCOREGROUP", "PROPENSITYTOCONNECT", "HLL_ID", "EXTRADATA",
+])
+
+const layoutOf = (...columns: ExportLayout["columns"]): ExportLayout => ({
+  columns: [{ out: "BATCHNAME", kind: "column", source: "BATCHNAME" }, ...columns],
+})
+
+console.log("\nvalidateLayout — rejects, never escapes")
+{
+  const bad = (l: ExportLayout, why: string) => {
+    const r = validateLayout(l, known)
+    check(why, !r.ok, "was accepted")
+  }
+
+  check("a good layout passes", validateLayout(defaultLayout(), null).ok)
+
+  // A source column that is not on the table is a configuration mistake, and
+  // passing it through would turn it into a Snowflake error at download time.
+  bad(layoutOf({ out: "X", kind: "column", source: "NOPE" }), "an unknown source column is refused")
+  bad(layoutOf({ out: "X", kind: "column", source: "UDM7; DROP TABLE T" }), "SQL in a source column is refused")
+  bad(layoutOf({ out: "X", kind: "column", source: "a.UDM7" }), "a qualified source column is refused")
+
+  // The alias is emitted inside double quotes, so a double quote is the one
+  // character that could break out of it.
+  bad(layoutOf({ out: 'X" , 1 AS "Y', kind: "null" }), "a double quote in a column name is refused")
+  bad(layoutOf({ out: "X--comment", kind: "null" }), "a SQL comment in a column name is refused")
+  bad(layoutOf({ out: "X\\", kind: "null" }), "a backslash in a column name is refused")
+  bad(layoutOf({ out: "", kind: "null" }), "an empty column name is refused")
+  bad(layoutOf({ out: "x".repeat(65), kind: "null" }), "an over-long column name is refused")
+
+  bad(layoutOf({ out: "X", kind: "column", source: "UDM7", transform: "drop" as never }), "an unknown transform is refused")
+  bad(layoutOf({ out: "X", kind: "preset", preset: "evil" as never }), "an unknown preset is refused")
+  bad(layoutOf({ out: "X", kind: "sql" as never }), "an unknown kind is refused")
+
+  bad(layoutOf({ out: "SCORE", kind: "null" }, { out: "score", kind: "null" }), "duplicate column names are refused")
+
+  // Without BATCHNAME the per-batch grouping silently collapses to one
+  // generically-named file, and the file name is what the dialler keys on.
+  const noBatch = validateLayout({ columns: [{ out: "SCORE", kind: "null" }] }, known)
+  check("a layout without BATCHNAME is refused", !noBatch.ok)
+  check(
+    "and the message says why",
+    !noBatch.ok && noBatch.problems.some((p) => /names each file after it/.test(p.message))
+  )
+
+  check("an empty layout is refused", !validateLayout({ columns: [] }, known).ok)
+  check("a non-array is refused", !validateLayout({ columns: "all" }, known).ok)
+  check("junk is refused", !validateLayout(null, known).ok)
+
+  // Accepted values are normalised, so two spellings cannot produce two rows.
+  const okd = validateLayout(layoutOf({ out: " Region Code ", kind: "column", source: "udm7" }), known)
+  check("a valid source column is upper-cased", okd.ok && okd.layout.columns[1].source === "UDM7")
+  check("the column name is trimmed", okd.ok && okd.layout.columns[1].out === "Region Code")
+}
+
+/* ---- 10. Spot Connect 1: five edits from the default -------------------- */
+
+console.log("\nthe Spot Connect 1 layout")
+{
+  const l = defaultLayout()
+  const at = (name: string) => l.columns.findIndex((c) => c.out === name)
+  l.columns.splice(at("IDNUMBER"), 0, { out: "Region Code", kind: "null" })
+  l.columns.splice(at("Next Dial Time"), 0, { out: "REGION", kind: "null" })
+  l.columns[at("ADDRESS_RANK")] = { out: "ADDRESS_RANK", kind: "null" }
+  l.columns[at("LEADEXPIRY")] = { out: "LEADEXPIRY", kind: "column", source: "LEADEXPIRY", transform: "raw" }
+  l.columns[at("CREATEDONDATE")] = { out: "CREATEDONDATE", kind: "column", source: "CREATEDONDATE", transform: "raw" }
+
+  const headers = l.columns.map((c) => c.out)
+  check("57 columns", headers.length === 57, String(headers.length))
+  check("Region Code is 6th", headers[5] === "Region Code", headers[5])
+  check("REGION is 56th", headers[55] === "REGION", headers[55])
+  check("Next Dial Time is still last", headers[56] === "Next Dial Time")
+  check("it validates", validateLayout(l, new Set([...known, "LEADEXPIRY"])).ok)
+
+  const sql = renderSelectList(l, { expiryDays: 45, ssLookup: "LEADCUSTOMERID" })
+  check("ADDRESS_RANK is now empty", sql.includes('NULL AS "ADDRESS_RANK"'))
+  // a.UDM3 is a prefix of a.UDM30, which DATA_DAY_RANK still uses.
+  check("and no longer reads UDM3", !/a\.UDM3(?!\d)/.test(sql))
+  check("LEADEXPIRY reads the stored column", sql.includes('a.LEADEXPIRY AS "LEADEXPIRY"'))
+  check("CREATEDONDATE is no longer cast", sql.includes('a.CREATEDONDATE AS "CREATEDONDATE"'))
+  check("Region Code renders", sql.includes('NULL AS "Region Code"'))
+  check("REGION renders", sql.includes('NULL AS "REGION"'))
+}
+
+console.log("\nevery transform and preset renders")
+{
+  for (const id of Object.keys(TRANSFORMS)) {
+    const l = layoutOf({ out: "X", kind: "column", source: "UDM7", transform: id as never })
+    const sql = renderSelectList(l, { expiryDays: 45, ssLookup: "LEADCUSTOMERID" })
+    check(`transform ${id}`, sql.includes('AS "X"') && sql.includes("a.UDM7"), sql)
+  }
+  for (const id of Object.keys(PRESETS)) {
+    const l = layoutOf({ out: "X", kind: "preset", preset: id as never })
+    const sql = renderSelectList(l, { expiryDays: 45, ssLookup: "LEADCUSTOMERID" })
+    check(`preset ${id}`, sql.includes('AS "X"') && !sql.includes("SS_LOOKUP"), sql)
+  }
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)

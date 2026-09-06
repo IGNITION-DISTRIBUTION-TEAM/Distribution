@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   if ("error" in scope) return NextResponse.json(scope, { status: 400 })
 
   try {
-    const { files, totalRows, fallbackName, lookupTier } = await buildExportFiles(cid, scope)
+    const { files, totalRows, fallbackName, lookupTier, layoutFrom } = await buildExportFiles(cid, scope)
 
     if (files.length <= 1) {
       const only = files[0]
@@ -39,6 +39,10 @@ export async function GET(request: NextRequest) {
           "Content-Disposition": `attachment; filename="${only ? only.filename : fallbackName + ".csv"}"`,
           "X-Row-Count": String(totalRows),
           "X-Lookup-Tier": lookupTier,
+          // Which config's column layout produced this file. A campaign can
+          // have several configs and the pick is a heuristic, so it is stated.
+          "X-Layout": layoutFrom.isDefault ? "default" : (layoutFrom.configName ?? "custom"),
+          "X-Column-Count": String(layoutFrom.columnCount),
           "Cache-Control": "no-store",
         },
       })
@@ -56,6 +60,8 @@ export async function GET(request: NextRequest) {
         "X-Row-Count": String(totalRows),
         "X-Batch-Count": String(files.length),
         "X-Lookup-Tier": lookupTier,
+        "X-Layout": layoutFrom.isDefault ? "default" : (layoutFrom.configName ?? "custom"),
+        "X-Column-Count": String(layoutFrom.columnCount),
         "Cache-Control": "no-store",
       },
     })

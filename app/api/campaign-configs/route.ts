@@ -54,6 +54,7 @@ function colsFromParsed(parsed: Record<string, unknown>, updateHllList: string[]
     ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
     ["SOURCE_LOAD_FROM", sqlStr(parsed.sourceLoadFrom)],
     ["SOURCE_MAPPING_JSON", parsed.sourceMappingJson ? sqlStr(parsed.sourceMappingJson) : "NULL"],
+    ["EXPORT_LAYOUT_JSON", parsed.exportLayoutJson ? sqlStr(parsed.exportLayoutJson) : "NULL"],
     ["LEAD_EXPIRY_DAYS", String((parsed.leadExpiryDays as number | undefined) ?? 45)],
     ["BATCH_NAME_TEMPLATE", sqlStr(parsed.batchNameTemplate)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],

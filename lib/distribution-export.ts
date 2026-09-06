@@ -4,6 +4,12 @@ import type { SnowflakeColumn } from "@/lib/snowflake"
 import { CONFIGS_TABLE, CONFIG_SF } from "@/lib/distribution-steps"
 import { normLeadExpiryDays, DEFAULT_LEAD_EXPIRY_DAYS } from "@/lib/hll-insert"
 import { sastTodayIso } from "@/lib/calendar-dates"
+import {
+  DEFAULT_LAYOUT,
+  parseLayout,
+  renderSelectList,
+  type ExportLayout,
+} from "@/lib/export-layout"
 
 /**
  * The distribution export, shared by the download (step 4) and the email
@@ -30,6 +36,8 @@ export type ExportFile = {
 }
 
 export type ExportResult = {
+  /** Which config's layout produced this, for the UI to show. */
+  layoutFrom: { configName: string | null; isDefault: boolean; columnCount: number }
   files: ExportFile[]
   totalRows: number
   /** Name for a bundle when there are several batches. */
@@ -61,6 +69,50 @@ export async function resolveLeadExpiryDays(cid: number): Promise<number> {
     /* best-effort — fall back to the default below */
   }
   return DEFAULT_LEAD_EXPIRY_DAYS
+}
+
+/**
+ * The CXM column layout configured for this campaign.
+ *
+ * Returns the layout AND which config it came from, because the resolution is
+ * a heuristic: a campaign can have several automation configs, and this picks
+ * an active one then the most recently updated — the same rule
+ * `resolveLeadExpiryDays` uses. That rule is not fully deterministic (two
+ * active configs with the same UPDATED_AT, and UPDATED_AT is only set on
+ * UPDATE, never on INSERT).
+ *
+ * Choosing the wrong expiry by a few days is a soft error. Choosing the wrong
+ * LAYOUT ships a file the dialler cannot ingest, silently — so the config's
+ * name comes back with it and the UI shows which one won. The ambiguity is
+ * surfaced rather than hidden.
+ *
+ * Best-effort: any failure falls back to the default layout, which is what
+ * every campaign got before this was configurable.
+ */
+export async function resolveExportLayout(
+  cid: number
+): Promise<{ layout: ExportLayout; configName: string | null; isDefault: boolean }> {
+  try {
+    const rows = await executeSnowflakeQuery<{ EXPORT_LAYOUT_JSON: unknown; CONFIG_NAME: unknown }>(
+      `SELECT EXPORT_LAYOUT_JSON, CONFIG_NAME FROM ${CONFIGS_TABLE}
+       WHERE CAMPAIGNID = ${cid} AND EXPORT_LAYOUT_JSON IS NOT NULL
+       ORDER BY COALESCE(IS_ACTIVE, TRUE) DESC, UPDATED_AT DESC NULLS LAST
+       LIMIT 1`,
+      CONFIG_SF
+    )
+    if (rows.length > 0) {
+      const raw = rows[0].EXPORT_LAYOUT_JSON
+      const parsed = parseLayout(typeof raw === "string" ? raw : null)
+      const name = rows[0].CONFIG_NAME == null ? null : String(rows[0].CONFIG_NAME)
+      // parseLayout falls back to the default on unreadable JSON, so compare
+      // rather than assume the stored row won.
+      const isDefault = JSON.stringify(parsed) === JSON.stringify(DEFAULT_LAYOUT)
+      return { layout: parsed, configName: isDefault ? null : name, isDefault }
+    }
+  } catch {
+    /* best-effort — fall back to the default below */
+  }
+  return { layout: DEFAULT_LAYOUT, configName: null, isDefault: true }
 }
 
 /**
@@ -169,7 +221,9 @@ export function buildQuery(
   cid: number,
   expiryDays: number,
   tier: LookupTier = "full",
-  scope: ExportScope
+  scope: ExportScope,
+  /** Which columns to emit. Defaults to the layout every campaign had before. */
+  layout: ExportLayout = DEFAULT_LAYOUT
 ): string {
   const date = assertIsoDate(scope.date)
   // Narrowing in SQL rather than filtering the grouped files afterwards: a
@@ -196,69 +250,9 @@ export function buildQuery(
   const ssExpr = tier === "noLookup" ? "NULL" : "LEADCUSTOMERID"
   const ssJoin = tier === "noLookup" ? "" : "left join cte1 b on a.IDNUMBER = b.IDNUMBER\n"
 
-  return `${cte}SELECT RTRIM(LTRIM(CUSTOMERNAME)) AS "First Name"
-     , RTRIM(LTRIM(LASTNAME)) AS "Last Name"
-     , DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CELLNUMBER) as "Contact No"
-     , EMAIL as "Email ID"
-     , REGEXP_REPLACE(UDM7, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS "Address"
-     , RTRIM(IFNULL(A.IDNUMBER, CELLNUMBER)) AS IDNUMBER
-     , LEFT(A.IDNUMBER, 6) AS MASKID
-     , CAMPAIGNID AS CAMPAIGNID
-     , BATCHNAME AS BATCHNAME
-     -- The row's own load date, not the export date. See buildQuery's doc.
-     , CAST(a.CREATEDONDATE AS DATE) AS CREATEDONDATE
-     , CAST(a.CREATEDONDATE AS DATE) + ${expiryDays} as LeadExpiry
-     , NULL AS BANK
-     , NULL AS BANKACCOUNTTYPE
-     , NULL AS BRANCHCODE
-     , NULL AS SERIAL_NUMBER
-     , NULL AS DEBIT_DAY
-     , NULL AS AVERAGESPEND
-     , NULL AS MARKETING_OFFER_DESC
-     , NULL AS ORDERDATE
-     , REGEXP_REPLACE(UDM3, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS ADDRESS_RANK
-     , NULL AS SOURCEORDER
-     , NULL AS DEVICE_VALUE
-     , NULL AS CONTRACTTYPE
-     , NULL AS PAYDAY
-     , NULL AS SOURCE
-     , NULL AS UPGRADE_DATE
-     , NULL AS ACTIVATIONDATE
-     , NULL AS MVNX_NUMBER
-     , REGEXP_REPLACE(UDM6, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS LTE_COVERAGE
-     , NULL AS INSURANCEPRICE
-     , NULL AS PREMIUM
-     , REGEXP_REPLACE(UDM9, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS PROVINCE
-     , NULL AS HANDSETPRICE
-     , CAST(NULL AS NUMBER(38, 0)) AS PROVINCE_RANK
-     , NULL AS DEVICE_TYPE
-     , NULL AS DATE_OF_PURCHASE
-     , NULL AS TAKEUP_PROB
-     , CAST(NULL AS NUMBER(38, 0)) AS MATOGEN_SCORE
-     , SCORE AS SCORE
-     , SCOREGROUP AS SCOREGROUP
-     , CASE
-       WHEN OPTINSTATUS::INT = 0 THEN 'CUSTOMER NOT OPTED IN'
-       WHEN OPTINSTATUS::INT = 1 THEN 'CUSTOMER ALREADY OPTED'
-       WHEN OPTINSTATUS::INT = 2 THEN 'CUSTOMER ALREADY OPTED OUT'
-       END AS OPTINSTATUS
-     , PROPENSITYTOCONNECT::INT AS PROPENSITYTOCONNECT
-     , NULL AS SKILL
-     , NULL AS BANK_ACCOUNT_MASKED
-     , A.HLL_ID
-     , NULL AS CURRENT_PACKAGE
-     , REGEXP_REPLACE(UDM30, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS DATA_DAY_RANK
-     , NULL AS DEVICE_DETAILS
-     , NULL AS PROVIDER_ACCOUNT_NUMBER
-     , ${ssExpr} AS SS_LEADCUSTOMERID
-     , CASE WHEN DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1) = DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CELLNUMBER)
-        THEN NULL ELSE DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1) END AS CONTACTNUMBER2
-     , CASE WHEN DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER2) = DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER1)
-        OR DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER2) = DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CELLNUMBER)
-        THEN NULL ELSE DATAWAREHOUSE.DISTRIBUTION.SF_PHONE_NUMBER_FIX_CXM(CONTACTNUMBER2) END AS CONTACTNUMBER3
-     , NULL AS COMMENT
-     , REGEXP_REPLACE(EXTRADATA, '[^a-zA-Z0-9|:,.\\s-]', ' ') AS EXTRADATA
-     , NULL AS "Next Dial Time"
+  const selectList = renderSelectList(layout, { expiryDays, ssLookup: ssExpr })
+
+  return `${cte}${selectList}
 FROM ${HLL} a
 ${ssJoin}WHERE CAMPAIGNID in (${cid})
   AND cast(CREATEDONDATE as date) = '${date}'::DATE
@@ -281,7 +275,15 @@ function isMissingObject(message: string): boolean {
 }
 
 export async function buildExportFiles(cid: number, scope: ExportScope): Promise<ExportResult> {
-  const expiryDays = await resolveLeadExpiryDays(cid)
+  const [expiryDays, resolved] = await Promise.all([
+    resolveLeadExpiryDays(cid),
+    resolveExportLayout(cid),
+  ])
+  const layoutFrom = {
+    configName: resolved.configName,
+    isDefault: resolved.isDefault,
+    columnCount: resolved.layout.columns.length,
+  }
 
   // Step down only on a missing/ungranted object. Anything else is a real fault
   // and is rethrown immediately rather than retried into a worse query.
@@ -293,7 +295,7 @@ export async function buildExportFiles(cid: number, scope: ExportScope): Promise
 
   for (const tier of tiers) {
     try {
-      const res = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays, tier, scope), {
+      const res = await executeSnowflakeQueryWithMeta(buildQuery(cid, expiryDays, tier, scope, resolved.layout), {
         database: "DATAWAREHOUSE",
         schema: "DISTRIBUTION_DATA_APPLICATION",
       })
@@ -346,6 +348,7 @@ export async function buildExportFiles(cid: number, scope: ExportScope): Promise
           rawRows: rows,
         },
       ],
+      layoutFrom,
       totalRows: rows.length,
       fallbackName,
       lookupTier: usedTier,
@@ -370,6 +373,7 @@ export async function buildExportFiles(cid: number, scope: ExportScope): Promise
   }
   return {
     files,
+    layoutFrom,
     totalRows: rows.length,
     fallbackName,
     lookupTier: usedTier,

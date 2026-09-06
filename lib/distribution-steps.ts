@@ -46,6 +46,9 @@ export const CONFIGS_COLUMNS: [string, string][] = [
   // The sync is fire-and-forget (can run ~hours); track the last submission.
   ["SYNC_LAST_HANDLE", "VARCHAR"], ["SYNC_LAST_AT", "TIMESTAMP_NTZ"], ["SYNC_LAST_STATUS", "VARCHAR"],
   ["LEAD_EXPIRY_DAYS", "NUMBER"], ["BATCH_NAME_TEMPLATE", "VARCHAR"],
+  // The CXM export's column layout for this campaign, as JSON. NULL means
+  // "use DEFAULT_LAYOUT" — see lib/export-layout.ts.
+  ["EXPORT_LAYOUT_JSON", "VARCHAR"],
   ["IS_ACTIVE", "BOOLEAN"],
   ["LAST_RUN_AT", "TIMESTAMP_NTZ"], ["LAST_RUN_STATUS", "VARCHAR"], ["LAST_RUN_MESSAGE", "VARCHAR"],
   ["CREATED_BY", "VARCHAR"], ["CREATED_AT", "TIMESTAMP_NTZ"], ["UPDATED_BY", "VARCHAR"], ["UPDATED_AT", "TIMESTAMP_NTZ"],

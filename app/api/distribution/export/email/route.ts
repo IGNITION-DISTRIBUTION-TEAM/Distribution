@@ -62,7 +62,8 @@ export async function POST(request: NextRequest) {
   if ("error" in scope) return NextResponse.json(scope, { status: 400 })
 
   try {
-    const { files, totalRows, lookupTier, lookupNotes, columns } = await buildExportFiles(cid, scope)
+    const { files, totalRows, lookupTier, lookupNotes, columns, layoutFrom } =
+      await buildExportFiles(cid, scope)
 
     if (totalRows === 0) {
       // Names the day and batch actually asked for. This used to say "for
@@ -76,6 +77,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    // Guards the SilverSurfer notes below — see there.
+    const hasSsColumn = columns.some((c) => c.name.toUpperCase() === "SS_LEADCUSTOMERID")
 
     const to = recipients()
     const batchNames = files.map((f) => f.batchName).filter((b): b is string => !!b)
@@ -91,13 +95,20 @@ export async function POST(request: NextRequest) {
       "",
       ...files.map((f) => `  ${f.filename} — ${f.rows.toLocaleString()} rows`),
       "",
-      ...(lookupTier === "noLookup"
+      `Layout: ${
+        layoutFrom.isDefault ? "default" : (layoutFrom.configName ?? "custom")
+      } — ${layoutFrom.columnCount} columns.`,
+      "",
+      // The notes below claim things about SS_LEADCUSTOMERID. A campaign whose
+      // layout omits that column would be told about a column its file does
+      // not have, so the claim is guarded on the column actually being there.
+      ...(hasSsColumn && lookupTier === "noLookup"
         ? [
             "NOTE: SS_LEADCUSTOMERID is empty in this file — the SilverSurfer lookup",
             "is not reachable by the reporting role. Every other column is unaffected.",
             "",
           ]
-        : lookupTier === "noDetails"
+        : hasSsColumn && lookupTier === "noDetails"
         ? [
             "NOTE: SS_LEADCUSTOMERID was resolved without the LEAD_LEADCUSTOMERDETAILS",
             "filter, which was not reachable. Row count is unaffected.",

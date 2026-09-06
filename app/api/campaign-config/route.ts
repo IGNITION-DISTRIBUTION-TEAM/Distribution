@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
+import { validateLayout } from "@/lib/export-layout"
 import { normLeadExpiryDays, batchNameSql, DEFAULT_BATCH_TEMPLATE } from "@/lib/hll-insert"
 
 export const dynamic = "force-dynamic"
@@ -137,6 +138,7 @@ export type CampaignConfigInput = {
   sourceObject?: string
   sourceLoadFrom?: string
   sourceMappingJson?: string | null
+  exportLayoutJson?: string | null
   leadExpiryDays?: number
   batchNameTemplate?: string
   isActive?: boolean
@@ -153,6 +155,26 @@ function validateSourceMapping(raw: unknown): string | null {
   }
   const keys = Object.keys(out)
   return keys.length && keys.length <= 500 ? JSON.stringify(out) : null
+}
+
+/**
+ * Validate the CXM export layout; JSON or null.
+ *
+ * The heavy lifting is validateLayout in lib/export-layout.ts, which checks
+ * against a closed grammar and REJECTS rather than escapes — what comes out of
+ * it is interpolated into a SELECT run under a privileged role. Here we only
+ * decide null-vs-stored: an absent layout means "use the default", and an
+ * invalid one is refused loudly rather than silently falling back, because a
+ * silent fallback would ship a different file than the operator configured.
+ */
+function validateExportLayout(raw: unknown): string | null | { error: string } {
+  if (raw == null) return null
+  const checked = validateLayout(raw, null)
+  if (!checked.ok) {
+    const first = checked.problems[0]
+    return { error: `Export layout: ${first ? first.message : "invalid"}` }
+  }
+  return JSON.stringify(checked.layout)
 }
 
 /** Validate and normalise the request body. Returns the cleaned input or an error string. */
@@ -215,6 +237,9 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     return { error: 'Load from must be "DATABASE.SCHEMA.NAME" (A-Z, 0-9, _ only)' + identProblem(sourceLoadFrom) }
   }
   const sourceMappingJson = validateSourceMapping(body.sourceMapping)
+  const exportLayout = validateExportLayout(body.exportLayout)
+  if (exportLayout !== null && typeof exportLayout !== "string") return exportLayout
+  const exportLayoutJson = exportLayout
   const leadExpiryDays = normLeadExpiryDays(body.leadExpiryDays)
 
   // Batch-name template: default when empty; reject anything that doesn't
@@ -234,6 +259,7 @@ export function parseConfigBody(body: Record<string, unknown>): CampaignConfigIn
     sourceObject,
     sourceLoadFrom,
     sourceMappingJson,
+    exportLayoutJson,
     leadExpiryDays,
     batchNameTemplate,
     sftpHost: str(body.sftpHost),
@@ -393,6 +419,7 @@ export async function POST(request: NextRequest) {
     ["SOURCE_KIND", sqlStr(parsed.sourceKind)],
     ["SOURCE_OBJECT", sqlStr(parsed.sourceObject)],
     ["SOURCE_MAPPING_JSON", parsed.sourceMappingJson ? sqlStr(parsed.sourceMappingJson) : "NULL"],
+    ["EXPORT_LAYOUT_JSON", parsed.exportLayoutJson ? sqlStr(parsed.exportLayoutJson) : "NULL"],
     ["LEAD_EXPIRY_DAYS", String(parsed.leadExpiryDays ?? 45)],
     ["BATCH_NAME_TEMPLATE", sqlStr(parsed.batchNameTemplate ?? DEFAULT_BATCH_TEMPLATE)],
     ["IS_ACTIVE", parsed.isActive ? "TRUE" : "FALSE"],
