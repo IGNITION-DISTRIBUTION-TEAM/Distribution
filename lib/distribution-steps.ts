@@ -567,3 +567,145 @@ export async function probeProcedure(message: string, procRef: string): Promise<
     `has no COPY GRANTS clause, so that GRANT has to be re-run after every replace.`
   )
 }
+
+/* --------------------------------------------------- the step's read object */
+
+/**
+ * The object a step SELECTs FROM, when it has one.
+ *
+ * Only `source_load` reads: it INSERTs into the HLL table from whatever the
+ * campaign points at. The resolution — "Load from" wins, else the upload target
+ * for a proc source, else the view — is the same rule buildStepSql applies, and
+ * it is duplicated here rather than plumbed out of there because the diagnosis
+ * runs long after the SQL was built, on a poll, with only the config to hand.
+ */
+export function readObjectForStep(
+  config: Record<string, unknown>,
+  key: string
+): string | null {
+  if (key !== "source_load") return null
+  const kind = str(config, "SOURCE_KIND").toLowerCase()
+  const override = str(config, "SOURCE_LOAD_FROM")
+  const readFrom = override || (kind === "proc" ? str(config, "UPLOAD_TARGET_TABLE") : str(config, "SOURCE_OBJECT"))
+  return RUN_QUALIFIED.test(readFrom) ? readFrom : null
+}
+
+/**
+ * Does this failure blame the object the step reads from?
+ *
+ * Pure, so it is testable without a warehouse. Matches the qualified name or
+ * the bare one, because Snowflake quotes whichever form the failing statement
+ * used — the same reasoning as statusBlamesMissingTarget in
+ * lib/sftp-sync-registry.ts.
+ */
+export function blamesReadObject(message: string, object: string): boolean {
+  if (!message || !object) return false
+  if (!/does not exist or not authorized|invalid identifier/i.test(message)) return false
+  const hay = message.toUpperCase()
+  const bare = object.split(".").pop() ?? object
+  return hay.includes(object.toUpperCase()) || hay.includes(bare.toUpperCase())
+}
+
+/**
+ * Settle "missing or ungranted?" for a step's read object, by asking Snowflake
+ * as the app.
+ *
+ * Snowflake answers both with the same message on purpose — distinguishing them
+ * would leak the existence of objects you cannot see. But the app's own
+ * connection CAN settle most of it, because an empty SHOW run on that
+ * connection is itself the answer. Same narrowing as probeProcedure:
+ *
+ *   visible in the configured schema → it exists and is readable; the fault is
+ *                                      elsewhere in the statement
+ *   visible elsewhere in the account → the config names the wrong schema, and
+ *                                      we can say which one is right
+ *   the schema itself invisible      → no USAGE ON SCHEMA, which hides
+ *                                      everything in it
+ *
+ * Best effort. Any failure returns "" — a diagnostic must never replace the
+ * error it is diagnosing. Only runs on an already-failed step.
+ */
+export async function probeReadObject(message: string, object: string): Promise<string> {
+  if (!blamesReadObject(message, object)) return ""
+  const parts = object.split(".")
+  if (parts.length !== 3 || parts.some((x) => !/^[A-Za-z0-9_]+$/.test(x))) return ""
+  const [db, schema, name] = parts
+
+  const show = async (sql: string, opts?: { database: string; schema: string }) => {
+    try {
+      return await executeSnowflakeQuery<Record<string, unknown>>(sql, opts)
+    } catch {
+      return null
+    }
+  }
+
+  const roleRows = await show(`SELECT CURRENT_ROLE() AS R`)
+  const role = roleRows && roleRows.length > 0 ? showCol(roleRows[0], "R") : ""
+  const roleRef = role || "<the app's role — see /api/distribution/snowflake-identity>"
+
+  // 1. Visible where the config says it is? Then this is not a grant, and the
+  //    fault is somewhere else in the statement — a column, usually.
+  const asView = await show(`SHOW VIEWS LIKE '${name}' IN SCHEMA ${db}.${schema}`, { database: db, schema })
+  const asTable = await show(`SHOW TABLES LIKE '${name}' IN SCHEMA ${db}.${schema}`, { database: db, schema })
+  if ((asView && asView.length > 0) || (asTable && asTable.length > 0)) {
+    const what = asView && asView.length > 0 ? "view" : "table"
+    return (
+      `\n\nCHECKED AS THE APP: it CAN see the ${what} ${object}, so this is not a grant on the ` +
+      `${what} itself. The error names it, so the fault is inside the statement — most often a column ` +
+      `in the mapping that the ${what} does not have. Compare the campaign's column mapping against ` +
+      `SHOW COLUMNS IN ${object}.`
+    )
+  }
+
+  // 2. Visible anywhere else? Then the config points at the wrong schema.
+  const anywhere = await show(`SHOW VIEWS LIKE '${name}' IN ACCOUNT`)
+  const anywhereTable = await show(`SHOW TABLES LIKE '${name}' IN ACCOUNT`)
+  const found = [...(anywhere ?? []), ...(anywhereTable ?? [])]
+  if (found.length > 0) {
+    const where = found
+      .map((r) => [showCol(r, "database_name"), showCol(r, "schema_name"), showCol(r, "name")].filter(Boolean).join("."))
+      .filter(Boolean)
+      .join("; ")
+    return (
+      `\n\nCHECKED AS THE APP: nothing called ${name} is visible in ${db}.${schema}, but the app CAN ` +
+      `see it here: ${where}. The campaign's "Load from" / "View" points at the wrong schema — correct ` +
+      `it in Distribution → Settings and save.`
+    )
+  }
+
+  // 3. Can it even see the schema? If not, everything in it is hidden and
+  //    granting the object alone will not help.
+  const schemas = await show(`SHOW SCHEMAS LIKE '${schema}' IN DATABASE ${db}`)
+  if (schemas === null) {
+    return (
+      `\n\nCHECKED AS THE APP: could not complete the check — even SHOW SCHEMAS IN DATABASE ${db} was ` +
+      `refused, which usually means no USAGE on the database itself.`
+    )
+  }
+  if (schemas.length === 0) {
+    return (
+      `\n\nCHECKED AS THE APP: it cannot see the schema ${db}.${schema} at all, which hides every ` +
+      `object inside it — so granting the ${name} on its own will not fix this. As ACCOUNTADMIN:` +
+      `\n  GRANT USAGE ON SCHEMA ${db}.${schema} TO ROLE ${roleRef};`
+    )
+  }
+
+  // The residue Snowflake genuinely will not settle: an ungranted object is
+  // hidden exactly as a non-existent one is. Give both next steps rather than
+  // stopping at "it might be either", with the real role name — that is the
+  // part people get wrong when they run the grant.
+  return (
+    `\n\nCHECKED AS THE APP (running as ${role || "an unknown role"}): it can see the schema ` +
+    `${db}.${schema}, but nothing called ${name} in it. Snowflake hides an ungranted object exactly ` +
+    `as it hides one that does not exist, so this is the one thing the app cannot settle for itself. ` +
+    `As ACCOUNTADMIN:` +
+    `\n  SHOW VIEWS LIKE '${name}' IN SCHEMA ${db}.${schema};` +
+    `\n  SHOW TABLES LIKE '${name}' IN SCHEMA ${db}.${schema};` +
+    `\nA row means it exists and the grant is what is missing:` +
+    `\n  GRANT SELECT ON VIEW ${object} TO ROLE ${roleRef};   -- or ON TABLE` +
+    `\nNo row means the name in the campaign's config is wrong. ` +
+    `scripts/spot-reactive-view-grants.sql walks through both. Note that a grant on FUTURE TABLES ` +
+    `does NOT cover views — they are separate grant targets, which is the usual reason a view in an ` +
+    `otherwise-working schema is the only thing unreadable.`
+  )
+}

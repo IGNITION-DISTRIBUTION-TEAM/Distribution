@@ -7,6 +7,8 @@ import {
   procRefForStep,
   callHint,
   probeProcedure,
+  readObjectForStep,
+  probeReadObject,
 } from "@/lib/distribution-steps"
 
 export const dynamic = "force-dynamic"
@@ -80,7 +82,16 @@ async function hintFor(configId: string, key: string, message: string): Promise<
   if (id === null) return ""
   try {
     const config = await readConfigById(id)
-    const ref = config ? procRefForStep(config, key) : null
+    if (!config) return ""
+
+    // A step either CALLs a procedure or SELECTs FROM an object; source_load is
+    // the one that reads, and its failure mode — "does not exist or not
+    // authorized" on a view — reads identically to a missing procedure while
+    // needing a completely different fix.
+    const readObject = readObjectForStep(config, key)
+    if (readObject) return probeReadObject(message, readObject)
+
+    const ref = procRefForStep(config, key)
     if (!ref) return ""
     return callHint(message, ref) + (await probeProcedure(message, ref))
   } catch {

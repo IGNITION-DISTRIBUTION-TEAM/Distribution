@@ -32,6 +32,7 @@ import {
   validateLayout,
   type ExportLayout,
 } from "../../lib/export-layout"
+import { blamesReadObject, readObjectForStep } from "../../lib/distribution-steps"
 import { rowsToCsv } from "../../lib/dialler-csv"
 import type { SnowflakeColumn } from "../../lib/snowflake"
 
@@ -431,6 +432,71 @@ console.log("\nevery transform and preset renders")
     const sql = renderSelectList(l, { expiryDays: 45, ssLookup: "LEADCUSTOMERID" })
     check(`preset ${id}`, sql.includes('AS "X"') && !sql.includes("SS_LOOKUP"), sql)
   }
+}
+
+/* ---- 11. Diagnosing a step's unreadable source object ------------------- */
+
+console.log("\nreadObjectForStep")
+{
+  const cfg = (over: Record<string, unknown> = {}) => ({
+    SOURCE_KIND: "view",
+    SOURCE_OBJECT: "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.VW_SPOT_REACTIVE_DATA",
+    SOURCE_LOAD_FROM: "",
+    UPLOAD_TARGET_TABLE: "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.STAGE_T",
+    ...over,
+  })
+
+  check(
+    "only source_load reads anything",
+    readObjectForStep(cfg(), "sync") === null && readObjectForStep(cfg(), "source_load") !== null
+  )
+  check(
+    "a view source uses the source object",
+    readObjectForStep(cfg(), "source_load") ===
+      "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.VW_SPOT_REACTIVE_DATA"
+  )
+  check(
+    "a proc source reads the staging table instead",
+    readObjectForStep(cfg({ SOURCE_KIND: "proc" }), "source_load") ===
+      "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.STAGE_T"
+  )
+  check(
+    "Load from wins over both",
+    readObjectForStep(cfg({ SOURCE_LOAD_FROM: "DB.S.OTHER" }), "source_load") === "DB.S.OTHER"
+  )
+  // An unqualified name cannot be probed, and guessing a database would send
+  // the operator to the wrong place.
+  check("an unqualified name yields nothing", readObjectForStep(cfg({ SOURCE_LOAD_FROM: "JUST_A_NAME" }), "source_load") === null)
+  check("an empty config yields nothing", readObjectForStep({}, "source_load") === null)
+}
+
+console.log("\nblamesReadObject")
+{
+  const OBJ = "DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.VW_SPOT_REACTIVE_DATA"
+  // The message this whole diagnosis exists for, verbatim from Snowflake.
+  const real =
+    "SQL compilation error:\nObject 'DATAWAREHOUSE.DISTRIBUTION_AUTOMATION.VW_SPOT_REACTIVE_DATA' does not exist or not authorized."
+  check("matches the real failure", blamesReadObject(real, OBJ))
+  check(
+    "matches when Snowflake quotes only the bare name",
+    blamesReadObject("Object 'VW_SPOT_REACTIVE_DATA' does not exist or not authorized.", OBJ)
+  )
+  check(
+    "matches an invalid identifier too",
+    blamesReadObject("invalid identifier 'VW_SPOT_REACTIVE_DATA'", OBJ)
+  )
+  check("is case-insensitive about the name", blamesReadObject(real.toLowerCase(), OBJ))
+
+  // The important negatives: a diagnosis attached to an unrelated failure is
+  // worse than none, because it sends the operator to grant something fine.
+  check(
+    "does not match a different object's failure",
+    !blamesReadObject("Object 'DB.S.SOMETHING_ELSE' does not exist or not authorized.", OBJ)
+  )
+  check("does not match an unrelated error", !blamesReadObject("Numeric value 'abc' is not recognized", OBJ))
+  check("does not match a timeout", !blamesReadObject("Statement reached its statement or warehouse timeout", OBJ))
+  check("handles an empty message", !blamesReadObject("", OBJ))
+  check("handles an empty object", !blamesReadObject(real, ""))
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)
