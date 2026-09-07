@@ -18,20 +18,35 @@
 -- names, types and order from TM_EXTEND_LEADS, so this table cannot drift from
 -- the one the working extend path already uses. Do not hand-write the columns.
 --
+-- THE TABLE CREATES ITSELF. The app runs the CREATE TABLE IF NOT EXISTS … LIKE
+-- below on its first push (ensureStagingTable in lib/silversurfer-push.ts),
+-- because LEADS_DISTRIBUTION is app-owned and every TSK_ table in it is created
+-- the same way. Making someone run a script for a table the app can create was
+-- friction with no safety benefit.
+--
+-- SO THIS SCRIPT IS FOR THE GRANTS, which the app cannot give itself. Run it if
+-- a push reports a permission failure rather than a missing table. Part 1 is
+-- kept only as a manual fallback for when the app's role turns out not to hold
+-- CREATE TABLE in that schema.
+--
 -- Run as a role that owns or can create in DATAWAREHOUSE.LEADS_DISTRIBUTION.
 -- Replace SVC_VERCEL_APP_ROLE with the role the app connects as (the
 -- SNOWFLAKE_ROLE env var) if it differs.
 
 
 -- ---------------------------------------------------------------------------
--- 1. Create it from its sibling
+-- 1. Create it from its sibling — normally unnecessary, see above
 -- ---------------------------------------------------------------------------
+-- LIKE copies the column names, types and ORDER, which is the point: the INSERT
+-- writes positionally and the procedure takes a separate column-name string, so
+-- a hand-written column list would be a third thing to keep in step. Do not
+-- replace this with an explicit column list.
 CREATE TABLE IF NOT EXISTS DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_BATCH_RECHECK_LEADS
   LIKE DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_EXTEND_LEADS;
 
 
 -- ---------------------------------------------------------------------------
--- 2. Grants
+-- 2. Grants — the part that actually needs a human
 -- ---------------------------------------------------------------------------
 -- The app truncates, inserts and reads it. TRUNCATE is grantable here because
 -- the table is app-owned — unlike the Hevo-managed Spot targets, where it

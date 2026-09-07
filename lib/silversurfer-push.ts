@@ -179,6 +179,35 @@ export function buildSyncCall(stagingTable: string): string {
 export type PushStep = { name: string; ok: boolean; rowCount?: number; error?: string }
 
 /**
+ * Create the staging table if it is not there, shaped like an existing one.
+ *
+ * `CREATE TABLE … LIKE` copies the column names, types and ORDER from the
+ * template, which is the whole point: the INSERT writes positionally and the
+ * procedure is handed a separate column-name string, so a hand-written column
+ * list would be a third thing to keep in step. Copying the table the working
+ * extend path already uses means this one cannot drift from it.
+ *
+ * LEADS_DISTRIBUTION is app-owned — every TSK_ table in it is created this way
+ * — so making the operator run a script for a table the app can create itself
+ * was friction with no safety benefit. Grants still need a script; the table
+ * does not.
+ *
+ * Idempotent and best effort: IF NOT EXISTS makes a second call free, and a
+ * failure is left to surface on the TRUNCATE that follows, which reports it
+ * with the step name attached.
+ */
+export async function ensureStagingTable(stagingTable: string, likeTable: string): Promise<void> {
+  try {
+    await executeSnowflakeQuery(
+      `CREATE TABLE IF NOT EXISTS ${stagingTable} LIKE ${likeTable}`,
+      { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" }
+    )
+  } catch {
+    /* the TRUNCATE below will report it, with better context than here */
+  }
+}
+
+/**
  * Truncate, insert, call — stopping at the first failure.
  *
  * Never throws: it returns the step list so the caller can report exactly how
@@ -191,9 +220,13 @@ export async function pushToSilverSurfer(input: {
   where: string
   qualify: string
   dates: PushDates
+  /** Create the staging table like this one if it is missing. */
+  createLike?: string
 }): Promise<{ ok: boolean; steps: PushStep[]; inserted: number; syncResult: Record<string, unknown>[] }> {
   const steps: PushStep[] = []
   const APP_SF = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" }
+
+  if (input.createLike) await ensureStagingTable(input.stagingTable, input.createLike)
 
   try {
     await executeSnowflakeQuery(`TRUNCATE TABLE ${input.stagingTable}`, APP_SF)

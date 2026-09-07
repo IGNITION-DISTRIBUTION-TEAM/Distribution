@@ -97,6 +97,9 @@ export async function POST(request: NextRequest) {
       where,
       qualify,
       dates: REPUSH_DATES,
+      // Shaped from the table the extend path already uses, so the 39-column
+      // positional order cannot differ between the two pushes.
+      createLike: "DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_EXTEND_LEADS",
     })
 
     // A failed step carries the real Snowflake message; without lifting it into
