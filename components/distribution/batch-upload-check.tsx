@@ -222,6 +222,9 @@ export function BatchUploadCheck({
         }),
       })
       const d = await readJson(res)
+      // Keep the step list even on failure — it says which of truncate /
+      // insert / call broke, which the error line alone does not.
+      if (Array.isArray(d.steps)) setSteps(d.steps as PushStep[])
       if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
       setSteps((d.steps as PushStep[]) ?? [])
       setNote(
@@ -268,7 +271,7 @@ export function BatchUploadCheck({
         </p>
       </Card>
 
-      {error && <Banner tone="error">{error}</Banner>}
+      {error && <Banner tone="error" className="whitespace-pre-wrap">{error}</Banner>}
       {note && <Banner tone={note.tone}>{note.text}</Banner>}
 
       {/* The most important thing on the page. SilverSurfer here is a replica,
@@ -322,7 +325,15 @@ export function BatchUploadCheck({
                     <TableHead className="w-10">
                       <Checkbox
                         checked={headerState}
-                        aria-label={allPicked ? "Clear selection" : `Select all ${short.length} batches`}
+                        // ui/checkbox fills only data-[state=checked], so a
+                        // partial selection renders the same tick with no fill
+                        // and reads as "all". Grey makes "some" its own state.
+                        className="data-[state=indeterminate]:border-muted-foreground data-[state=indeterminate]:bg-muted-foreground/50 data-[state=indeterminate]:text-background"
+                        aria-label={
+                          allPicked
+                            ? "Clear selection"
+                            : `Select all ${short.length} batches`
+                        }
                         onCheckedChange={() => (allPicked ? setPicked(new Set()) : pickAllShort())}
                       />
                     </TableHead>

@@ -90,6 +90,8 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Distribution | A partially-loaded batch (e.g. 6,750 in HLL, 2,900 in SS) | "Would send" is the gap, 3,850 — not the whole batch and not zero | |
 | Distribution | Needs reloading, straight after Check batches | **Everything with something to send is already ticked** — a subset is the exception, not the default | |
 | Distribution | Untick a couple of rows | The line by the button says how many missing leads sit in the unticked batches and will not be sent | |
+| Distribution | The freshness line | Two readable timestamps, not `20702` and `1788737363.484141000` — Snowflake's REST API returns DATE as a day count and TIMESTAMP as seconds.nanos | |
+| Distribution | Re-send before running scripts/batch-recheck-table.sql | The error names the failed step **and** says to run that script — not a bare "HTTP 500" | |
 | Distribution | The header checkbox | Selects or clears all; shows a partial state when only some are ticked, so "4 of 12" can never read as "none" | |
 | Distribution | "Select all N short" | Ticks every batch with something to send, including across different campaigns | |
 | Distribution | Re-send with batches from two campaigns picked | One push, not two. The confirm says how many campaigns are involved | |

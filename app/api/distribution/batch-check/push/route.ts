@@ -99,6 +99,11 @@ export async function POST(request: NextRequest) {
       dates: REPUSH_DATES,
     })
 
+    // A failed step carries the real Snowflake message; without lifting it into
+    // `error` the client sees a bare "HTTP 500" and the reason is thrown away.
+    // The commonest cause is the staging table not existing yet, which is a
+    // one-script fix the operator can only make if they are told.
+    const failed = result.steps.find((st) => !st.ok)
     return NextResponse.json(
       {
         ok: result.ok,
@@ -107,6 +112,16 @@ export async function POST(request: NextRequest) {
         pushed: result.inserted,
         steps: result.steps,
         picks,
+        ...(failed
+          ? {
+              error:
+                `The ${failed.name} step failed: ${failed.error ?? "no detail returned"}` +
+                (/does not exist or not authorized/i.test(failed.error ?? "")
+                  ? `\n\nIf it names ${STAGING}, that table has not been created yet — ` +
+                    `run scripts/batch-recheck-table.sql.`
+                  : ""),
+            }
+          : {}),
       },
       { status: result.ok ? 200 : 500 }
     )

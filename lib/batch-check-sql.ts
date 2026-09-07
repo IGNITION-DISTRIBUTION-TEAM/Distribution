@@ -189,9 +189,19 @@ SELECT h.CAMPAIGNID,
  * pushed until it catches up.
  */
 export function buildFreshness(): string {
+  /**
+   * FORMATTED IN SQL, not on the client. Snowflake's REST API returns a DATE as
+   * days-since-epoch and a TIMESTAMP as "<seconds>.<nanos>", so passing these
+   * through String() put "20702" and "1788737363.484141000" on screen — which
+   * is worse than showing nothing, because it looked like data.
+   *
+   * lib/dialler-csv.ts already decodes those forms, but its formatter is
+   * private and needs the column's declared type. TO_VARCHAR sidesteps both:
+   * the value arrives as the text we want to display.
+   */
   return `
-SELECT (SELECT MAX(CREATEDONDATE) FROM ${HLL_TABLE})                    AS HLL_LATEST,
-       (SELECT MAX(s.CREATEDONDATE) FROM ${SS_LEAD} s)                  AS SS_LATEST
+SELECT TO_VARCHAR((SELECT MAX(CREATEDONDATE) FROM ${HLL_TABLE}), 'YYYY-MM-DD HH24:MI')   AS HLL_LATEST,
+       TO_VARCHAR((SELECT MAX(s.CREATEDONDATE) FROM ${SS_LEAD} s), 'YYYY-MM-DD HH24:MI') AS SS_LATEST
 `
 }
 
