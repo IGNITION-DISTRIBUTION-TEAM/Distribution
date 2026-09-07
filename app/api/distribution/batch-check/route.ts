@@ -59,7 +59,8 @@ export async function GET(request: NextRequest) {
       hllCount: Number(r.HLL_COUNT ?? 0),
       ssCount: Number(r.SS_COUNT ?? 0),
       shortfall: Number(r.SHORTFALL ?? 0),
-      missingById: Number(r.MISSING_BY_ID ?? 0),
+      missingByBatch: Number(r.MISSING_BY_BATCH ?? 0),
+      newToCrm: Number(r.NEW_TO_CRM ?? 0),
     }))
 
     const f = fresh[0] ?? {}
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
       },
       totals: {
         hll: batches.reduce((n, b) => n + b.hllCount, 0),
-        missing: batches.reduce((n, b) => n + b.missingById, 0),
+        missing: batches.reduce((n, b) => n + b.missingByBatch, 0),
       },
     })
   } catch (error) {

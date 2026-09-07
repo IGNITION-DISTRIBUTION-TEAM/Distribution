@@ -235,10 +235,13 @@ console.log("\nbuildSummary")
   // read as complete.
   check("counts SilverSurfer leads distinctly", sql.includes("COUNT(DISTINCT s.LEADCUSTOMERID)"))
   check("reports the shortfall", sql.includes("AS SHORTFALL"))
-  check("reports what a push would actually send", sql.includes("AS MISSING_BY_ID"))
-  check("the missing CTE matches on IDNUMBER only", sql.includes("s.IDNUMBER = h.IDNUMBER"))
-  check("and does not also match on batch", !/ss?\.BATCHNAME\s*=\s*h\.BATCHNAME/.test(sql))
-  check("orders the worst first", sql.includes("ORDER BY MISSING_BY_ID DESC"))
+  check("reports what a push would actually send", sql.includes("AS MISSING_BY_BATCH"))
+  check("also reports who is new to the CRM", sql.includes("AS NEW_TO_CRM"))
+  // Batch AND id. Matching on id alone understated eight fully-missing
+  // batches by ~80%, because their people existed under earlier batch names.
+  check("the missing CTE matches on id AND batch", sql.includes("ss.IDNUMBER = h.IDNUMBER AND dd.BATCHNAME = h.BATCHNAME"))
+  check("the new-to-CRM CTE still matches on id alone", sql.includes("ss.IDNUMBER = h.IDNUMBER)"))
+  check("orders the worst first", sql.includes("ORDER BY MISSING_BY_BATCH DESC"))
 
   check("refuses a bad campaign id", rejects(() => buildSummary({ ...scope, campaignId: -1 })))
   check("accepts null as all campaigns", !rejects(() => buildSummary({ ...scope, campaignId: null })))
@@ -260,6 +263,8 @@ console.log("\nmissingWhere — what a push stages")
   check("pairs the campaign with its batches", where.includes("(CAMPAIGNID = 11381 AND BATCHNAME IN ('BATCH_A', 'BATCH_O''BRIEN'))"), where)
   check("excludes leads already in SilverSurfer", where.includes("NOT EXISTS"))
   check("the subquery alias does not shadow the outer one", where.includes("ss.IDNUMBER = s.IDNUMBER"))
+  // The whole point of the change: a batch absent from SilverSurfer sends whole.
+  check("the push matches on id AND batch", where.includes("dd.BATCHNAME = s.BATCHNAME"))
   check("dedupes by IDNUMBER", qualify.includes("PARTITION BY IDNUMBER"))
   check("refuses no picks", rejects(() => missingWhere(scope, [])))
 

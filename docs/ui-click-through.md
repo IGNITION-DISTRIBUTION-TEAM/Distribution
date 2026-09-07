@@ -85,9 +85,11 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
 | Distribution | Every one of the 8 nav items | Renders | |
 | Distribution | Batch upload check → **Check batches with the campaign left on "All"** | Every short batch across every campaign, worst first, with a Campaign column. This is the point of the screen — no need to work through campaigns one at a time | |
-| Distribution | The two tabs | **Missing by ID** is the actionable one and the default — it is the only tab with checkboxes and the re-send button. **Short by count** is read-only | |
-| Distribution | Short by count, on real data | An amber warning when batches show 0 in SilverSurfer while most of their leads are there by ID — that is the batch NAME not lining up between the two systems, not leads going missing | |
-| Distribution | Missing by ID, straight after Check batches | **Everything with something to send is already ticked** — a subset is the exception, not the default | |
+| Distribution | The two tabs | **Needs reloading** is the actionable one and the default — the only tab with checkboxes and the re-send button. **All batches** is read-only | |
+| Distribution | A batch with 0 in SilverSurfer | "Would send" equals its full HLL count — the batch never arrived, so it reloads whole | |
+| Distribution | A partially-loaded batch (e.g. 6,750 in HLL, 2,900 in SS) | "Would send" is the gap, 3,850 — not the whole batch and not zero | |
+| Distribution | The "New to CRM" column | Lower than "Would send" whenever people already exist under an earlier batch. That gap is expected: the CRM keys on (person, batch), so the same person belongs in several batches | |
+| Distribution | Needs reloading, straight after Check batches | **Everything with something to send is already ticked** — a subset is the exception, not the default | |
 | Distribution | Untick a couple of rows | The line by the button says how many missing leads sit in the unticked batches and will not be sent | |
 | Distribution | The header checkbox | Selects or clears all; shows a partial state when only some are ticked, so "4 of 12" can never read as "none" | |
 | Distribution | "Select all N short" | Ticks every batch with something to send, including across different campaigns | |

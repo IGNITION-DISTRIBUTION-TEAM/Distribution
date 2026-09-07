@@ -8,6 +8,14 @@
  * SilverSurfer count and re-pushes the missing ones through the same
  * SP_SYNC_TO_SQLSERVER_LARGE call Extend Expired Leads uses.
  *
+ * MISSING MEANS "not in SilverSurfer under THIS batch name". A batch that never
+ * arrived is missing whole; a batch that half-arrived is missing its gap. The
+ * same person legitimately appears in many batches — the CRM works on
+ * (person, batch) — so a lead already there from an earlier campaign still
+ * needs sending under the new one. An earlier version matched on ID alone and
+ * skipped exactly those, understating eight fully-missing batches by about
+ * eighty per cent.
+ *
  * EVERY CAMPAIGN AT ONCE, by default. Requiring a campaign first was the wrong
  * shape: you do not know which one is short until you have looked, so it meant
  * working through them one at a time. The campaign is a filter now, not a
@@ -59,7 +67,8 @@ type Row = {
   hllCount: number
   ssCount: number
   shortfall: number
-  missingById: number
+  missingByBatch: number
+  newToCrm: number
 }
 
 type PushStep = { name: string; ok: boolean; rowCount?: number; error?: string }
@@ -137,7 +146,7 @@ export function BatchUploadCheck({
       // Everything with something to send starts ticked. The job is "re-send
       // what is missing", so a subset is the exception and has to be chosen —
       // having to tick twelve boxes to do the obvious thing was backwards.
-      setPicked(new Set(next.filter((r) => r.missingById > 0).map((r) => `${r.campaignId}|${r.batchName}`)))
+      setPicked(new Set(next.filter((r) => r.missingByBatch > 0).map((r) => `${r.campaignId}|${r.batchName}`)))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setRows(null)
@@ -148,20 +157,12 @@ export function BatchUploadCheck({
 
   const keyOf = (r: Row) => `${r.campaignId}|${r.batchName}`
   /** Actionable: leads whose ID is nowhere in SilverSurfer. A re-send acts on these. */
-  const short = (rows ?? []).filter((r) => r.missingById > 0)
+  const short = (rows ?? []).filter((r) => r.missingByBatch > 0)
   /** Diagnostic: the counts do not add up. See the banner on that tab. */
   const shortByCount = (rows ?? []).filter((r) => r.shortfall > 0)
-  /**
-   * Batches whose SilverSurfer count is zero while most of their leads ARE
-   * there by ID — the signature of the batch NAME not matching between the two
-   * systems, rather than of leads going missing.
-   */
-  const nameMismatch = (rows ?? []).filter(
-    (r) => r.ssCount === 0 && r.hllCount > 0 && r.missingById < r.hllCount
-  )
   const pickedRows = (rows ?? []).filter((r) => picked.has(keyOf(r)))
-  const wouldSend = pickedRows.reduce((n, r) => n + r.missingById, 0)
-  const totalMissing = short.reduce((n, r) => n + r.missingById, 0)
+  const wouldSend = pickedRows.reduce((n, r) => n + r.missingByBatch, 0)
+  const totalMissing = short.reduce((n, r) => n + r.missingByBatch, 0)
   const pickedCampaigns = new Set(pickedRows.map((r) => r.campaignId)).size
 
   const toggle = (r: Row) =>
@@ -289,8 +290,8 @@ export function BatchUploadCheck({
           <Tabs defaultValue="missing">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <TabsList>
-                <TabsTrigger value="missing">Missing by ID ({short.length})</TabsTrigger>
-                <TabsTrigger value="shortfall">Short by count ({shortByCount.length})</TabsTrigger>
+                <TabsTrigger value="missing">Needs reloading ({short.length})</TabsTrigger>
+                <TabsTrigger value="shortfall">All batches ({rows.length})</TabsTrigger>
               </TabsList>
               <Badge variant="secondary">{rows.length} batches</Badge>
               {short.length > 0 && (
@@ -313,8 +314,11 @@ export function BatchUploadCheck({
             {/* ---- the actionable one ---- */}
             <TabsContent value="missing">
               <p className="mb-3 text-sm text-muted-foreground">
-                Leads whose ID number is nowhere in SilverSurfer. These are the only ones a
-                re-send acts on.
+                Leads SilverSurfer does not hold under this batch name. A batch that never
+                arrived shows its whole count; one that half-arrived shows the gap.
+                &ldquo;New to CRM&rdquo; is how many of those are people SilverSurfer has never
+                seen at all — the rest already exist under an earlier batch and are being
+                sent under this one, which is normal.
               </p>
               <Table>
                 <TableHeader>
@@ -330,15 +334,16 @@ export function BatchUploadCheck({
                     <TableHead>Batch</TableHead>
                     <TableHead className="text-right">In HLL</TableHead>
                     <TableHead className="text-right">Would send</TableHead>
+                    <TableHead className="text-right">New to CRM</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading && rows.length === 0 ? (
-                    <SkeletonRows cols={5} rows={5} />
+                    <SkeletonRows cols={6} rows={5} />
                   ) : short.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-sm text-muted-foreground">
-                        Nothing missing by ID in that window — every lead is in SilverSurfer.
+                      <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                        Nothing to reload — every batch is complete in SilverSurfer.
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -362,7 +367,10 @@ export function BatchUploadCheck({
                         <TableCell className="font-mono text-xs">{r.batchName}</TableCell>
                         <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-medium tabular-nums text-rose-300">
-                          {r.missingById.toLocaleString()}
+                          {r.missingByBatch.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {r.newToCrm.toLocaleString()}
                         </TableCell>
                       </TableRow>
                     ))
@@ -399,24 +407,10 @@ export function BatchUploadCheck({
 
             {/* ---- the diagnostic one ---- */}
             <TabsContent value="shortfall">
-              {/* Your own data says this column is not to be trusted on its own:
-                  most batches show 0 in SilverSurfer while the ID match finds
-                  the great majority of their leads present. That is the batch
-                  NAME failing to line up between the two systems, not leads
-                  going missing — so this tab reads, and does not act. */}
-              {nameMismatch.length > 0 && (
-                <Banner tone="warning" className="mb-3">
-                  {nameMismatch.length} of these batches show <strong>0 in SilverSurfer</strong> even
-                  though most of their leads <em>are</em> there by ID number. That is the batch name
-                  not matching between the two systems, not leads going missing — so &ldquo;Short
-                  by&rdquo; overstates the problem badly here. Use the <strong>Missing by ID</strong> tab
-                  to decide what to re-send.
-                </Banner>
-              )}
               <p className="mb-3 text-sm text-muted-foreground">
-                Where the two counts disagree. Read-only: a count difference does not tell you which
-                leads to send, and a lead already in the CRM under a different batch name shows up
-                here without being missing at all.
+                Every batch in the window, whether it needs anything or not. Read-only — use the
+                other tab to reload. A SilverSurfer count above the HLL count means the batch name
+                has been used before.
               </p>
               <Table>
                 <TableHeader>
@@ -425,22 +419,15 @@ export function BatchUploadCheck({
                     <TableHead>Batch</TableHead>
                     <TableHead className="text-right">In HLL</TableHead>
                     <TableHead className="text-right">In SilverSurfer</TableHead>
-                    <TableHead className="text-right">Short by</TableHead>
-                    <TableHead className="text-right">Missing by ID</TableHead>
+                    <TableHead className="text-right">Needs reloading</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading && rows.length === 0 ? (
-                    <SkeletonRows cols={6} rows={5} />
-                  ) : shortByCount.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-sm text-muted-foreground">
-                        Every batch's counts add up.
-                      </TableCell>
-                    </TableRow>
+                    <SkeletonRows cols={5} rows={5} />
                   ) : (
-                    shortByCount.map((r) => (
-                      <TableRow key={keyOf(r)}>
+                    rows.map((r) => (
+                      <TableRow key={keyOf(r)} className={cn(r.missingByBatch > 0 && "bg-rose-500/5")}>
                         <TableCell className="whitespace-nowrap text-xs">
                           <span className="tabular-nums text-foreground">{r.campaignId}</span>
                           {campaignTitles?.get(r.campaignId) && (
@@ -459,11 +446,13 @@ export function BatchUploadCheck({
                         >
                           {r.ssCount.toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {r.shortfall.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {r.missingById > 0 ? r.missingById.toLocaleString() : "—"}
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            r.missingByBatch > 0 ? "font-medium text-rose-300" : "text-muted-foreground"
+                          )}
+                        >
+                          {r.missingByBatch > 0 ? r.missingByBatch.toLocaleString() : "—"}
                         </TableCell>
                       </TableRow>
                     ))

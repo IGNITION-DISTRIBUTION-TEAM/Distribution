@@ -8,6 +8,19 @@ import { HLL_TABLE } from "@/lib/silversurfer-push"
  * output of `missingWhere` feeds a WRITE to a live CRM, and the batch names in
  * it come from a request body.
  *
+ * THE MEASURE IS BATCH + ID. A lead counts as loaded only when SilverSurfer
+ * holds it under THE SAME BATCH NAME. That is what makes a batch that never
+ * arrived read as fully missing, and a batch that half-arrived read as short by
+ * the difference.
+ *
+ * It is also the correction to an earlier mistake in this file. It once matched
+ * on IDNUMBER alone, on the theory that a person already in the CRM should not
+ * be sent again. Real data killed that: eight batches held zero rows in
+ * SilverSurfer while most of their people existed there under OTHER batch
+ * names, from earlier campaigns. ID-only therefore skipped ten thousand leads
+ * that genuinely needed to exist under the new batch — the CRM keys work on
+ * (person, batch), so the same person legitimately appears in many batches.
+ *
  * WHICH SILVERSURFER. `SILVERSURFER` here, matching the reconciliation query
  * this was built from. Note that the export's own lookup
  * (lib/distribution-export.ts) reads SILVERSURFER_LEAD_HEVO instead, so the two
@@ -31,8 +44,13 @@ export const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 export const MAX_BATCH_NAME = 200
 export const MAX_BATCHES = 50
 
-/** Never re-push more than this in one press, whatever the count says. */
-export const MAX_PUSH_ROWS = 20000
+/**
+ * Runaway guard, not a policy. A single missing batch is 13,000 leads in the
+ * observed data and a full reload of everything short is around 35,000, so a
+ * 20,000 ceiling refused the normal case. The confirm always states the number,
+ * which is the real check.
+ */
+export const MAX_PUSH_ROWS = 100000
 
 /** A SQL string literal, quotes doubled. The injection boundary for batch names. */
 export const lit = (v: string) => `'${String(v).replace(/'/g, "''")}'`
@@ -137,10 +155,27 @@ ss AS (
    GROUP BY d.BATCHNAME
 ),
 missing AS (
-  SELECT h.CAMPAIGNID, h.BATCHNAME, COUNT(*) AS MISSING_BY_ID
+  -- Batch AND id: absent under THIS batch name is what "missing" means, even
+  -- if the person exists in the CRM under an earlier one.
+  SELECT h.CAMPAIGNID, h.BATCHNAME, COUNT(*) AS MISSING_BY_BATCH
     FROM ${HLL_TABLE} h
    WHERE ${hllWhere(scope)}
-     AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} s WHERE s.IDNUMBER = h.IDNUMBER)
+     AND NOT EXISTS (
+       SELECT 1 FROM ${SS_LEAD} ss
+        JOIN ${SS_DETAIL} dd ON dd.LEADCUSTOMERID = ss.LEADCUSTOMERID
+       WHERE ss.IDNUMBER = h.IDNUMBER AND dd.BATCHNAME = h.BATCHNAME
+     )
+   GROUP BY h.CAMPAIGNID, h.BATCHNAME
+),
+newToCrm AS (
+  -- Of the missing, how many are people the CRM has never seen at all. Purely
+  -- informational, and the number that answers "are we creating duplicates?" —
+  -- missing minus this is people being re-sent under a new batch, which is
+  -- normal rather than a fault.
+  SELECT h.CAMPAIGNID, h.BATCHNAME, COUNT(*) AS NEW_TO_CRM
+    FROM ${HLL_TABLE} h
+   WHERE ${hllWhere(scope)}
+     AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} ss WHERE ss.IDNUMBER = h.IDNUMBER)
    GROUP BY h.CAMPAIGNID, h.BATCHNAME
 )
 SELECT h.CAMPAIGNID,
@@ -148,11 +183,13 @@ SELECT h.CAMPAIGNID,
        h.HLL_COUNT,
        COALESCE(s.SS_COUNT, 0) AS SS_COUNT,
        h.HLL_COUNT - COALESCE(s.SS_COUNT, 0) AS SHORTFALL,
-       COALESCE(m.MISSING_BY_ID, 0) AS MISSING_BY_ID
+       COALESCE(m.MISSING_BY_BATCH, 0) AS MISSING_BY_BATCH,
+       COALESCE(n.NEW_TO_CRM, 0) AS NEW_TO_CRM
   FROM hll h
   LEFT JOIN ss s ON h.BATCHNAME = s.BATCHNAME
   LEFT JOIN missing m ON h.CAMPAIGNID = m.CAMPAIGNID AND h.BATCHNAME = m.BATCHNAME
- ORDER BY MISSING_BY_ID DESC, SHORTFALL DESC, h.CAMPAIGNID, h.BATCHNAME
+  LEFT JOIN newToCrm n ON h.CAMPAIGNID = n.CAMPAIGNID AND h.BATCHNAME = n.BATCHNAME
+ ORDER BY MISSING_BY_BATCH DESC, h.CAMPAIGNID, h.BATCHNAME
 `
 }
 
@@ -174,11 +211,14 @@ SELECT (SELECT MAX(CREATEDONDATE) FROM ${HLL_TABLE})                    AS HLL_L
 /**
  * The WHERE a push stages, matching on IDNUMBER only.
  *
- * ID-only is deliberate and conservative: a lead already in SilverSurfer counts
- * as loaded even if it arrived under a different batch name, so this will not
- * send a second copy of someone the CRM already has. The cost is that a batch
- * whose own rows never landed under its own name can still show nothing to
- * send — which is why the summary reports SHORTFALL alongside MISSING_BY_ID.
+ * Batch AND id. A lead is missing when SilverSurfer has no row for it under
+ * THIS batch name, which is what makes a batch that never arrived send whole
+ * and a batch that half-arrived send only its gap.
+ *
+ * The same person legitimately appears in many batches — the CRM works on
+ * (person, batch) — so matching on id alone would skip leads that need to exist
+ * under the new batch. Eight batches in the observed data had zero SilverSurfer
+ * rows while most of their people were present from earlier campaigns.
  *
  * The QUALIFY is carried over from the extend flow: without it, a lead loaded
  * into HLL twice is pushed twice.
@@ -213,11 +253,14 @@ export function assertPicks(raw: unknown): BatchPick[] {
 /**
  * The WHERE a push stages, matching on IDNUMBER only.
  *
- * ID-only is deliberate and conservative: a lead already in SilverSurfer counts
- * as loaded even if it arrived under a different batch name, so this will not
- * send a second copy of someone the CRM already has. The cost is that a batch
- * whose own rows never landed under its own name can still show nothing to
- * send — which is why the summary reports SHORTFALL alongside MISSING_BY_ID.
+ * Batch AND id. A lead is missing when SilverSurfer has no row for it under
+ * THIS batch name, which is what makes a batch that never arrived send whole
+ * and a batch that half-arrived send only its gap.
+ *
+ * The same person legitimately appears in many batches — the CRM works on
+ * (person, batch) — so matching on id alone would skip leads that need to exist
+ * under the new batch. Eight batches in the observed data had zero SilverSurfer
+ * rows while most of their people were present from earlier campaigns.
  *
  * PICKS CAN SPAN CAMPAIGNS, so the campaign is paired with its batches rather
  * than being one predicate over all of them. Batch names are campaign-specific
@@ -256,7 +299,11 @@ export function missingWhere(
     where:
       `${dateAndStatus}\n` +
       `     AND (${groups})\n` +
-      `     AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} ss WHERE ss.IDNUMBER = s.IDNUMBER)`,
+      `     AND NOT EXISTS (\n` +
+      `       SELECT 1 FROM ${SS_LEAD} ss\n` +
+      `        JOIN ${SS_DETAIL} dd ON dd.LEADCUSTOMERID = ss.LEADCUSTOMERID\n` +
+      `       WHERE ss.IDNUMBER = s.IDNUMBER AND dd.BATCHNAME = s.BATCHNAME\n` +
+      `     )`,
     qualify: "QUALIFY ROW_NUMBER() OVER (PARTITION BY IDNUMBER ORDER BY CREATEDONDATE DESC) = 1",
     picks: clean,
   }
