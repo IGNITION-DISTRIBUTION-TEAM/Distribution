@@ -84,9 +84,22 @@ export async function GET(request: NextRequest) {
       )
     }
     if (!access.allowed) {
-      console.log("[v0] Access denied:", access.reason)
+      console.log("[v0] Access denied:", access.reason, userInfo.email)
+      // THE AD EMAIL TRAVELS WITH THE DENIAL, and it is the whole point of this
+      // branch. The identity is `preferred_username || email` (lib/azure-ad.ts),
+      // and people here hold addresses on several domains — so "not mapped to an
+      // employee" left both the user and the admin guessing WHICH address the
+      // app had actually seen. Mapping the wrong one produces the identical
+      // message and no new information.
+      //
+      // It is the user's own address, shown to the user who just authenticated
+      // with it, so nothing is disclosed that they do not know. Only on this
+      // branch: it lands in browser history and any access log, and no other
+      // redirect needs it.
       return NextResponse.redirect(
-        `${request.nextUrl.origin}/?auth_error=access_denied&reason=${encodeURIComponent(access.reason)}`
+        `${request.nextUrl.origin}/?auth_error=access_denied` +
+          `&reason=${encodeURIComponent(access.reason)}` +
+          `&ad=${encodeURIComponent(userInfo.email)}`
       )
     }
 

@@ -15,7 +15,8 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | # | Step | Expected | OK? |
 |---|---|---|---|
 | G1 | Open the portal signed out | Login card with the Ignition logo; "Sign in with Azure AD" | |
-| G2 | Append `?auth_error=access_denied&reason=unmapped` to the login URL | A rose error banner with an icon, under the title | |
+| G2 | Append `?auth_error=access_denied&reason=unmapped&ad=test%40example.com` to the login URL | A rose error banner with an icon, under the title, reading "…map the address below" with `test@example.com` on a second line in monospace. Refresh: the banner is gone and the query string is clean | |
+| G2b | Same, but `reason=inactive&ad=test%40example.com` | The banner reads "Your employee record is not active" and does **not** show the address — it is not the problem in that case | |
 | G3 | DevTools → Elements → `<body>` → Computed → `font-family` | Starts with `Inter` (it was Arial until this release) | |
 | G4 | Sign in | Department picker; only your granted departments; EDC tile dimmed "Coming soon" | |
 | G5 | Hover a ghost button (e.g. Logout in the picker header) | Neutral grey hover, **not** solid green | |
@@ -130,7 +131,7 @@ Run with DevTools → Network → **Slow 3G** so the loading frame is visible.
 |---|---|---|---|
 | L1 | Hard-reload any department URL, signed in | A centred "Ignition Group" mark and one pulsing bar, then the dashboard. **No login screen flash.** | |
 | L2 | Same, signed out | The mark and bar, then the login card | |
-| L3 | Login URL with `?auth_error=access_denied&reason=unmapped` | The mark and bar, then the login card **with its error banner** | |
+| L3 | Login URL with `?auth_error=access_denied&reason=unmapped&ad=test%40example.com` | The mark and bar, then the login card **with its error banner**, quoting the address in monospace | |
 | L4 | Open each department | First paint is a shaped skeleton — grey pulsing rows under a real table header, tiles, chart boxes — never a spinner in a table cell, a blank area, or "No data" | |
 | L5 | Spot Report → five different pages | Skeleton has a heading bar, a controls row, tiles and chart cards at roughly the loaded heights; the page does not jump when data lands | |
 | L6 | Spot Report → any page → **Reload** | The data **stays on screen**; only the button spins. (Before: the whole page collapsed to one line.) | |

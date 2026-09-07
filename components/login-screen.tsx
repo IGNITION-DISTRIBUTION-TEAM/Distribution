@@ -21,16 +21,30 @@ export function LoginScreen() {
     const reason = params.get("reason")
     if (!authError) return
 
+    // The address Azure actually gave us, passed by the callback on a denial.
+    // Shown only for the two reasons where knowing WHICH address arrived is the
+    // actionable detail: people here hold addresses on several domains, and an
+    // admin mapping the wrong one gets the identical error back.
+    const ad = params.get("ad")
+    let detail = params.get("detail") ?? ""
+
     let msg = "Authentication failed. Please try again."
     if (authError === "access_denied") {
       switch (reason) {
         case "unmapped":
-          msg = "Your account is not mapped to an employee. Contact administrator."
+          msg = ad
+            ? "Your account is not mapped to an employee. Ask an administrator to map the address below."
+            : "Your account is not mapped to an employee. Contact administrator."
+          if (ad) detail = ad
           break
         case "no_employee":
-          msg = "No matching employee record was found. Contact administrator."
+          msg = ad
+            ? "No employee record was found for the address below. Contact administrator."
+            : "No matching employee record was found. Contact administrator."
+          if (ad) detail = ad
           break
         case "inactive":
+          // The address is not the problem here, so repeating it would mislead.
           msg = "Your employee record is not active. Contact administrator."
           break
         case "role_not_allowed":
@@ -49,7 +63,6 @@ export function LoginScreen() {
       msg = "Sign-in session expired. Please try again."
     }
     setError(msg)
-    const detail = params.get("detail")
     if (detail) setErrorDetail(detail)
 
     // Clean the URL so refresh doesn't keep re-showing the error.
@@ -57,6 +70,7 @@ export function LoginScreen() {
     url.searchParams.delete("auth_error")
     url.searchParams.delete("reason")
     url.searchParams.delete("detail")
+    url.searchParams.delete("ad")
     window.history.replaceState({}, "", url.toString())
   }, [])
 
