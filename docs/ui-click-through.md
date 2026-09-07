@@ -84,6 +84,10 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Monitoring charts | Tooltips show the same decimals as before (not rounded) | |
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
 | Distribution | Every one of the 8 nav items | Renders | |
+| Distribution | Batch upload check → **Check batches with the campaign left on "All"** | Every short batch across every campaign, worst first, with a Campaign column. This is the point of the screen — no need to work through campaigns one at a time | |
+| Distribution | "Select all N short" | Ticks every batch with something to send, including across different campaigns | |
+| Distribution | Re-send with batches from two campaigns picked | One push, not two. The confirm says how many campaigns are involved | |
+| Distribution | Narrow to one campaign | The list filters to it; the Campaign column still shows which | |
 | Distribution | Batch upload check → pick a campaign → Check batches | A row per batch: In HLL / In SilverSurfer / Short by / Would send. Compare against the reconciliation query — the numbers should agree | |
 | Distribution | The freshness banner | Names the newest row on each side. **If SilverSurfer is well behind HLL, stop** — "missing" then means "not replicated yet" and re-sending would duplicate | |
 | Distribution | A batch with nothing missing | Its checkbox is disabled — there is nothing to send | |

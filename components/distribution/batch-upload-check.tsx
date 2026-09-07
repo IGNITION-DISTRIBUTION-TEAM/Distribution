@@ -8,6 +8,11 @@
  * SilverSurfer count and re-pushes the missing ones through the same
  * SP_SYNC_TO_SQLSERVER_LARGE call Extend Expired Leads uses.
  *
+ * EVERY CAMPAIGN AT ONCE, by default. Requiring a campaign first was the wrong
+ * shape: you do not know which one is short until you have looked, so it meant
+ * working through them one at a time. The campaign is a filter now, not a
+ * gate, and several campaigns' batches can be re-sent in a single push.
+ *
  * THE SCREEN'S JOB IS PARTLY TO STOP YOU. The comparison reads a REPLICA of
  * SilverSurfer, and a replica that is lagging reports every lead as missing. So
  * the freshness of both sides is shown before the table, pressing the button
@@ -48,6 +53,7 @@ import {
 import { cn } from "@/lib/utils"
 
 type Row = {
+  campaignId: string
   batchName: string
   hllCount: number
   ssCount: number
@@ -83,7 +89,15 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
-export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
+export function BatchUploadCheck({
+  campaignId,
+  campaignTitles,
+}: {
+  /** "" means every campaign, which is the default. */
+  campaignId: string
+  /** id -> title, for the campaign column. */
+  campaignTitles?: Map<string, string>
+}) {
   // Lazy initialisers rather than a memo: this only seeds the first render.
   const [from, setFrom] = useState(() => monthWindow().from)
   const [to, setTo] = useState(() => monthWindow().to)
@@ -95,6 +109,7 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Keys are `${campaignId}|${batchName}` — a batch name is only unique within its campaign. */
   const [picked, setPicked] = useState<Set<string>>(new Set())
 
   const [dryRun, setDryRun] = useState<{ missing: number } | null>(null)
@@ -103,7 +118,6 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
   const [note, setNote] = useState<{ tone: "success" | "warning" | "info"; text: string } | null>(null)
 
   const check = useCallback(async () => {
-    if (!campaignId) return
     setLoading(true)
     setError(null)
     setSteps(null)
@@ -111,8 +125,8 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
     setPicked(new Set())
     try {
       const res = await fetch(
-        `/api/distribution/batch-check?campaignId=${encodeURIComponent(campaignId)}` +
-          `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        `/api/distribution/batch-check?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` +
+          (campaignId ? `&campaignId=${encodeURIComponent(campaignId)}` : ""),
         { cache: "no-store" }
       )
       const d = await readJson(res)
@@ -127,17 +141,23 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
     }
   }, [campaignId, from, to])
 
+  const keyOf = (r: Row) => `${r.campaignId}|${r.batchName}`
   const short = (rows ?? []).filter((r) => r.missingById > 0)
-  const pickedRows = (rows ?? []).filter((r) => picked.has(r.batchName))
+  const pickedRows = (rows ?? []).filter((r) => picked.has(keyOf(r)))
   const wouldSend = pickedRows.reduce((n, r) => n + r.missingById, 0)
+  const pickedCampaigns = new Set(pickedRows.map((r) => r.campaignId)).size
 
-  const toggle = (name: string) =>
+  const toggle = (r: Row) =>
     setPicked((p) => {
       const next = new Set(p)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      const k = keyOf(r)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
       return next
     })
+
+  /** Tick every short batch — the whole point of showing them all together. */
+  const pickAllShort = () => setPicked(new Set(short.map(keyOf)))
 
   /** Count first, always — the confirm needs a number that came from Snowflake. */
   const preview = async () => {
@@ -149,7 +169,7 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
       const res = await fetch("/api/distribution/batch-check/push", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, from, to, batchNames: [...picked] }),
+        body: JSON.stringify({ from, to, picks: pickedRows.map((r) => ({ campaignId: Number(r.campaignId), batchName: r.batchName })) }),
       })
       const d = await readJson(res)
       if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
@@ -169,7 +189,12 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
       const res = await fetch("/api/distribution/batch-check/push", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, from, to, batchNames: [...picked], confirm: "PUSH" }),
+        body: JSON.stringify({
+          from,
+          to,
+          picks: pickedRows.map((r) => ({ campaignId: Number(r.campaignId), batchName: r.batchName })),
+          confirm: "PUSH",
+        }),
       })
       const d = await readJson(res)
       if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
@@ -185,10 +210,6 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
     } finally {
       setPushing(false)
     }
-  }
-
-  if (!campaignId) {
-    return <Banner tone="info">Pick a campaign above to check its batches.</Banner>
   }
 
   return (
@@ -244,12 +265,18 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
             <SectionHeading>Batches</SectionHeading>
             <Badge variant="secondary">{rows.length}</Badge>
             {short.length > 0 && <Badge variant="destructive">{short.length} short</Badge>}
+            {short.length > 0 && (
+              <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={pickAllShort}>
+                Select all {short.length} short
+              </Button>
+            )}
           </div>
 
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10" />
+                <TableHead>Campaign</TableHead>
                 <TableHead>Batch</TableHead>
                 <TableHead className="text-right">In HLL</TableHead>
                 <TableHead className="text-right">In SilverSurfer</TableHead>
@@ -259,23 +286,31 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
             </TableHeader>
             <TableBody>
               {loading && rows.length === 0 ? (
-                <SkeletonRows cols={6} rows={5} />
+                <SkeletonRows cols={7} rows={5} />
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                  <TableCell colSpan={7} className="text-sm text-muted-foreground">
                     No batches loaded in that window.
                   </TableCell>
                 </TableRow>
               ) : (
                 rows.map((r) => (
-                  <TableRow key={r.batchName} className={cn(r.missingById > 0 && "bg-rose-500/5")}>
+                  <TableRow key={keyOf(r)} className={cn(r.missingById > 0 && "bg-rose-500/5")}>
                     <TableCell>
                       <Checkbox
-                        checked={picked.has(r.batchName)}
+                        checked={picked.has(keyOf(r))}
                         disabled={r.missingById === 0}
                         aria-label={`Select ${r.batchName}`}
-                        onCheckedChange={() => toggle(r.batchName)}
+                        onCheckedChange={() => toggle(r)}
                       />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">
+                      <span className="tabular-nums text-foreground">{r.campaignId}</span>
+                      {campaignTitles?.get(r.campaignId) && (
+                        <span className="ml-1 text-muted-foreground">
+                          {campaignTitles.get(r.campaignId)}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{r.batchName}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
@@ -306,7 +341,7 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
             <span className="text-sm text-muted-foreground">
               {picked.size === 0
                 ? "Pick one or more short batches."
-                : `${picked.size} batch(es), about ${wouldSend.toLocaleString()} lead(s).`}
+                : `${picked.size} batch(es) across ${pickedCampaigns} campaign(s), about ${wouldSend.toLocaleString()} lead(s).`}
             </span>
           </div>
         </Card>
@@ -337,7 +372,8 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
             <AlertDialogTitle>Re-send {dryRun?.missing.toLocaleString()} lead(s)?</AlertDialogTitle>
             <AlertDialogDescription>
               This writes to <span className="font-mono">Upload.TempUpload</span> on the
-              SilverSurfer side, from {picked.size} batch(es). Leads keep the expiry they were
+              SilverSurfer side, from {picked.size} batch(es) across {pickedCampaigns} campaign(s).
+              Leads keep the expiry they were
               loaded with — this re-sends them, it does not extend them.
               {dryRun?.missing === 0 && " Nothing is missing now, so nothing will be sent."}
               <br />

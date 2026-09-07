@@ -40,12 +40,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }
 
-  const campaignRaw = String(body.campaignId ?? "")
-  if (!/^[0-9]+$/.test(campaignRaw)) {
-    return NextResponse.json({ error: "campaignId must be a positive integer" }, { status: 400 })
-  }
+  // No campaign here: each pick carries its own, so a single push can cover
+  // batches from several campaigns at once.
   const scope = {
-    campaignId: Number(campaignRaw),
+    campaignId: null,
     from: String(body.from ?? ""),
     to: String(body.to ?? ""),
   }
@@ -53,11 +51,13 @@ export async function POST(request: NextRequest) {
   let where: string
   let qualify: string
   let dryRunSql: string
+  let picks: { campaignId: number; batchName: string }[]
   try {
-    const m = missingWhere(scope, body.batchNames)
+    const m = missingWhere(scope, body.picks)
     where = m.where
     qualify = m.qualify
-    dryRunSql = buildDryRun(scope, body.batchNames)
+    picks = m.picks
+    dryRunSql = buildDryRun(scope, body.picks)
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 })
   }
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
         missing,
         pushed: result.inserted,
         steps: result.steps,
-        batchNames: body.batchNames,
+        picks,
       },
       { status: result.ok ? 200 : 500 }
     )

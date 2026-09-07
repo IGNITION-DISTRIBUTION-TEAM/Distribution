@@ -8040,11 +8040,15 @@ function DashboardSummary({
 /**
  * Batch upload check — the section wrapper.
  *
- * Owns the campaign choice and hands it to the panel. Its own picker rather
- * than a shared one because no shared campaign picker exists in this file yet:
- * six sections each hold their own `campaigns` state, and extracting one is a
- * worthwhile tidy-up but not something to bundle into a feature that writes to
- * a live CRM.
+ * Owns the campaign FILTER — which defaults to all of them. Requiring a
+ * campaign first was the wrong shape for this screen: you do not know which
+ * one is short until you have looked, so it meant working through them one at
+ * a time.
+ *
+ * Its own picker rather than a shared one because no shared campaign picker
+ * exists in this file yet: six sections each hold their own `campaigns` state,
+ * and extracting one is a worthwhile tidy-up but not something to bundle into
+ * a feature that writes to a live CRM.
  */
 function BatchCheckContent() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -8083,16 +8087,22 @@ function BatchCheckContent() {
   }, [])
 
   const selected = campaigns.find((c) => String(c.id) === campaignId)
+  const titles = useMemo(
+    () => new Map(campaigns.map((c) => [String(c.id), c.title])),
+    [campaigns]
+  )
 
   return (
     <div className="flex flex-col gap-5">
       <Card padding="dense">
-        <Label className="mb-2 block text-sm text-muted-foreground">Campaign</Label>
+        <Label className="mb-2 block text-sm text-muted-foreground">
+          Campaign — leave as all to find the short batches first
+        </Label>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button variant="outline" role="combobox" aria-expanded={open} className="w-full max-w-md justify-between">
               <span className="truncate">
-                {selected ? `${selected.id} — ${selected.title}` : "Select a campaign..."}
+                {selected ? `${selected.id} — ${selected.title}` : "All campaigns"}
               </span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
@@ -8103,6 +8113,16 @@ function BatchCheckContent() {
               <CommandList>
                 <CommandEmpty>No campaigns found.</CommandEmpty>
                 <CommandGroup>
+                  <CommandItem
+                    value="__all__"
+                    onSelect={() => {
+                      setCampaignId("")
+                      setOpen(false)
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4", campaignId === "" ? "opacity-100" : "opacity-0")} />
+                    All campaigns
+                  </CommandItem>
                   {campaigns.map((c) => (
                     <CommandItem
                       key={c.id}
@@ -8124,7 +8144,7 @@ function BatchCheckContent() {
         {campaignsError && <Banner tone="error" className="mt-3">{campaignsError}</Banner>}
       </Card>
 
-      <BatchUploadCheck campaignId={campaignId} />
+      <BatchUploadCheck campaignId={campaignId} campaignTitles={titles} />
     </div>
   )
 }

@@ -37,11 +37,18 @@ export const MAX_PUSH_ROWS = 20000
 /** A SQL string literal, quotes doubled. The injection boundary for batch names. */
 export const lit = (v: string) => `'${String(v).replace(/'/g, "''")}'`
 
-export type CheckScope = { campaignId: number; from: string; to: string }
+/**
+ * `campaignId` null means EVERY campaign.
+ *
+ * That is the default on the screen, and deliberately: you do not know which
+ * campaign is short until you have looked, so making the campaign a required
+ * filter meant checking them one at a time.
+ */
+export type CheckScope = { campaignId: number | null; from: string; to: string }
 
 export function assertScope(scope: CheckScope): CheckScope {
-  if (!Number.isInteger(scope.campaignId) || scope.campaignId < 0) {
-    throw new Error("campaignId must be a non-negative integer")
+  if (scope.campaignId !== null && (!Number.isInteger(scope.campaignId) || scope.campaignId < 0)) {
+    throw new Error("campaignId must be a non-negative integer, or null for all campaigns")
   }
   for (const d of [scope.from, scope.to]) {
     if (!ISO_DATE_RE.test(d)) throw new Error(`date must be YYYY-MM-DD, got ${JSON.stringify(d)}`)
@@ -77,9 +84,9 @@ export function assertBatchNames(raw: unknown): string[] {
 
 /** The HLL side's filter, shared by the summary and the push. */
 function hllWhere(scope: CheckScope): string {
+  const campaign = scope.campaignId === null ? "" : `CAMPAIGNID = ${scope.campaignId}\n     AND `
   return (
-    `CAMPAIGNID = ${scope.campaignId}\n` +
-    `     AND CAST(CREATEDONDATE AS DATE) BETWEEN ${lit(scope.from)} AND ${lit(scope.to)}\n` +
+    `${campaign}CAST(CREATEDONDATE AS DATE) BETWEEN ${lit(scope.from)} AND ${lit(scope.to)}\n` +
     `     AND ESTATUS IS NULL`
   )
 }
@@ -103,15 +110,24 @@ function hllWhere(scope: CheckScope): string {
  * CRM under an earlier batch counts as loaded here. Showing both is the honest
  * answer; picking one would hide the case where a batch looks short but every
  * person in it is already there.
+ *
+ * ONE KNOWN IMPRECISION. Rows are grouped by campaign AND batch, but the
+ * SilverSurfer side has only the batch name to join on, so if the same batch
+ * name ever appeared under two campaigns in the window, both rows would be
+ * credited the same SS_COUNT and both SHORTFALLs would be wrong. MISSING_BY_ID
+ * is unaffected — it is a NOT EXISTS filtered by campaign and batch — and it is
+ * the number a push acts on, so the imprecision is confined to a column that is
+ * advisory. Batch templates embed the date and differ per campaign, so this
+ * should not arise; the campaign column makes it visible if it ever does.
  */
 export function buildSummary(scope: CheckScope): string {
   assertScope(scope)
   return `
 WITH hll AS (
-  SELECT BATCHNAME, COUNT(*) AS HLL_COUNT, MAX(CREATEDONDATE) AS HLL_LATEST
+  SELECT CAMPAIGNID, BATCHNAME, COUNT(*) AS HLL_COUNT
     FROM ${HLL_TABLE}
    WHERE ${hllWhere(scope)}
-   GROUP BY BATCHNAME
+   GROUP BY CAMPAIGNID, BATCHNAME
 ),
 ss AS (
   SELECT d.BATCHNAME, COUNT(DISTINCT s.LEADCUSTOMERID) AS SS_COUNT
@@ -121,22 +137,22 @@ ss AS (
    GROUP BY d.BATCHNAME
 ),
 missing AS (
-  SELECT h.BATCHNAME, COUNT(*) AS MISSING_BY_ID
+  SELECT h.CAMPAIGNID, h.BATCHNAME, COUNT(*) AS MISSING_BY_ID
     FROM ${HLL_TABLE} h
-   WHERE ${hllWhere(scope).replace(/^/gm, "  ").trim()}
+   WHERE ${hllWhere(scope)}
      AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} s WHERE s.IDNUMBER = h.IDNUMBER)
-   GROUP BY h.BATCHNAME
+   GROUP BY h.CAMPAIGNID, h.BATCHNAME
 )
-SELECT h.BATCHNAME,
+SELECT h.CAMPAIGNID,
+       h.BATCHNAME,
        h.HLL_COUNT,
        COALESCE(s.SS_COUNT, 0) AS SS_COUNT,
        h.HLL_COUNT - COALESCE(s.SS_COUNT, 0) AS SHORTFALL,
-       COALESCE(m.MISSING_BY_ID, 0) AS MISSING_BY_ID,
-       h.HLL_LATEST
+       COALESCE(m.MISSING_BY_ID, 0) AS MISSING_BY_ID
   FROM hll h
   LEFT JOIN ss s ON h.BATCHNAME = s.BATCHNAME
-  LEFT JOIN missing m ON h.BATCHNAME = m.BATCHNAME
- ORDER BY MISSING_BY_ID DESC, SHORTFALL DESC, h.BATCHNAME
+  LEFT JOIN missing m ON h.CAMPAIGNID = m.CAMPAIGNID AND h.BATCHNAME = m.BATCHNAME
+ ORDER BY MISSING_BY_ID DESC, SHORTFALL DESC, h.CAMPAIGNID, h.BATCHNAME
 `
 }
 
@@ -167,21 +183,88 @@ SELECT (SELECT MAX(CREATEDONDATE) FROM ${HLL_TABLE})                    AS HLL_L
  * The QUALIFY is carried over from the extend flow: without it, a lead loaded
  * into HLL twice is pushed twice.
  */
-export function missingWhere(scope: CheckScope, batchNames: unknown): { where: string; qualify: string } {
+export type BatchPick = { campaignId: number; batchName: string }
+
+/**
+ * Picks, cleaned. Rejects rather than escapes anything odd — a name that needs
+ * more than quote-doubling to be safe did not come from the table.
+ */
+export function assertPicks(raw: unknown): BatchPick[] {
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("Pick at least one batch")
+  if (raw.length > MAX_BATCHES) throw new Error(`At most ${MAX_BATCHES} batches at a time`)
+  const out: BatchPick[] = []
+  const seen = new Set<string>()
+  for (const v of raw) {
+    const row = (v ?? {}) as Partial<BatchPick>
+    const cid = Math.trunc(Number(row.campaignId))
+    if (!Number.isInteger(cid) || cid < 0) throw new Error(`Bad campaign id: ${String(row.campaignId)}`)
+    const name = String(row.batchName ?? "").trim()
+    if (!name) continue
+    if (name.length > MAX_BATCH_NAME) throw new Error(`Batch name too long: ${name.slice(0, 40)}…`)
+    const key = `${cid}\u0000${name}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ campaignId: cid, batchName: name })
+  }
+  if (out.length === 0) throw new Error("Pick at least one batch")
+  return out
+}
+
+/**
+ * The WHERE a push stages, matching on IDNUMBER only.
+ *
+ * ID-only is deliberate and conservative: a lead already in SilverSurfer counts
+ * as loaded even if it arrived under a different batch name, so this will not
+ * send a second copy of someone the CRM already has. The cost is that a batch
+ * whose own rows never landed under its own name can still show nothing to
+ * send — which is why the summary reports SHORTFALL alongside MISSING_BY_ID.
+ *
+ * PICKS CAN SPAN CAMPAIGNS, so the campaign is paired with its batches rather
+ * than being one predicate over all of them. Batch names are campaign-specific
+ * in practice, but relying on that would mean a batch name reused elsewhere
+ * silently widened a write to a live CRM. One OR-group per campaign keeps it a
+ * single push — one truncate, one insert, one CALL — rather than N sequential
+ * ones, which would each truncate the previous one's staged rows.
+ *
+ * The QUALIFY is carried over from the extend flow: without it, a lead loaded
+ * into HLL twice is pushed twice.
+ */
+export function missingWhere(
+  scope: CheckScope,
+  picks: unknown
+): { where: string; qualify: string; picks: BatchPick[] } {
   assertScope(scope)
-  const names = assertBatchNames(batchNames)
+  const clean = assertPicks(picks)
+
+  const byCampaign = new Map<number, string[]>()
+  for (const p of clean) {
+    const list = byCampaign.get(p.campaignId)
+    if (list) list.push(p.batchName)
+    else byCampaign.set(p.campaignId, [p.batchName])
+  }
+  const groups = [...byCampaign.entries()]
+    .map(([cid, names]) => `(CAMPAIGNID = ${cid} AND BATCHNAME IN (${names.map(lit).join(", ")}))`)
+    .join("\n          OR ")
+
+  // The scope's own campaign filter is dropped here: the picks carry their own,
+  // and keeping both would silently return nothing whenever the two disagree.
+  const dateAndStatus =
+    `CAST(CREATEDONDATE AS DATE) BETWEEN ${lit(scope.from)} AND ${lit(scope.to)}\n` +
+    `     AND ESTATUS IS NULL`
+
   return {
     where:
-      `${hllWhere(scope)}\n` +
-      `     AND BATCHNAME IN (${names.map(lit).join(", ")})\n` +
+      `${dateAndStatus}\n` +
+      `     AND (${groups})\n` +
       `     AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} ss WHERE ss.IDNUMBER = s.IDNUMBER)`,
     qualify: "QUALIFY ROW_NUMBER() OVER (PARTITION BY IDNUMBER ORDER BY CREATEDONDATE DESC) = 1",
+    picks: clean,
   }
 }
 
 /** How many rows a push would send, and a sample, without sending anything. */
-export function buildDryRun(scope: CheckScope, batchNames: unknown): string {
-  const { where } = missingWhere(scope, batchNames)
+export function buildDryRun(scope: CheckScope, picks: unknown): string {
+  const { where } = missingWhere(scope, picks)
   return `
 SELECT COUNT(*) AS MISSING, MIN(s.IDNUMBER) AS FIRST_ID, MAX(s.IDNUMBER) AS LAST_ID
   FROM ${HLL_TABLE} s

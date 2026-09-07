@@ -25,12 +25,15 @@ export async function GET(request: NextRequest) {
   if (guard instanceof NextResponse) return guard
 
   const params = request.nextUrl.searchParams
+  // campaignId is OPTIONAL and omitted means every campaign. That is the point
+  // of the screen: you do not know which campaign is short until you look, so
+  // requiring one meant checking them one at a time.
   const campaignRaw = params.get("campaignId") ?? ""
-  if (!/^[0-9]+$/.test(campaignRaw)) {
+  if (campaignRaw !== "" && !/^[0-9]+$/.test(campaignRaw)) {
     return NextResponse.json({ error: "campaignId must be a positive integer" }, { status: 400 })
   }
   const scope = {
-    campaignId: Number(campaignRaw),
+    campaignId: campaignRaw === "" ? null : Number(campaignRaw),
     from: params.get("from") ?? "",
     to: params.get("to") ?? "",
   }
@@ -51,6 +54,7 @@ export async function GET(request: NextRequest) {
     ])
 
     const batches = rows.map((r) => ({
+      campaignId: r.CAMPAIGNID == null ? "" : String(r.CAMPAIGNID),
       batchName: r.BATCHNAME == null ? "(unnamed)" : String(r.BATCHNAME),
       hllCount: Number(r.HLL_COUNT ?? 0),
       ssCount: Number(r.SS_COUNT ?? 0),

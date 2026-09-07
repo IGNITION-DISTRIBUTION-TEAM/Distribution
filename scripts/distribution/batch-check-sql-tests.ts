@@ -28,7 +28,7 @@ import {
 import {
   MAX_BATCHES,
   MAX_BATCH_NAME,
-  assertBatchNames,
+  assertPicks,
   buildDryRun,
   buildFreshness,
   buildSummary,
@@ -197,21 +197,38 @@ console.log("\nlit — the injection boundary for batch names")
   check("neutralises a payload", lit("x' OR 1=1 --") === "'x'' OR 1=1 --'")
 }
 
-console.log("\nassertBatchNames")
+const pick = (campaignId: number, batchName: string) => ({ campaignId, batchName })
+
+console.log("\nassertPicks")
 {
-  check("accepts a list", JSON.stringify(assertBatchNames(["A", "B"])) === '["A","B"]')
-  check("trims and dedupes", JSON.stringify(assertBatchNames([" A ", "A", "B"])) === '["A","B"]')
-  check("refuses an empty list", rejects(() => assertBatchNames([])))
-  check("refuses a non-array", rejects(() => assertBatchNames("A")))
-  check("refuses all-blank", rejects(() => assertBatchNames(["", "  "])))
-  check(`refuses more than ${MAX_BATCHES}`, rejects(() => assertBatchNames(Array.from({ length: MAX_BATCHES + 1 }, (_, i) => `B${i}`))))
-  check("refuses an over-long name", rejects(() => assertBatchNames(["x".repeat(MAX_BATCH_NAME + 1)])))
+  check("accepts picks", assertPicks([pick(1, "A"), pick(1, "B")]).length === 2)
+  check("trims the name", assertPicks([pick(1, " A ")])[0].batchName === "A")
+  // A batch name is only unique WITHIN a campaign, so the same name under two
+  // campaigns is two distinct picks — collapsing them would drop a real batch.
+  check("keeps the same name under two campaigns", assertPicks([pick(1, "A"), pick(2, "A")]).length === 2)
+  check("dedupes an exact repeat", assertPicks([pick(1, "A"), pick(1, "A")]).length === 1)
+  check("refuses an empty list", rejects(() => assertPicks([])))
+  check("refuses a non-array", rejects(() => assertPicks("A")))
+  check("refuses a bad campaign id", rejects(() => assertPicks([pick(NaN, "A")])))
+  check("refuses a negative campaign id", rejects(() => assertPicks([pick(-1, "A")])))
+  check(`refuses more than ${MAX_BATCHES}`, rejects(() => assertPicks(Array.from({ length: MAX_BATCHES + 1 }, (_, i) => pick(1, `B${i}`)))))
+  check("refuses an over-long name", rejects(() => assertPicks([pick(1, "x".repeat(MAX_BATCH_NAME + 1))])))
 }
 
 console.log("\nbuildSummary")
 {
   const sql = buildSummary(scope)
-  check("filters the campaign", sql.includes("CAMPAIGNID = 11381"))
+  check("filters the campaign when given one", sql.includes("CAMPAIGNID = 11381"))
+  check("groups by campaign and batch", sql.includes("GROUP BY CAMPAIGNID, BATCHNAME"))
+  check("selects the campaign", sql.includes("SELECT h.CAMPAIGNID"))
+  // The whole point of the screen: no campaign means every campaign.
+  const all = buildSummary({ ...scope, campaignId: null })
+  // A campaign PREDICATE is `CAMPAIGNID = <number>`; the joins compare two
+  // columns, so match only the literal form.
+  check("omits the campaign filter when null", !/CAMPAIGNID = \d/.test(all))
+  check("but still scopes the dates", all.includes("BETWEEN '2026-09-01' AND '2026-09-30'"))
+  check("and still groups by campaign", all.includes("GROUP BY CAMPAIGNID, BATCHNAME"))
+  check("joins missing on campaign AND batch", all.includes("h.CAMPAIGNID = m.CAMPAIGNID AND h.BATCHNAME = m.BATCHNAME"))
   check("uses the date range as literals", sql.includes("BETWEEN '2026-09-01' AND '2026-09-30'"))
   check("keeps the ESTATUS filter", sql.includes("ESTATUS IS NULL"))
   // COUNT(*) on the fanned-out join would over-count and make a short batch
@@ -224,6 +241,7 @@ console.log("\nbuildSummary")
   check("orders the worst first", sql.includes("ORDER BY MISSING_BY_ID DESC"))
 
   check("refuses a bad campaign id", rejects(() => buildSummary({ ...scope, campaignId: -1 })))
+  check("accepts null as all campaigns", !rejects(() => buildSummary({ ...scope, campaignId: null })))
   check("refuses a malformed date", rejects(() => buildSummary({ ...scope, from: "01-09-2026" })))
   check("refuses SQL in a date", rejects(() => buildSummary({ ...scope, to: "2026-09-30' OR '1'='1" })))
 }
@@ -236,20 +254,27 @@ console.log("\nbuildFreshness")
 
 console.log("\nmissingWhere — what a push stages")
 {
-  const { where, qualify } = missingWhere(scope, ["BATCH_A", "BATCH_O'BRIEN"])
-  check("scopes the campaign", where.includes("CAMPAIGNID = 11381"))
+  const { where, qualify } = missingWhere(scope, [pick(11381, "BATCH_A"), pick(11381, "BATCH_O'BRIEN")])
   check("scopes the dates", where.includes("BETWEEN '2026-09-01' AND '2026-09-30'"))
   check("keeps ESTATUS IS NULL", where.includes("ESTATUS IS NULL"))
-  check("filters the picked batches", where.includes("BATCHNAME IN ('BATCH_A', 'BATCH_O''BRIEN')"), where)
+  check("pairs the campaign with its batches", where.includes("(CAMPAIGNID = 11381 AND BATCHNAME IN ('BATCH_A', 'BATCH_O''BRIEN'))"), where)
   check("excludes leads already in SilverSurfer", where.includes("NOT EXISTS"))
-  // The push's FROM aliases the HLL table `s`, so the SilverSurfer table inside
-  // the subquery must be something else or the correlation is to itself.
   check("the subquery alias does not shadow the outer one", where.includes("ss.IDNUMBER = s.IDNUMBER"))
-  // Without this, a lead loaded into HLL twice is pushed twice.
   check("dedupes by IDNUMBER", qualify.includes("PARTITION BY IDNUMBER"))
-  check("refuses no batches", rejects(() => missingWhere(scope, [])))
+  check("refuses no picks", rejects(() => missingWhere(scope, [])))
 
-  // End to end: the staged INSERT must carry the filter AND the 39 columns.
+  // Batches from several campaigns in ONE push. Relying on batch names alone
+  // would let a name reused elsewhere silently widen a write to a live CRM.
+  const multi = missingWhere(scope, [pick(1, "A"), pick(2, "B"), pick(1, "C")])
+  check("one OR-group per campaign", multi.where.includes("(CAMPAIGNID = 1 AND BATCHNAME IN ('A', 'C'))"), multi.where)
+  check("and the second campaign too", multi.where.includes("(CAMPAIGNID = 2 AND BATCHNAME IN ('B'))"))
+  check("joined with OR", multi.where.includes("OR "))
+  check("returns the cleaned picks", multi.picks.length === 3)
+  // The scope's own campaign must not also be applied — the picks carry theirs,
+  // and both would return nothing whenever they disagreed.
+  const scoped = missingWhere({ ...scope, campaignId: 99999 }, [pick(1, "A")])
+  check("the scope's campaign is not applied on top", !scoped.where.includes("CAMPAIGNID = 99999"))
+
   const staged = buildStagingInsert({
     stagingTable: "DATAWAREHOUSE.LEADS_DISTRIBUTION.TM_BATCH_RECHECK_LEADS",
     where, qualify, dates: REPUSH_DATES,
@@ -263,12 +288,12 @@ console.log("\nmissingWhere — what a push stages")
 
 console.log("\nbuildDryRun")
 {
-  const sql = buildDryRun(scope, ["BATCH_A"])
+  const sql = buildDryRun(scope, [pick(11381, "BATCH_A")])
   check("counts rather than writes", /^\s*SELECT COUNT\(\*\)/m.test(sql))
   check("has no INSERT", !/INSERT/i.test(sql))
   check("has no CALL", !/\bCALL\b/i.test(sql))
   check("has no TRUNCATE", !/TRUNCATE/i.test(sql))
-  check("uses the same filter as the push", sql.includes("BATCHNAME IN ('BATCH_A')"))
+  check("uses the same filter as the push", sql.includes("(CAMPAIGNID = 11381 AND BATCHNAME IN ('BATCH_A'))"))
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)
