@@ -87,6 +87,9 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Distribution | Batch upload check → **Check batches with the campaign left on "All"** | Every short batch across every campaign, worst first, with a Campaign column. This is the point of the screen — no need to work through campaigns one at a time | |
 | Distribution | The two tabs | **Missing by ID** is the actionable one and the default — it is the only tab with checkboxes and the re-send button. **Short by count** is read-only | |
 | Distribution | Short by count, on real data | An amber warning when batches show 0 in SilverSurfer while most of their leads are there by ID — that is the batch NAME not lining up between the two systems, not leads going missing | |
+| Distribution | Missing by ID, straight after Check batches | **Everything with something to send is already ticked** — a subset is the exception, not the default | |
+| Distribution | Untick a couple of rows | The line by the button says how many missing leads sit in the unticked batches and will not be sent | |
+| Distribution | The header checkbox | Selects or clears all; shows a partial state when only some are ticked, so "4 of 12" can never read as "none" | |
 | Distribution | "Select all N short" | Ticks every batch with something to send, including across different campaigns | |
 | Distribution | Re-send with batches from two campaigns picked | One push, not two. The confirm says how many campaigns are involved | |
 | Distribution | Narrow to one campaign | The list filters to it; the Campaign column still shows which | |

@@ -123,7 +123,6 @@ export function BatchUploadCheck({
     setError(null)
     setSteps(null)
     setNote(null)
-    setPicked(new Set())
     try {
       const res = await fetch(
         `/api/distribution/batch-check?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` +
@@ -132,8 +131,13 @@ export function BatchUploadCheck({
       )
       const d = await readJson(res)
       if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
-      setRows((d.batches as Row[]) ?? [])
+      const next = (d.batches as Row[]) ?? []
+      setRows(next)
       setFreshness((d.freshness as typeof freshness) ?? { hllLatest: null, ssLatest: null })
+      // Everything with something to send starts ticked. The job is "re-send
+      // what is missing", so a subset is the exception and has to be chosen —
+      // having to tick twelve boxes to do the obvious thing was backwards.
+      setPicked(new Set(next.filter((r) => r.missingById > 0).map((r) => `${r.campaignId}|${r.batchName}`)))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setRows(null)
@@ -157,6 +161,7 @@ export function BatchUploadCheck({
   )
   const pickedRows = (rows ?? []).filter((r) => picked.has(keyOf(r)))
   const wouldSend = pickedRows.reduce((n, r) => n + r.missingById, 0)
+  const totalMissing = short.reduce((n, r) => n + r.missingById, 0)
   const pickedCampaigns = new Set(pickedRows.map((r) => r.campaignId)).size
 
   const toggle = (r: Row) =>
@@ -170,6 +175,14 @@ export function BatchUploadCheck({
 
   /** Tick every short batch — the whole point of showing them all together. */
   const pickAllShort = () => setPicked(new Set(short.map(keyOf)))
+  const allPicked = short.length > 0 && picked.size === short.length
+  /**
+   * Radix's third state. Without it a partly-filled box shows as unchecked,
+   * which reads as "nothing selected" when four of twelve are — and that is
+   * exactly how you end up re-sending a third of what you meant to.
+   */
+  const headerState: boolean | "indeterminate" =
+    allPicked ? true : picked.size > 0 ? "indeterminate" : false
 
   /** Count first, always — the confirm needs a number that came from Snowflake. */
   const preview = async () => {
@@ -281,9 +294,19 @@ export function BatchUploadCheck({
               </TabsList>
               <Badge variant="secondary">{rows.length} batches</Badge>
               {short.length > 0 && (
-                <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={pickAllShort}>
-                  Select all {short.length} short
-                </Button>
+                <>
+                  <span className="ml-auto text-sm text-muted-foreground">
+                    {picked.size} of {short.length} selected
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (allPicked ? setPicked(new Set()) : pickAllShort())}
+                  >
+                    {allPicked ? "Clear selection" : `Select all ${short.length}`}
+                  </Button>
+                </>
               )}
             </div>
 
@@ -296,7 +319,13 @@ export function BatchUploadCheck({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={headerState}
+                        aria-label={allPicked ? "Clear selection" : `Select all ${short.length} batches`}
+                        onCheckedChange={() => (allPicked ? setPicked(new Set()) : pickAllShort())}
+                      />
+                    </TableHead>
                     <TableHead>Campaign</TableHead>
                     <TableHead>Batch</TableHead>
                     <TableHead className="text-right">In HLL</TableHead>
@@ -347,9 +376,23 @@ export function BatchUploadCheck({
                   Re-send missing leads
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  {picked.size === 0
-                    ? "Pick one or more batches."
-                    : `${picked.size} batch(es) across ${pickedCampaigns} campaign(s), about ${wouldSend.toLocaleString()} lead(s).`}
+                  {picked.size === 0 ? (
+                    "Pick one or more batches, or tick the box in the header to take all of them."
+                  ) : (
+                    <>
+                      {picked.size} of {short.length} batch(es) across {pickedCampaigns} campaign(s),
+                      about {wouldSend.toLocaleString()} lead(s).
+                      {/* Says the quiet part out loud. Selecting a subset is fine;
+                          not NOTICING you selected a subset is the problem. */}
+                      {picked.size < short.length && (
+                        <span className="text-amber-200">
+                          {" "}
+                          {(totalMissing - wouldSend).toLocaleString()} missing lead(s) in the{" "}
+                          {short.length - picked.size} unticked batch(es) will not be sent.
+                        </span>
+                      )}
+                    </>
+                  )}
                 </span>
               </div>
             </TabsContent>
