@@ -40,6 +40,7 @@ import { Banner } from "@/components/kit/banner"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { SkeletonRows } from "@/components/kit/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -142,7 +143,18 @@ export function BatchUploadCheck({
   }, [campaignId, from, to])
 
   const keyOf = (r: Row) => `${r.campaignId}|${r.batchName}`
+  /** Actionable: leads whose ID is nowhere in SilverSurfer. A re-send acts on these. */
   const short = (rows ?? []).filter((r) => r.missingById > 0)
+  /** Diagnostic: the counts do not add up. See the banner on that tab. */
+  const shortByCount = (rows ?? []).filter((r) => r.shortfall > 0)
+  /**
+   * Batches whose SilverSurfer count is zero while most of their leads ARE
+   * there by ID — the signature of the batch NAME not matching between the two
+   * systems, rather than of leads going missing.
+   */
+  const nameMismatch = (rows ?? []).filter(
+    (r) => r.ssCount === 0 && r.hllCount > 0 && r.missingById < r.hllCount
+  )
   const pickedRows = (rows ?? []).filter((r) => picked.has(keyOf(r)))
   const wouldSend = pickedRows.reduce((n, r) => n + r.missingById, 0)
   const pickedCampaigns = new Set(pickedRows.map((r) => r.campaignId)).size
@@ -261,89 +273,162 @@ export function BatchUploadCheck({
 
       {rows !== null && (
         <Card padding="dense">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <SectionHeading>Batches</SectionHeading>
-            <Badge variant="secondary">{rows.length}</Badge>
-            {short.length > 0 && <Badge variant="destructive">{short.length} short</Badge>}
-            {short.length > 0 && (
-              <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={pickAllShort}>
-                Select all {short.length} short
-              </Button>
-            )}
-          </div>
-
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10" />
-                <TableHead>Campaign</TableHead>
-                <TableHead>Batch</TableHead>
-                <TableHead className="text-right">In HLL</TableHead>
-                <TableHead className="text-right">In SilverSurfer</TableHead>
-                <TableHead className="text-right">Short by</TableHead>
-                <TableHead className="text-right">Would send</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading && rows.length === 0 ? (
-                <SkeletonRows cols={7} rows={5} />
-              ) : rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-sm text-muted-foreground">
-                    No batches loaded in that window.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rows.map((r) => (
-                  <TableRow key={keyOf(r)} className={cn(r.missingById > 0 && "bg-rose-500/5")}>
-                    <TableCell>
-                      <Checkbox
-                        checked={picked.has(keyOf(r))}
-                        disabled={r.missingById === 0}
-                        aria-label={`Select ${r.batchName}`}
-                        onCheckedChange={() => toggle(r)}
-                      />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">
-                      <span className="tabular-nums text-foreground">{r.campaignId}</span>
-                      {campaignTitles?.get(r.campaignId) && (
-                        <span className="ml-1 text-muted-foreground">
-                          {campaignTitles.get(r.campaignId)}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{r.batchName}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.ssCount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {r.shortfall > 0 ? r.shortfall.toLocaleString() : "—"}
-                    </TableCell>
-                    <TableCell className={cn("text-right tabular-nums", r.missingById > 0 && "font-medium text-rose-300")}>
-                      {r.missingById > 0 ? r.missingById.toLocaleString() : "—"}
-                    </TableCell>
-                  </TableRow>
-                ))
+          <Tabs defaultValue="missing">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <TabsList>
+                <TabsTrigger value="missing">Missing by ID ({short.length})</TabsTrigger>
+                <TabsTrigger value="shortfall">Short by count ({shortByCount.length})</TabsTrigger>
+              </TabsList>
+              <Badge variant="secondary">{rows.length} batches</Badge>
+              {short.length > 0 && (
+                <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={pickAllShort}>
+                  Select all {short.length} short
+                </Button>
               )}
-            </TableBody>
-          </Table>
+            </div>
 
-          <p className="mt-3 text-xs text-muted-foreground">
-            &ldquo;Short by&rdquo; is the count difference. &ldquo;Would send&rdquo; is the leads
-            whose ID is nowhere in SilverSurfer — the only ones a re-send acts on. They differ when
-            a lead is already in the CRM under an earlier batch, which counts as loaded.
-          </p>
+            {/* ---- the actionable one ---- */}
+            <TabsContent value="missing">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Leads whose ID number is nowhere in SilverSurfer. These are the only ones a
+                re-send acts on.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10" />
+                    <TableHead>Campaign</TableHead>
+                    <TableHead>Batch</TableHead>
+                    <TableHead className="text-right">In HLL</TableHead>
+                    <TableHead className="text-right">Would send</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading && rows.length === 0 ? (
+                    <SkeletonRows cols={5} rows={5} />
+                  ) : short.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-sm text-muted-foreground">
+                        Nothing missing by ID in that window — every lead is in SilverSurfer.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    short.map((r) => (
+                      <TableRow key={keyOf(r)}>
+                        <TableCell>
+                          <Checkbox
+                            checked={picked.has(keyOf(r))}
+                            aria-label={`Select ${r.batchName}`}
+                            onCheckedChange={() => toggle(r)}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          <span className="tabular-nums text-foreground">{r.campaignId}</span>
+                          {campaignTitles?.get(r.campaignId) && (
+                            <span className="ml-1 text-muted-foreground">
+                              {campaignTitles.get(r.campaignId)}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{r.batchName}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums text-rose-300">
+                          {r.missingById.toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={() => void preview()} disabled={picked.size === 0 || pushing}>
-              {pushing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Re-send missing leads
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              {picked.size === 0
-                ? "Pick one or more short batches."
-                : `${picked.size} batch(es) across ${pickedCampaigns} campaign(s), about ${wouldSend.toLocaleString()} lead(s).`}
-            </span>
-          </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={() => void preview()} disabled={picked.size === 0 || pushing}>
+                  {pushing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                  Re-send missing leads
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {picked.size === 0
+                    ? "Pick one or more batches."
+                    : `${picked.size} batch(es) across ${pickedCampaigns} campaign(s), about ${wouldSend.toLocaleString()} lead(s).`}
+                </span>
+              </div>
+            </TabsContent>
+
+            {/* ---- the diagnostic one ---- */}
+            <TabsContent value="shortfall">
+              {/* Your own data says this column is not to be trusted on its own:
+                  most batches show 0 in SilverSurfer while the ID match finds
+                  the great majority of their leads present. That is the batch
+                  NAME failing to line up between the two systems, not leads
+                  going missing — so this tab reads, and does not act. */}
+              {nameMismatch.length > 0 && (
+                <Banner tone="warning" className="mb-3">
+                  {nameMismatch.length} of these batches show <strong>0 in SilverSurfer</strong> even
+                  though most of their leads <em>are</em> there by ID number. That is the batch name
+                  not matching between the two systems, not leads going missing — so &ldquo;Short
+                  by&rdquo; overstates the problem badly here. Use the <strong>Missing by ID</strong> tab
+                  to decide what to re-send.
+                </Banner>
+              )}
+              <p className="mb-3 text-sm text-muted-foreground">
+                Where the two counts disagree. Read-only: a count difference does not tell you which
+                leads to send, and a lead already in the CRM under a different batch name shows up
+                here without being missing at all.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Campaign</TableHead>
+                    <TableHead>Batch</TableHead>
+                    <TableHead className="text-right">In HLL</TableHead>
+                    <TableHead className="text-right">In SilverSurfer</TableHead>
+                    <TableHead className="text-right">Short by</TableHead>
+                    <TableHead className="text-right">Missing by ID</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading && rows.length === 0 ? (
+                    <SkeletonRows cols={6} rows={5} />
+                  ) : shortByCount.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                        Every batch's counts add up.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    shortByCount.map((r) => (
+                      <TableRow key={keyOf(r)}>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          <span className="tabular-nums text-foreground">{r.campaignId}</span>
+                          {campaignTitles?.get(r.campaignId) && (
+                            <span className="ml-1 text-muted-foreground">
+                              {campaignTitles.get(r.campaignId)}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{r.batchName}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            r.ssCount === 0 ? "text-amber-200" : "text-muted-foreground"
+                          )}
+                        >
+                          {r.ssCount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {r.shortfall.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {r.missingById > 0 ? r.missingById.toLocaleString() : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TabsContent>
+          </Tabs>
         </Card>
       )}
 
