@@ -88,7 +88,6 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | Distribution | The two tabs | **Needs reloading** is the actionable one and the default — the only tab with checkboxes and the re-send button. **All batches** is read-only | |
 | Distribution | A batch with 0 in SilverSurfer | "Would send" equals its full HLL count — the batch never arrived, so it reloads whole | |
 | Distribution | A partially-loaded batch (e.g. 6,750 in HLL, 2,900 in SS) | "Would send" is the gap, 3,850 — not the whole batch and not zero | |
-| Distribution | The "New to CRM" column | Lower than "Would send" whenever people already exist under an earlier batch. That gap is expected: the CRM keys on (person, batch), so the same person belongs in several batches | |
 | Distribution | Needs reloading, straight after Check batches | **Everything with something to send is already ticked** — a subset is the exception, not the default | |
 | Distribution | Untick a couple of rows | The line by the button says how many missing leads sit in the unticked batches and will not be sent | |
 | Distribution | The header checkbox | Selects or clears all; shows a partial state when only some are ticked, so "4 of 12" can never read as "none" | |

@@ -68,7 +68,6 @@ type Row = {
   ssCount: number
   shortfall: number
   missingByBatch: number
-  newToCrm: number
 }
 
 type PushStep = { name: string; ok: boolean; rowCount?: number; error?: string }
@@ -316,9 +315,6 @@ export function BatchUploadCheck({
               <p className="mb-3 text-sm text-muted-foreground">
                 Leads SilverSurfer does not hold under this batch name. A batch that never
                 arrived shows its whole count; one that half-arrived shows the gap.
-                &ldquo;New to CRM&rdquo; is how many of those are people SilverSurfer has never
-                seen at all — the rest already exist under an earlier batch and are being
-                sent under this one, which is normal.
               </p>
               <Table>
                 <TableHeader>
@@ -334,15 +330,14 @@ export function BatchUploadCheck({
                     <TableHead>Batch</TableHead>
                     <TableHead className="text-right">In HLL</TableHead>
                     <TableHead className="text-right">Would send</TableHead>
-                    <TableHead className="text-right">New to CRM</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading && rows.length === 0 ? (
-                    <SkeletonRows cols={6} rows={5} />
+                    <SkeletonRows cols={5} rows={5} />
                   ) : short.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                      <TableCell colSpan={5} className="text-sm text-muted-foreground">
                         Nothing to reload — every batch is complete in SilverSurfer.
                       </TableCell>
                     </TableRow>
@@ -368,9 +363,6 @@ export function BatchUploadCheck({
                         <TableCell className="text-right tabular-nums">{r.hllCount.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-medium tabular-nums text-rose-300">
                           {r.missingByBatch.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {r.newToCrm.toLocaleString()}
                         </TableCell>
                       </TableRow>
                     ))

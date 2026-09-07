@@ -236,11 +236,9 @@ console.log("\nbuildSummary")
   check("counts SilverSurfer leads distinctly", sql.includes("COUNT(DISTINCT s.LEADCUSTOMERID)"))
   check("reports the shortfall", sql.includes("AS SHORTFALL"))
   check("reports what a push would actually send", sql.includes("AS MISSING_BY_BATCH"))
-  check("also reports who is new to the CRM", sql.includes("AS NEW_TO_CRM"))
   // Batch AND id. Matching on id alone understated eight fully-missing
   // batches by ~80%, because their people existed under earlier batch names.
   check("the missing CTE matches on id AND batch", sql.includes("ss.IDNUMBER = h.IDNUMBER AND dd.BATCHNAME = h.BATCHNAME"))
-  check("the new-to-CRM CTE still matches on id alone", sql.includes("ss.IDNUMBER = h.IDNUMBER)"))
   check("orders the worst first", sql.includes("ORDER BY MISSING_BY_BATCH DESC"))
 
   check("refuses a bad campaign id", rejects(() => buildSummary({ ...scope, campaignId: -1 })))

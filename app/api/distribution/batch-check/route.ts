@@ -60,7 +60,6 @@ export async function GET(request: NextRequest) {
       ssCount: Number(r.SS_COUNT ?? 0),
       shortfall: Number(r.SHORTFALL ?? 0),
       missingByBatch: Number(r.MISSING_BY_BATCH ?? 0),
-      newToCrm: Number(r.NEW_TO_CRM ?? 0),
     }))
 
     const f = fresh[0] ?? {}

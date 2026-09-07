@@ -166,29 +166,16 @@ missing AS (
        WHERE ss.IDNUMBER = h.IDNUMBER AND dd.BATCHNAME = h.BATCHNAME
      )
    GROUP BY h.CAMPAIGNID, h.BATCHNAME
-),
-newToCrm AS (
-  -- Of the missing, how many are people the CRM has never seen at all. Purely
-  -- informational, and the number that answers "are we creating duplicates?" —
-  -- missing minus this is people being re-sent under a new batch, which is
-  -- normal rather than a fault.
-  SELECT h.CAMPAIGNID, h.BATCHNAME, COUNT(*) AS NEW_TO_CRM
-    FROM ${HLL_TABLE} h
-   WHERE ${hllWhere(scope)}
-     AND NOT EXISTS (SELECT 1 FROM ${SS_LEAD} ss WHERE ss.IDNUMBER = h.IDNUMBER)
-   GROUP BY h.CAMPAIGNID, h.BATCHNAME
 )
 SELECT h.CAMPAIGNID,
        h.BATCHNAME,
        h.HLL_COUNT,
        COALESCE(s.SS_COUNT, 0) AS SS_COUNT,
        h.HLL_COUNT - COALESCE(s.SS_COUNT, 0) AS SHORTFALL,
-       COALESCE(m.MISSING_BY_BATCH, 0) AS MISSING_BY_BATCH,
-       COALESCE(n.NEW_TO_CRM, 0) AS NEW_TO_CRM
+       COALESCE(m.MISSING_BY_BATCH, 0) AS MISSING_BY_BATCH
   FROM hll h
   LEFT JOIN ss s ON h.BATCHNAME = s.BATCHNAME
   LEFT JOIN missing m ON h.CAMPAIGNID = m.CAMPAIGNID AND h.BATCHNAME = m.BATCHNAME
-  LEFT JOIN newToCrm n ON h.CAMPAIGNID = n.CAMPAIGNID AND h.BATCHNAME = n.BATCHNAME
  ORDER BY MISSING_BY_BATCH DESC, h.CAMPAIGNID, h.BATCHNAME
 `
 }
