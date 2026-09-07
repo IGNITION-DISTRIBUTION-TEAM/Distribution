@@ -61,6 +61,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { DailyFilesContent } from "@/components/daily-files"
 import { DepartmentShell } from "@/components/department-shell"
 import { ExportLayoutEditor } from "@/components/distribution/export-layout-editor"
+import { BatchUploadCheck } from "@/components/distribution/batch-upload-check"
 import type { ExportLayout } from "@/lib/export-layout"
 import {
   Truck,
@@ -85,6 +86,7 @@ import {
   Server,
   Database,
   Settings as SettingsIcon,
+  ShieldCheck,
   DatabaseZap,
   Mail,
   Recycle,
@@ -122,6 +124,7 @@ const navItems: NavItem[] = [
   { id: "daily-files", label: "Daily Files", icon: <Files className="h-4 w-4" /> },
   { id: "temp-upload", label: "Temp Upload", icon: <DatabaseZap className="h-4 w-4" /> },
   { id: "recycle", label: "Recycle", icon: <Recycle className="h-4 w-4" /> },
+  { id: "batch-check", label: "Batch upload check", icon: <ShieldCheck className="h-4 w-4" /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon className="h-4 w-4" /> },
 ]
 
@@ -8034,6 +8037,86 @@ function DashboardSummary({
   )
 }
 
+/**
+ * Batch upload check — the section wrapper.
+ *
+ * Owns the campaign choice and hands it to the panel. Its own picker rather
+ * than a shared one because no shared campaign picker exists in this file yet:
+ * six sections each hold their own `campaigns` state, and extracting one is a
+ * worthwhile tidy-up but not something to bundle into a feature that writes to
+ * a live CRM.
+ */
+function BatchCheckContent() {
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignsError, setCampaignsError] = useState<string | null>(null)
+  const [campaignId, setCampaignId] = useState("")
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch("/api/distribution/campaigns", { cache: "no-store" })
+        const d = await res.json()
+        if (cancelled) return
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+        setCampaigns(d.campaigns ?? [])
+      } catch (e) {
+        if (!cancelled) setCampaignsError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const selected = campaigns.find((c) => String(c.id) === campaignId)
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card padding="dense">
+        <Label className="mb-2 block text-sm text-muted-foreground">Campaign</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" role="combobox" aria-expanded={open} className="w-full max-w-md justify-between">
+              <span className="truncate">
+                {selected ? `${selected.id} — ${selected.title}` : "Select a campaign..."}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Search by title..." />
+              <CommandList>
+                <CommandEmpty>No campaigns found.</CommandEmpty>
+                <CommandGroup>
+                  {campaigns.map((c) => (
+                    <CommandItem
+                      key={c.id}
+                      value={`${c.id} ${c.title}`}
+                      onSelect={() => {
+                        setCampaignId(String(c.id))
+                        setOpen(false)
+                      }}
+                    >
+                      <Check className={cn("mr-2 h-4 w-4", String(c.id) === campaignId ? "opacity-100" : "opacity-0")} />
+                      {c.id} — {c.title}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {campaignsError && <Banner tone="error" className="mt-3">{campaignsError}</Banner>}
+      </Card>
+
+      <BatchUploadCheck campaignId={campaignId} />
+    </div>
+  )
+}
+
 function SettingsContent() {
   return (
     <div className="flex flex-col gap-6">
@@ -9413,6 +9496,8 @@ export function DistributionDashboard({ onBack }: { onBack?: () => void } = {}) 
         return <TempUploadContent />
       case "recycle":
         return <RecycleContent />
+      case "batch-check":
+        return <BatchCheckContent />
       case "settings":
         return <SettingsContent />
       default:

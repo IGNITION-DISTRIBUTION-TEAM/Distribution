@@ -83,7 +83,13 @@ does not match `git rev-parse --short HEAD` of the deploy, hard-reload
 | EngAIge | Tour button in the header | Tour opens and drives the nav | |
 | EngAIge | Monitoring charts | Tooltips show the same decimals as before (not rounded) | |
 | EngAIge | Run a config | Run message appears as emerald/rose banner under the row | |
-| Distribution | Every one of the 7 nav items | Renders | |
+| Distribution | Every one of the 8 nav items | Renders | |
+| Distribution | Batch upload check → pick a campaign → Check batches | A row per batch: In HLL / In SilverSurfer / Short by / Would send. Compare against the reconciliation query — the numbers should agree | |
+| Distribution | The freshness banner | Names the newest row on each side. **If SilverSurfer is well behind HLL, stop** — "missing" then means "not replicated yet" and re-sending would duplicate | |
+| Distribution | A batch with nothing missing | Its checkbox is disabled — there is nothing to send | |
+| Distribution | Pick a short batch → Re-send missing leads | A confirm naming a count that came from Snowflake just now, not from the table. **Cancel it: nothing must be written** | |
+| Distribution | Then confirm | The step list shows truncate / insert / syncToSqlServer, and the table refreshes | |
+| Distribution | **Extend Expired Leads, after this change** | Must behave exactly as before — its SQL moved into lib/silversurfer-push.ts and the golden test pins it, but only a real run proves the CALL still lands | |
 | Distribution | **Before configuring anything** — download for any campaign | **Byte-identical to what you got before.** The standard layout is meant to be invisible; this is the check that matters most | |
 | Distribution | Settings → a campaign → Export layout | 55 rows, "standard" badge, field names populated from the live leads table | |
 | Distribution | Rename a column to `X"` or `X--y` | Refused inline with a reason, and Save is blocked. Neither can reach the SQL | |
