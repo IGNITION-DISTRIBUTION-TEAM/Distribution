@@ -84,19 +84,21 @@
    -----------------------------------------------------------------------------
    FOUR THINGS I DID NOT CHANGE, BUT YOU SHOULD LOOK AT
 
-   A. RECOMMENDATION_1..6 ARE NEVER POPULATED BY ANYTHING.
-      Your CREATE TABLE has `recommendation`, SINGULAR. The ALTER ADDs create
-      the six numbered ones, after the load, and nothing anywhere writes them.
-      So the six comma-strip UPDATEs at the top of your runbook run against
-      columns that are empty on every row, and UDM5-8, UDM14-16 and UDM18-20
-      arrive at the dialler blank — on a campaign whose whole point is
-      presenting a save offer.
+   A. RECOMMENDATION_1..6 WERE NEVER POPULATED — AND THE CAUSE WAS THE COLUMN
+      ORDER, NOT A MISSING SPLIT. Now fixed in 01-staging-table.sql.
+      Your CREATE TABLE declares 24 columns and the seven ALTER ADDs for ESTATUS
+      and RECOMMENDATION_1..6 run AFTER the load. So the columns did not exist
+      when the file was read: the file's recommendation columns had nowhere to
+      land, and nothing afterwards ever filled them. The six comma-strip UPDATEs
+      below were running against columns empty on every row, and UDM5-8,
+      UDM14-16 and UDM18-20 arrived at the dialler blank — on a campaign whose
+      whole point is presenting a save offer.
 
-      I have NOT invented a split, because only you know the separator and
-      whether the CSV even carries the offers. 00-grants.sql section 5 tells you
-      which of the two cases it is, and the commented block at the end of
-      section 1 below does the split once you know. Read that section before the
-      first run; it is the second most important finding after DNC.
+      The file does carry the six. 01-staging-table.sql declares them up front,
+      so they load with everything else and the comma-strip finally has
+      something to strip. Nothing in this procedure needed to change for that;
+      the conditional ADD COLUMN block below is now a safety net rather than the
+      only thing creating them.
 
    B. THE ESTATUS LABEL A LEAD ENDS UP WITH IS DECIDED BY STATEMENT ORDER.
       'Incorrect Cell Number', then 'DUPLICATE LEAD', then 'INVALID ID', and
@@ -186,7 +188,13 @@ BEGIN
             ADD COLUMN ESTATUS VARCHAR(500);
     END IF;
 
-    -- One guard per column rather than one guard for all six. Two reasons:
+    -- A SAFETY NET, NOT THE SOURCE OF THESE COLUMNS. 01-staging-table.sql
+    -- declares all six, so on a correctly created table every guard below is a
+    -- no-op. They stay because the table pre-dates that script and because a
+    -- missing column here fails at load time, per-row, with an error that names
+    -- the column and not the cause.
+    --
+    -- One guard per column rather than one for all six. Two reasons:
     -- Snowflake's ALTER TABLE ADD takes a comma-separated column list, NOT a
     -- repeated `ADD COLUMN` clause, and a table that somehow has
     -- RECOMMENDATION_1 but not RECOMMENDATION_4 would be skipped entirely by a
@@ -250,9 +258,10 @@ BEGIN
     -- ILIKE '%,%' guard only skips rows REPLACE would leave unchanged anyway —
     -- so one pass over the table instead of six.
     --
-    -- NOTE A: these columns are empty on every row unless something populates
-    -- them. See 00-grants.sql section 5 and the commented block at the end of
-    -- this section.
+    -- NOTE A: this did nothing at all until 01-staging-table.sql declared the
+    -- six columns BEFORE the load. If the counts below come back 0, the file's
+    -- recommendation columns are still not reaching the table — check the
+    -- upload's mapping step, not this statement.
     UPDATE DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND
        SET RECOMMENDATION_1 = REPLACE(RECOMMENDATION_1, ',', ''),
            RECOMMENDATION_2 = REPLACE(RECOMMENDATION_2, ',', ''),
@@ -479,41 +488,14 @@ BEGIN
         msg := msg || ' | WARNING: ' || n_norec
                    || ' of ' || n_rows || ' rows have NO recommendation at all —'
                    || ' the agent screen will show no offer for them.'
-                   || ' See 00-grants.sql section 5.';
+                   || ' If that is ALL rows, the six columns are not reaching'
+                   || ' the table: see 01-staging-table.sql section 5.';
     END IF;
 
     RETURN msg;
 
 END;
 $$;
-
-
-/* -----------------------------------------------------------------------------
-   IF THE RECOMMENDATIONS ARRIVE IN ONE COLUMN — note A
-
-   Only once 00-grants.sql section 5b has told you the separator. Paste this
-   into the procedure directly ABOVE the comma-stripping UPDATE, replacing the
-   '|' with whatever 5b shows, and re-run section 1 and then 00-grants.sql
-   section 7 (the CREATE OR REPLACE has dropped the grant).
-
-   SPLIT_PART returns '' rather than NULL past the end of the string, hence the
-   NULLIF: an empty offer must read as absent, not as an offer that is blank,
-   because the view's IFNULLs and the dialler screen both key off NULL.
-
-    UPDATE DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND
-       SET RECOMMENDATION_1 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 1)), ''),
-           RECOMMENDATION_2 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 2)), ''),
-           RECOMMENDATION_3 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 3)), ''),
-           RECOMMENDATION_4 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 4)), ''),
-           RECOMMENDATION_5 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 5)), ''),
-           RECOMMENDATION_6 = NULLIF(TRIM(SPLIT_PART(RECOMMENDATION, '|', 6)), '')
-     WHERE RECOMMENDATION IS NOT NULL
-       AND TRIM(RECOMMENDATION) <> '';
-
-   If instead the CSV really carries six separate columns, do NOT use this. Add
-   them to the CREATE TABLE at the top of your runbook — before the load, not
-   after — and this procedure's conditional ADD COLUMN block becomes a no-op.
--------------------------------------------------------------------------------- */
 
 
 /* -----------------------------------------------------------------------------

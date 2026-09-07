@@ -103,6 +103,7 @@ import {
   autoMatchColumn,
   type TargetColumn as SharedTargetColumn,
 } from "@/lib/column-mapping"
+import { cellText } from "@/lib/upload-cell-text"
 import type { TaskRow } from "@/app/api/distribution/tasks/route"
 import { StatTile } from "@/components/kit/stat-tile"
 import { Banner } from "@/components/kit/banner"
@@ -973,6 +974,10 @@ type FilePreview = {
   rowCount: number
   headers: string[]
   sample: string[][]
+  /** Cells Excel handed over in scientific notation, expanded back to digits. */
+  repairedCells: number
+  /** Cells past Excel's 15 significant digits — the file itself is unreliable. */
+  untrustedCells: number
 }
 
 // Shared with the Task Automation SFTP wizard — see lib/column-mapping.ts.
@@ -1038,13 +1043,40 @@ async function buildFilePreview(file: File): Promise<{ preview: FilePreview; all
   })
   if (rows.length === 0) throw new Error("File contains no data rows")
 
+  // A SECOND PASS FOR THE UNDERLYING VALUES. `raw: false` above gives Excel's
+  // formatted text, which is what we want for dates and percentages but turns a
+  // 13-digit ID number into "6.31008E+12" — see lib/upload-cell-text.ts for why
+  // that was silently breaking every join on the ID. cellText() keeps the
+  // formatted text except where it is exponential. Same sheet and same defval,
+  // so the two passes are index- and key-aligned.
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: "",
+    raw: true,
+  })
+
   const headers = Object.keys(rows[0])
-  const toCell = (v: unknown) => (v === null || v === undefined ? "" : String(v))
-  const allRows = rows.map((row) => headers.map((h) => toCell(row[h])))
+  let repairedCells = 0
+  let untrustedCells = 0
+  const allRows = rows.map((row, i) =>
+    headers.map((h) => {
+      const cell = cellText(row[h], rawRows[i]?.[h])
+      if (cell.repaired) repairedCells++
+      if (cell.untrusted) untrustedCells++
+      return cell.text
+    })
+  )
   const sample = allRows.slice(0, MAX_PREVIEW_SAMPLE_ROWS)
 
   return {
-    preview: { fileName: file.name, sheetName, rowCount: rows.length, headers, sample },
+    preview: {
+      fileName: file.name,
+      sheetName,
+      rowCount: rows.length,
+      headers,
+      sample,
+      repairedCells,
+      untrustedCells,
+    },
     allRows,
   }
 }
@@ -1849,6 +1881,28 @@ function FileUploadMapper({
             {preview.headers.length === 1 ? "" : "s"}
           </p>
         </div>
+
+        {preview.untrustedCells > 0 && (
+          <Banner tone="warning">
+            <span>
+              {preview.untrustedCells} cell{preview.untrustedCells === 1 ? "" : "s"} hold more than
+              15 significant digits, which is more than Excel stores — so the file itself has
+              already rounded them and the values below cannot be trusted for those cells. Format
+              the affected column as Text in Excel, re-export, and upload again.
+            </span>
+          </Banner>
+        )}
+
+        {preview.repairedCells > 0 && (
+          <Banner tone="info">
+            <span>
+              Excel handed over {preview.repairedCells} cell
+              {preview.repairedCells === 1 ? "" : "s"} in scientific notation (e.g. an ID number as{" "}
+              <span className="font-mono">6.31008E+12</span>); they have been expanded back to full
+              digits. Check the sample below before loading.
+            </span>
+          </Banner>
+        )}
 
         <div>
           <p className="mb-2 text-sm font-medium text-foreground">Sample (first {preview.sample.length} rows)</p>

@@ -1,22 +1,21 @@
 /* =============================================================================
    MTN SAVE (campaign 11204) — grants, and size every defect before you fix one
    -----------------------------------------------------------------------------
-   RUN THIS FILE FIRST. Sections 1-6 change nothing; they measure what your
+   RUN THIS FILE FIRST. Sections 1-6a change nothing; they measure what your
    current runbook is actually doing, so that when the corrected version reports
    different numbers you know which fixes moved them and by how much. Section 7
    is the grants, and section 8 is the order of the rest of the folder.
 
-   Eleven defects were found reading the runbook line by line. Two stop it
-   compiling, seven are SILENT — they run, report success, and do nothing.
-   Section by section below, worst first. The fixes all live in the other files
-   in this folder; nothing here writes.
+   Thirteen defects, found reading the runbook line by line and then watching
+   the first real upload. Two stop it compiling; NINE ARE SILENT — they run,
+   report success, and do nothing. Section by section below, worst first. The
+   SQL fixes live in the other files in this folder; nothing here writes.
 
      §1  DNC may never have been applied            silent, and a legal problem
      §2  every labelled lead loaded into HLL twice  silent, doubles volumes
      §3  three phone enrichments never fire         silent
      §4  UDM17 means two things, breaking credit    silent, half the rows
-     §5  RECOMMENDATION_1..6 are never populated    silent, and this campaign
-                                                    is about the recommendations
+     §5  RECOMMENDATION_1..6 never populated        silent — FIXED, see below
      §6  the CTAS revokes the app's own access      silent until the next upload
      §7  two statements will not compile            loud
      §8  drop column "row" before it exists         loud on a clean run
@@ -24,12 +23,25 @@
      §10 the dialler view reads three empty columns  silent
      §11 cte2..cte5 built, joined, never read        harmless, but unfinished
      §12 the emailed file uses the WRONG layout      silent, and it is not SQL
+     §13 ID numbers loaded as '6.31008E+12'          silent, and unrepairable
 
-   Defect 12 is the one that is not a SQL fix at all, so it is not in these
-   sections: with no export layout saved for 11204, the app's Email data step
+   TWO OF THE THIRTEEN ARE NOT SQL FIXES, so they are not in the sections below:
+
+   DEFECT 12 — with no export layout saved for 11204, the app's Email data step
    emails a file built to SPOT CONNECT 1's layout, which puts a save offer in a
-   column headed "Address". It is six edits in Settings and it is written up in
+   column headed "Address". Six edits in Settings, written up in
    sp-mtn-save-dialler.sql section 6. Do it before the first email, not after.
+
+   DEFECT 13 — the first upload put the string '6.31008E+12' into ID_NUMBER for
+   every row. The upload was handing Snowflake Excel's on-screen rendering
+   rather than the underlying value, and Excel's General format switches to
+   scientific notation at 12 digits — which is why an 11-digit MSISDN survived
+   and a 13-digit ID did not. Nothing errored; the column is VARCHAR, so the
+   text was stored as given, and every join on the ID number silently matched
+   nothing: all five XDS enrichments, the credit-risk join via UDM17, and the
+   INVALID ID check. SIX OF THE THIRTEEN DIGITS SURVIVE, so no SQL can rebuild
+   them — an affected batch can only be re-uploaded. Fixed in the app
+   (lib/upload-cell-text.ts); section 6a is the check that it stayed fixed.
 
    Run as ACCOUNTADMIN. INFORMATION_SCHEMA shows only what the current role can
    see, so a worksheet run as anything narrower will under-report.
@@ -187,35 +199,24 @@ SELECT CAST(CREATEDONDATE AS DATE)              AS LOAD_DAY,
 
 
 /* -----------------------------------------------------------------------------
-   SECTION 5 — RECOMMENDATION_1..6 ARE NEVER POPULATED (defect 5)
+   SECTION 5 — RECOMMENDATION_1..6 (defect 5) — RESOLVED, VERIFY IT
 
-   THIS IS THE ONE I WOULD LOOK AT SECOND, AFTER DNC.
+   The cause was the column ORDER, not a missing split. Your CREATE TABLE
+   declares 24 columns and the seven ALTER ADDs for ESTATUS and
+   RECOMMENDATION_1..6 run AFTER the load — so the columns did not exist when
+   the file was read. The file's recommendation columns had nowhere to land, and
+   nothing afterwards ever filled them. The six comma-strip UPDATEs at the top
+   of the runbook were operating on columns empty on every row, and UDM5-8,
+   UDM14-16 and UDM18-20 reached the dialler blank.
 
-   Your CREATE TABLE declares 24 columns and the last two data columns are
-   `recommendation` (SINGULAR) and `Filename`. The seven ALTER ADDs then create
-   ESTATUS and RECOMMENDATION_1 through RECOMMENDATION_6 — AFTER the load, and
-   nothing anywhere in the runbook ever writes them. The six comma-strip UPDATEs
-   at the top run against columns that are empty on every row.
+   The file does carry the six. 01-staging-table.sql declares them up front, so
+   they load with everything else.
 
-   So UDM5, UDM6, UDM7, UDM8, UDM14, UDM15, UDM16, UDM18, UDM19 and UDM20 all
-   arrive blank, and EXTRADATA reads
-   '|RECOMMENDATION_1: |RECOMMENDATION_2: |RECOMMENDATION_3: ' on every lead.
-   On a campaign whose entire purpose is presenting a save offer, the agent
-   screen shows no offer.
-
-   There are only two possibilities and 5a tells you which:
-
-     A. The CSV really does carry six recommendation columns. Then they must be
-        in the CREATE TABLE, before the COPY INTO — as written the load would
-        reject or ignore them, which is why they are blank.
-     B. The CSV carries one `recommendation` column holding several values.
-        Then it has to be split into the six, and the commented-out SPLIT_PART
-        block in sp-mtn-save-prep.sql section 1 does exactly that — uncomment it
-        once you have confirmed the separator from 5b.
+   5a confirms it on the staging table after an upload; 5b confirms it reached
+   the HLL. On a table that has never been through the fixed path both come back
+   zero, which is the old behaviour rather than a new fault.
 -------------------------------------------------------------------------------- */
 
--- 5a. What is actually in the staging table. If every RECOMMENDATION_n is 0,
---     it is case A or B and the campaign has been shipping without offers.
 SELECT COUNT(*)                                     AS ROWS_IN_STAGING,
        COUNT_IF(RECOMMENDATION   IS NOT NULL
                 AND TRIM(RECOMMENDATION) <> '')     AS HAS_RECOMMENDATION,
@@ -227,18 +228,9 @@ SELECT COUNT(*)                                     AS ROWS_IN_STAGING,
        COUNT_IF(RECOMMENDATION_6 IS NOT NULL)       AS HAS_REC_6
   FROM DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND;
 
--- 5b. If HAS_RECOMMENDATION is high, this shows the shape so the separator can
---     be identified. Look for '|', ';' or ',' between offers.
-SELECT LEFT(RECOMMENDATION, 200) AS SAMPLE,
-       COUNT(*)                  AS ROWS_LIKE_THIS
-  FROM DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND
- WHERE RECOMMENDATION IS NOT NULL AND TRIM(RECOMMENDATION) <> ''
- GROUP BY 1
- ORDER BY ROWS_LIKE_THIS DESC
- LIMIT 25;
-
--- 5c. And what has been reaching the dialler. Every column here at zero
---     confirms the agent screen has been empty.
+-- 5b. And what reached the dialler. Every column here at zero on a load run
+--     through the fixed path means the six are not being mapped — check the
+--     upload's mapping step, which lists each file header and its target.
 SELECT CAST(CREATEDONDATE AS DATE)         AS LOAD_DAY,
        COUNT(*)                            AS ROWS_LOADED,
        COUNT_IF(UDM5  IS NOT NULL AND TRIM(UDM5)  <> '') AS UDM5_SET,
@@ -249,6 +241,17 @@ SELECT CAST(CREATEDONDATE AS DATE)         AS LOAD_DAY,
  GROUP BY 1
  ORDER BY LOAD_DAY DESC
  LIMIT 10;
+
+/* IF HAS_RECOMMENDATION IS ALSO HIGH, the file carries the singular column as
+   well as the six and nothing is discarding it — 01-staging-table.sql keeps it
+   for exactly that reason. Nothing reads it downstream; worth knowing whether
+   it duplicates RECOMMENDATION_1 or holds something else:
+
+     SELECT LEFT(RECOMMENDATION, 120)   AS SINGULAR,
+            LEFT(RECOMMENDATION_1, 120) AS FIRST_NUMBERED,
+            COUNT(*)                    AS ROWS_LIKE_THIS
+       FROM DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND
+      GROUP BY 1, 2 ORDER BY ROWS_LIKE_THIS DESC LIMIT 20; */
 
 
 /* -----------------------------------------------------------------------------
@@ -272,6 +275,47 @@ SELECT CAST(CREATEDONDATE AS DATE)         AS LOAD_DAY,
 -------------------------------------------------------------------------------- */
 
 SHOW GRANTS ON TABLE DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND;
+
+
+/* -----------------------------------------------------------------------------
+   SECTION 6a — DID THE ID NUMBERS SURVIVE THE UPLOAD? (defect 13)
+
+   RUN THIS IMMEDIATELY AFTER EVERY UPLOAD, before the prep procedure. It is the
+   one check whose answer cannot be fixed later: a mangled ID keeps 6 of its 13
+   digits, so an affected batch has to be re-uploaded from the file, not
+   repaired in place.
+
+   STILL_MANGLED must be 0. Anything else means the app build doing the upload
+   does not have the parser fix — stop and re-upload once it does. The preview
+   screen says the same thing earlier and louder: it raises a banner counting
+   the cells it expanded out of scientific notation.
+-------------------------------------------------------------------------------- */
+
+SELECT COUNT(*)                                    AS ROWS_LOADED,
+       COUNT_IF(ID_NUMBER ILIKE '%E+%')            AS STILL_MANGLED,
+       COUNT_IF(LEN(ID_NUMBER) = 13)               AS LOOKS_LIKE_AN_ID,
+       COUNT_IF(MSISDN    ILIKE '%E+%')            AS MSISDN_MANGLED,
+       COUNT_IF(ACCOUNT_NO ILIKE '%E+%')           AS ACCOUNT_NO_MANGLED
+  FROM DATAWAREHOUSE.DISTRIBUTION.TM_MU2_MTNSAVESOUTBOUND;
+
+-- 6a-ii. The same question of the HLL, which is where it actually costs money:
+--        UDM17 is the credit-risk join key. Not scoped to today — the question
+--        is whether any historical batch is affected.
+SELECT CAST(CREATEDONDATE AS DATE)                 AS LOAD_DAY,
+       COUNT(*)                                    AS ROWS_LOADED,
+       COUNT_IF(IDNUMBER ILIKE '%E+%')             AS IDNUMBER_MANGLED,
+       COUNT_IF(UDM17    ILIKE '%E+%')             AS UDM17_MANGLED
+  FROM DATAWAREHOUSE.DISTRIBUTION_DATA_APPLICATION.TM_HLL_HISTORYLEADSLOADED
+ WHERE CAMPAIGNID = 11204
+ GROUP BY 1
+HAVING COUNT_IF(IDNUMBER ILIKE '%E+%') > 0
+    OR COUNT_IF(UDM17 ILIKE '%E+%') > 0
+ ORDER BY LOAD_DAY DESC;
+
+/* AN EMPTY RESULT FROM 6a-ii IS THE GOOD ONE — no load day has a mangled ID.
+   Any row it returns names a batch whose IDs are unrecoverable: the leads were
+   loaded, dialled against no credit score and no enriched numbers, and the only
+   remedy is to re-upload that file and re-sync. */
 
 
 /* -----------------------------------------------------------------------------
@@ -410,6 +454,7 @@ SELECT 'view', TABLE_NAME, NULL
 
    8c. THEN, IN THIS ORDER:
 
+     0. 01-staging-table.sql          section 1 — the upload target table
      1. sp-mtn-save-prep.sql          section 1 — the cleansing procedure
      2. sp-mtn-save-hll-load.sql      section 1 — the load view
      3. sp-mtn-save-post-load.sql     section 1 — DNC and credit score
@@ -420,8 +465,10 @@ SELECT 'view', TABLE_NAME, NULL
      7. type the config into Settings (sp-mtn-save-hll-load.sql section 4)
      8. FIX THE EXPORT LAYOUT — six edits, sp-mtn-save-dialler.sql section 6.
         Defect 12. Nothing above catches this one and the file goes out wrong.
-     9. upload one file and run the steps one at a time from Manual → step 3,
-        reading each step's row count against the sections above
+     9. upload one file, then run SECTION 6a before anything else — defect 13
+        is the only one that cannot be fixed after the fact
+    10. run the steps one at a time from Manual → step 3, reading each step's
+        row count against the sections above
 
    99-rank-on-request.sql is NOT part of the automated run. It is the MOD-22
    override, for the days you are asked to rank. Run it by hand, after the
