@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { readCampaignSetting, asList } from "@/lib/config-lookup"
+import { buildAllowlistCheckSql } from "@/lib/hll-proc-allowlist"
 import {
   TABLE as PROC_TABLE,
   SF_OPTS as PROC_SF_OPTS,
@@ -14,9 +15,23 @@ export const runtime = "nodejs"
 export const maxDuration = 120
 
 // Run the "update HLL" procedure for a campaign: CALL <proc>(<campaignId>).
-// The proc is either the campaign's assigned UPDATE_HLL_PROCEDURE or an
-// override passed in the body — but either way it MUST exist in the
-// TSK_HLL_UPDATE_PROCEDURES master list, so we never CALL an arbitrary proc.
+// The proc is either the campaign's configured procedure or an override passed
+// in the body.
+//
+// THE TSK_HLL_UPDATE_PROCEDURES ALLOWLIST APPLIES TO THE OVERRIDE ONLY. An
+// earlier version of this comment claimed "either way", and enforcing that is
+// what rejected a campaign's own configured procedure from this screen while
+// step 4 ran the identical procedure without a murmur. The two paths now agree:
+//
+//   configured procedure  → validated by RUN_PROC_IDENT when the config was
+//                           saved, and run by buildStepSql
+//                           (lib/distribution-steps.ts) with no allowlist. This
+//                           route treats it the same way.
+//   override              → arrives as free text from the browser, so it is the
+//                           one value the allowlist is actually guarding.
+//
+// QUALIFIED_PROC still runs on BOTH, and it is what keeps anything unsafe away
+// from CALL. See lib/hll-proc-allowlist.ts.
 export async function POST(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "distribution")
   if (guard instanceof NextResponse) return guard
@@ -79,24 +94,32 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Whitelist check — the proc must be in the master list.
-  try {
-    const allowed = await executeSnowflakeQuery<{ CNT: number | string }>(
-      `SELECT COUNT(1) AS CNT FROM ${PROC_TABLE} WHERE PROC_NAME = '${escapeSqlString(proc)}'`,
-      PROC_SF_OPTS
-    )
-    const cnt = allowed[0]?.CNT
-    const n = typeof cnt === "number" ? cnt : parseInt(String(cnt ?? "0"), 10) || 0
-    if (n === 0) {
-      return NextResponse.json(
-        { error: `Procedure "${proc}" is not in the approved list (TSK_HLL_UPDATE_PROCEDURES).` },
-        { status: 400 }
+  // Allowlist check — the override only. A configured procedure was vetted when
+  // the config was saved and is run unchecked by step 4; see the note above.
+  if (override) {
+    try {
+      const allowed = await executeSnowflakeQuery<{ CNT: number | string }>(
+        buildAllowlistCheckSql(PROC_TABLE, proc, escapeSqlString),
+        PROC_SF_OPTS
       )
+      const cnt = allowed[0]?.CNT
+      const n = typeof cnt === "number" ? cnt : parseInt(String(cnt ?? "0"), 10) || 0
+      if (n === 0) {
+        return NextResponse.json(
+          {
+            error:
+              `Override "${proc}" is not in the approved list (TSK_HLL_UPDATE_PROCEDURES). ` +
+              `Pick one from the dropdown, or clear the override to run the campaign's ` +
+              `configured procedure.`,
+          },
+          { status: 400 }
+        )
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error("[/api/leads/update-hll] allowlist check error:", message)
+      return NextResponse.json({ error: `Failed to verify procedure: ${message}` }, { status: 500 })
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error("[/api/leads/update-hll] whitelist check error:", message)
-    return NextResponse.json({ error: `Failed to verify procedure: ${message}` }, { status: 500 })
   }
 
   const [database, schema] = proc.split("(")[0].split(".")

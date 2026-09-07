@@ -319,6 +319,13 @@ SELECT IFNULL(ESTATUS, '(eligible — no label)')                 AS ESTATUS,
       matters. SP_MTN_SAVE_POST_LOAD writes SCORE and SCOREGROUP; SP_AUTORANK
       reads them to set UDM30. Put AUTORANK first and it ranks on nulls.
 
+      AND RUN THEM FROM THE CAMPAIGN'S OWN STEPS, NOT FROM TOOLS → UPDATE HLL.
+      Manual → step 4 lists all four as separate steps, "Update HLL — <name>",
+      in config order. The Tools tab runs ONE procedure — the first of the list
+      — so used on its own it runs the post-load procedure and silently skips
+      the opt-in update, the ranking and the phone scoring. Only the steps
+      honour the ordering above. See scripts/mtn-save/02-hll-procedure-allowlist.sql.
+
    2. LEAD EXPIRY 30, NOT THE DEFAULT 45. It drives BOTH the LEADEXPIRY column
       and the {expiry} half of the batch name, so 45 here would change the batch
       name as well as the expiry — and the batch name is what the emailed file
