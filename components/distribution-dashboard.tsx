@@ -8056,9 +8056,21 @@ function BatchCheckContent() {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch("/api/distribution/campaigns", { cache: "no-store" })
-        const d = await res.json()
+        // /api/campaigns, which is what the other six pickers in this file use.
+        // There is no /api/distribution/campaigns collection route — only
+        // /api/distribution/campaigns/[id]/… — so that path 404s to an HTML
+        // page and res.json() fails with "Unexpected token '<'".
+        const res = await fetch("/api/campaigns", { cache: "no-store" })
+        const text = await res.text()
         if (cancelled) return
+        let d: { campaigns?: Campaign[]; error?: string }
+        try {
+          d = JSON.parse(text)
+        } catch {
+          // Say what actually happened. A JSON parse error names the '<' and
+          // sends you looking at the payload instead of at the status code.
+          throw new Error(`Campaigns returned ${res.status} (not JSON): ${text.slice(0, 120)}`)
+        }
         if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
         setCampaigns(d.campaigns ?? [])
       } catch (e) {

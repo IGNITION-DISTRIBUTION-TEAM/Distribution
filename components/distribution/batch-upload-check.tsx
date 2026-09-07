@@ -67,6 +67,22 @@ function monthWindow(): { from: string; to: string } {
   return { from: `${y}-${pad(m + 1)}-01`, to: `${y}-${pad(m + 1)}-${pad(last)}` }
 }
 
+/**
+ * Read a response as JSON, but say something useful when it is not.
+ *
+ * A wrong path 404s to an HTML page, and `res.json()` then throws
+ * "Unexpected token '<'" — which sends you looking at the payload instead of
+ * at the status code. Same guard EmailExportStep uses.
+ */
+async function readJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch {
+    throw new Error(`Server returned ${res.status} (not JSON): ${text.slice(0, 120)}`)
+  }
+}
+
 export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
   // Lazy initialisers rather than a memo: this only seeds the first render.
   const [from, setFrom] = useState(() => monthWindow().from)
@@ -99,10 +115,10 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
           `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
         { cache: "no-store" }
       )
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
-      setRows(d.batches ?? [])
-      setFreshness(d.freshness ?? { hllLatest: null, ssLatest: null })
+      const d = await readJson(res)
+      if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
+      setRows((d.batches as Row[]) ?? [])
+      setFreshness((d.freshness as typeof freshness) ?? { hllLatest: null, ssLatest: null })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setRows(null)
@@ -135,8 +151,8 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ campaignId, from, to, batchNames: [...picked] }),
       })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+      const d = await readJson(res)
+      if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
       setDryRun({ missing: Number(d.missing ?? 0) })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -155,11 +171,11 @@ export function BatchUploadCheck({ campaignId }: { campaignId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ campaignId, from, to, batchNames: [...picked], confirm: "PUSH" }),
       })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
-      setSteps(d.steps ?? [])
+      const d = await readJson(res)
+      if (!res.ok) throw new Error(String(d.error ?? `HTTP ${res.status}`))
+      setSteps((d.steps as PushStep[]) ?? [])
       setNote(
-        d.pushed > 0
+        Number(d.pushed ?? 0) > 0
           ? { tone: "success", text: `Sent ${Number(d.pushed).toLocaleString()} lead(s) to Upload.TempUpload.` }
           : { tone: "info", text: "Nothing was sent — nothing was missing by the time it ran." }
       )
