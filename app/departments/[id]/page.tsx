@@ -14,6 +14,7 @@ import { SpotReportDashboard } from "@/components/spot-report-dashboard"
 import { ReportingDashboard } from "@/components/reporting-dashboard"
 import { TaskAutomationDashboard } from "@/components/task-automation-dashboard"
 import { CalendarDashboard } from "@/components/calendar-dashboard"
+import { PaimentDashboard } from "@/components/paiment-dashboard"
 import { Button } from "@/components/ui/button"
 import { isDepartmentId } from "@/lib/departments"
 
@@ -74,6 +75,8 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
       return <TaskAutomationDashboard onBack={goBack} />
     case "calendar":
       return <CalendarDashboard onBack={goBack} />
+    case "paiment":
+      return <PaimentDashboard onBack={goBack} />
     default:
       // Registered but has no dashboard yet (e.g. EDC "coming soon").
       return (

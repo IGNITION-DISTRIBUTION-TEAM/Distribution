@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "npx tsx scripts/task-automation/codegen-tests.ts && npx tsx scripts/task-automation/cron-schedule-tests.ts && npx tsx scripts/task-automation/endpoint-sql-tests.ts && npx tsx scripts/task-automation/restore-tests.ts && npx tsx scripts/spot/upload-sql-tests.ts && npx tsx scripts/calendar/calendar-tests.ts && npx tsx scripts/distribution/export-sql-tests.ts && npx tsx scripts/distribution/batch-check-sql-tests.ts && npx tsx scripts/distribution/upload-cell-tests.ts && npx tsx scripts/distribution/hll-allowlist-tests.ts && node scripts/check-ui-consistency.mjs"
+    "test": "npx tsx scripts/task-automation/codegen-tests.ts && npx tsx scripts/task-automation/cron-schedule-tests.ts && npx tsx scripts/task-automation/endpoint-sql-tests.ts && npx tsx scripts/task-automation/restore-tests.ts && npx tsx scripts/spot/upload-sql-tests.ts && npx tsx scripts/calendar/calendar-tests.ts && npx tsx scripts/distribution/export-sql-tests.ts && npx tsx scripts/distribution/batch-check-sql-tests.ts && npx tsx scripts/distribution/upload-cell-tests.ts && npx tsx scripts/distribution/hll-allowlist-tests.ts && npx tsx scripts/paiment/mapping-sql-tests.ts && node scripts/check-ui-consistency.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

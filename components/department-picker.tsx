@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { BarChart3, Briefcase, CalendarDays, Cpu, LineChart, LogOut, PhoneCall, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
+import { BarChart3, Briefcase, CalendarDays, Cpu, LineChart, LogOut, PhoneCall, ReceiptText, Settings as SettingsIcon, Target, Ticket, Truck, Workflow } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { DepartmentId } from "@/lib/departments"
 
@@ -89,6 +89,16 @@ const DEPARTMENTS: Department[] = [
     label: "Calendar",
     description: "Shared team calendar. Dated tasks with email reminders.",
     icon: CalendarDays,
+    enabled: true,
+  },
+  {
+    id: "paiment",
+    // Billing's own screen. Named for the team that owns it rather than for the
+    // data, because the mapping it maintains is one of several things they will
+    // want here and "Product mapping" would age badly as a department name.
+    label: "Paiment",
+    description: "Billing mappings. Product channel and brand overrides for reporting.",
+    icon: ReceiptText,
     enabled: true,
   },
 ]
