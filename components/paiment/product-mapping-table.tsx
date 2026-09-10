@@ -218,6 +218,7 @@ export function ProductMappingTable() {
   const [error, setError] = useState<string | null>(null)
   const [duplicateKeys, setDuplicateKeys] = useState(0)
   const [duplicateExcess, setDuplicateExcess] = useState(0)
+  const [duplicateConflicting, setDuplicateConflicting] = useState(0)
   const [duplicateExamples, setDuplicateExamples] = useState<string[]>([])
   const [driftCount, setDriftCount] = useState(0)
 
@@ -250,6 +251,7 @@ export function ProductMappingTable() {
       setTotal(count)
       setDuplicateKeys(Number(data.duplicateKeys ?? 0))
       setDuplicateExcess(Number(data.duplicateExcess ?? 0))
+      setDuplicateConflicting(Number(data.duplicateConflicting ?? 0))
       setDuplicateExamples((data.duplicateExamples as string[]) ?? [])
       setDriftCount(Number(data.driftCount ?? 0))
     } catch (e) {
@@ -414,24 +416,42 @@ export function ProductMappingTable() {
       {error && <Banner tone="error"><span>{error}</span></Banner>}
 
       {duplicateKeys > 0 && (
-        <Banner tone="error">
+        <Banner tone={duplicateConflicting > 0 ? "error" : "warning"}>
           <span>
             <strong>
               {duplicateExcess} surplus row{duplicateExcess === 1 ? "" : "s"} across{" "}
               {duplicateKeys} repeated product name{duplicateKeys === 1 ? "" : "s"}.
             </strong>{" "}
-            The billing history joins to this mapping on the product name alone, so every
-            surplus row duplicates that product&apos;s billing rows and overstates its revenue
-            today. Worst offenders:{" "}
-            <span className="font-mono text-xs">{duplicateExamples.join(", ")}</span>
-            {duplicateKeys > duplicateExamples.length
-              ? ` and ${duplicateKeys - duplicateExamples.length} more names`
-              : ""}
-            . Run{" "}
+            {duplicateConflicting > 0 ? (
+              <>
+                <strong>{duplicateConflicting}</strong> of them disagree about channel, brand or
+                group, so something has to choose — those need a decision here. The rest are
+                exact copies, which the distinct view collapses safely.{" "}
+              </>
+            ) : (
+              <>
+                All of them are exact copies, so nothing needs deciding — the distinct view
+                collapses them safely.{" "}
+              </>
+            )}
+            Until the billing view joins to
+            <span className="font-mono text-xs"> VW_BILLINGDATA_PRODUCTGROUPS_DISTINCT</span>,
+            each surplus row multiplies that product&apos;s billing rows.
+            {duplicateExamples.length > 0 && (
+              <>
+                {" "}
+                Worst first:{" "}
+                <span className="font-mono text-xs">{duplicateExamples.join(", ")}</span>
+                {duplicateKeys > duplicateExamples.length
+                  ? ` and ${duplicateKeys - duplicateExamples.length} more names`
+                  : ""}
+                .
+              </>
+            )}{" "}
             <span className="font-mono text-xs">
-              scripts/paiment/00-resolve-and-diagnose.sql
+              scripts/paiment/03-distinct-mapping-view.sql
             </span>{" "}
-            section 4d for the full list.
+            section 1b lists every conflict.
           </span>
         </Banner>
       )}

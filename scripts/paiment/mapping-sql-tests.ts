@@ -193,8 +193,18 @@ console.log("\nreads")
     dup.includes("COUNT(*) OVER ()") && dup.includes("SUM(ROWS_FOUND) OVER ()"), dup)
   check("only one GROUP BY — the totals do not cost a second pass",
     (dup.match(/GROUP BY/g) || []).length === 1, dup)
-  check("worst offenders first, so the examples are the useful ones",
-    dup.includes("ORDER BY ROWS_FOUND DESC"), dup)
+  // The split that decides what needs a person: exact copies collapse safely,
+  // disagreements do not.
+  check("it counts how many duplicates actually disagree",
+    dup.includes("SUM(IFF(DISTINCT_SHAPES > 1, 1, 0)) OVER ()"), dup)
+  check("shape is the four mapped columns together",
+    dup.includes("COUNT(DISTINCT IFNULL("), dup)
+  // NULL || anything is NULL, which would collapse every partly-empty row into
+  // one shape and hide real disagreements.
+  check("nulls become a sentinel so concatenation cannot swallow a difference",
+    (dup.match(/IFNULL\(/g) || []).length >= 4, dup)
+  check("conflicts sort first, so the examples are the ones needing a decision",
+    dup.includes("ORDER BY DISTINCT_SHAPES DESC, ROWS_FOUND DESC"), dup)
 }
 
 console.log("\naudit and drift")

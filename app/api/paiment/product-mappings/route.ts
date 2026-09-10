@@ -41,8 +41,11 @@ export const runtime = "nodejs"
 type DuplicateRow = {
   PRODUCT_KEY: string
   ROWS_FOUND: number | string
+  /** 1 = the duplicate rows are exact copies; >1 = they disagree. */
+  DISTINCT_SHAPES: number | string
   DUPLICATE_KEYS: number | string
   DUPLICATE_ROWS: number | string
+  CONFLICTING_KEYS: number | string
 }
 
 type Row = {
@@ -138,8 +141,11 @@ export async function GET(request: NextRequest) {
       limit,
       offset,
       duplicateKeys,
-      // The surplus — the number of extra billing rows the fan-out produces.
+      // The surplus mapping rows. Each one is a COPY of every sale that
+      // product has, not one extra billing row.
       duplicateExcess: Math.max(0, duplicateRows - duplicateKeys),
+      // The half that needs a person: rows for one product that disagree.
+      duplicateConflicting: Number(duplicates[0]?.CONFLICTING_KEYS ?? 0),
       duplicateExamples: duplicates.map((d) => String(d.PRODUCT_KEY)),
       driftCount: drift.length,
       table: PRODUCT_MAPPING.table,

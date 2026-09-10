@@ -308,41 +308,64 @@ export function buildDelete(productName: string): string {
 export const DUPLICATE_EXAMPLES = 5
 
 /**
- * Product names that appear more than once under the join's own comparison.
+ * Product names that appear more than once under the join's own comparison,
+ * split by whether the duplicate rows AGREE with each other.
  *
- * Not a tidiness check. Each extra row multiplies that product's billing rows
- * in the full-history table, so this is a revenue-accuracy check and the screen
- * surfaces it rather than burying it.
+ * Not a tidiness check. The billing fact table LEFT JOINs to this mapping on
+ * the product name alone, so a surplus row does not merely confuse the screen —
+ * it multiplies that product's billing rows. Not by one row: by one COPY of
+ * every sale that product has ever had.
  *
- * TOP-N PLUS TOTALS, FROM ONE PASS. This runs on every page load, and the live
- * table has hundreds of duplicated names — shipping all of them to a browser
- * that renders a count was most of the cost of opening the screen. The window
- * functions run over the already-grouped set, so the totals come free rather
- * than from a second GROUP BY:
+ * THE SPLIT IS THE POINT, because the two halves need different things:
  *
- *   DUPLICATE_KEYS  how many distinct names repeat
- *   DUPLICATE_ROWS  how many rows those names occupy in total
+ *   DISTINCT_SHAPES = 1   exact copies. A distinct view collapses them safely
+ *                         and nobody has to decide anything.
+ *   DISTINCT_SHAPES > 1   the rows disagree about group, VAS flag or an
+ *                         override. Something has to PICK, and picking is a
+ *                         business decision. These are the ones worth a
+ *                         person's afternoon.
  *
- * DUPLICATE_ROWS - DUPLICATE_KEYS is the EXCESS: the number of surplus rows,
- * and therefore the number of extra billing rows the fan-out is producing. That
- * is the figure that describes the damage, so it is the one the banner leads
- * with — "795 names repeat" is a smaller-sounding number for the same problem.
+ * TOP-N PLUS TOTALS, FROM ONE PASS. This runs on every page load and the live
+ * table has hundreds of duplicated names — returning all of them to render a
+ * count was most of the cost of opening the screen. The window functions run
+ * over the already-grouped set, so the totals cost nothing extra:
  *
- * ORDER BY before LIMIT, so the examples are the worst offenders rather than
- * whichever rows came back first.
+ *   DUPLICATE_KEYS     how many distinct names repeat
+ *   DUPLICATE_ROWS     how many rows those names occupy in total
+ *   CONFLICTING_KEYS   how many of them disagree
+ *
+ * DUPLICATE_ROWS - DUPLICATE_KEYS is the SURPLUS: the extra rows, and so the
+ * multiplier the join is applying.
+ *
+ * CONFLICTS SORT FIRST, so the handful of examples the banner shows are names
+ * somebody has to decide rather than whichever exact copies happened to sort
+ * first. That is the difference between a banner that prompts an action and one
+ * people learn to scroll past.
  */
 export function buildDuplicateCheck(): string {
   const c = PRODUCT_MAPPING.cols
+  // The four mapped columns as one string, so COUNT(DISTINCT) over it answers
+  // "do these rows say the same thing?". IFNULL to a sentinel because
+  // NULL || anything is NULL, which would collapse every partly-empty row into
+  // one shape and hide real disagreements.
+  const shape =
+    `IFNULL(${c.group}, '~') || '|' || IFNULL(${c.vasFlag}, '~') || '|' || ` +
+    `IFNULL(${c.channelOverride}, '~') || '|' || IFNULL(${c.brandOverride}, '~')`
   return (
     `WITH D AS (\n` +
-    `  SELECT TRIM(UPPER(${c.name})) AS PRODUCT_KEY, COUNT(*) AS ROWS_FOUND\n` +
+    `  SELECT TRIM(UPPER(${c.name})) AS PRODUCT_KEY,\n` +
+    `         COUNT(*) AS ROWS_FOUND,\n` +
+    `         COUNT(DISTINCT ${shape}) AS DISTINCT_SHAPES\n` +
     `    FROM ${PRODUCT_MAPPING.table}\n` +
     `   GROUP BY 1 HAVING COUNT(*) > 1\n)\n` +
     `SELECT PRODUCT_KEY,\n` +
     `       ROWS_FOUND,\n` +
-    `       COUNT(*) OVER ()        AS DUPLICATE_KEYS,\n` +
-    `       SUM(ROWS_FOUND) OVER () AS DUPLICATE_ROWS\n` +
-    `  FROM D\n ORDER BY ROWS_FOUND DESC, PRODUCT_KEY\n LIMIT ${DUPLICATE_EXAMPLES}`
+    `       DISTINCT_SHAPES,\n` +
+    `       COUNT(*) OVER ()                            AS DUPLICATE_KEYS,\n` +
+    `       SUM(ROWS_FOUND) OVER ()                     AS DUPLICATE_ROWS,\n` +
+    `       SUM(IFF(DISTINCT_SHAPES > 1, 1, 0)) OVER () AS CONFLICTING_KEYS\n` +
+    `  FROM D\n ORDER BY DISTINCT_SHAPES DESC, ROWS_FOUND DESC, PRODUCT_KEY\n` +
+    ` LIMIT ${DUPLICATE_EXAMPLES}`
   )
 }
 
