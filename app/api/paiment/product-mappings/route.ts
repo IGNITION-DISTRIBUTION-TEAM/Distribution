@@ -38,6 +38,13 @@ export const runtime = "nodejs"
  * the screen can say something is wrong before anyone asks.
  */
 
+type DuplicateRow = {
+  PRODUCT_KEY: string
+  ROWS_FOUND: number | string
+  DUPLICATE_KEYS: number | string
+  DUPLICATE_ROWS: number | string
+}
+
 type Row = {
   PRODUCT_NAME: string
   PRODUCT_GROUP: string | null
@@ -57,19 +64,20 @@ const toMapping = (r: Row): ProductMapping => ({
 /**
  * Turn Snowflake's "I cannot see that object" into something actionable.
  *
- * The BI table name in lib/billing-mappings.ts is a documented assumption until
- * someone runs the resolve script, so this is the most likely first failure and
- * the raw Snowflake text would send the reader looking in the wrong place.
+ * Snowflake says the same thing whether an object is absent or merely
+ * ungranted, so the raw text sends the reader looking in the wrong place. Now
+ * that the table name is confirmed, a missing grant is much the likelier of
+ * the two — so that is what the message leads with.
  */
 function explain(message: string): string {
   if (/does not exist or not authorized|Object '[^']+' does not exist/i.test(message)) {
     return (
-      `${message}\n\nThe mapping table is configured as ${PRODUCT_MAPPING.table}. ` +
-      `That name is an assumption until it is confirmed — run ` +
-      `scripts/paiment/00-resolve-and-diagnose.sql section 1 to resolve the real table ` +
-      `behind ${PRODUCT_MAPPING.view}, then correct PRODUCT_MAPPING in ` +
-      `lib/billing-mappings.ts. If the name is right, the app's role is missing grants: ` +
-      `run scripts/paiment/01-grants.sql.`
+      `${message}\n\nThe mapping table is ${PRODUCT_MAPPING.table}. Snowflake reports ` +
+      `"not authorized" and "does not exist" identically, and the likeliest cause is a ` +
+      `missing grant: run scripts/paiment/01-grants.sql. If the app still cannot see it, ` +
+      `BI may have renamed the object — scripts/paiment/00-resolve-and-diagnose.sql ` +
+      `section 1 re-resolves the table behind ${PRODUCT_MAPPING.view}, and PRODUCT_MAPPING ` +
+      `in lib/billing-mappings.ts is the only place to change.`
     )
   }
   return message
@@ -106,10 +114,10 @@ export async function GET(request: NextRequest) {
 
     // Health checks are best-effort: a screen that will not load because a
     // diagnostic failed is worse than a screen without its warnings.
-    let duplicates: { PRODUCT_KEY: string; ROWS_FOUND: number }[] = []
+    let duplicates: DuplicateRow[] = []
     let drift: { PRODUCT_NAME: string }[] = []
     try {
-      duplicates = await executeSnowflakeQuery(buildDuplicateCheck(), SF_OPTS)
+      duplicates = await executeSnowflakeQuery<DuplicateRow>(buildDuplicateCheck(), SF_OPTS)
     } catch (e) {
       console.error("[/api/paiment/product-mappings] duplicate check failed:", e)
     }
@@ -119,12 +127,20 @@ export async function GET(request: NextRequest) {
       // The audit table may not exist yet on a first run. Not an error.
     }
 
+    // The query returns at most DUPLICATE_EXAMPLES rows; the two totals ride
+    // on every one of them via window functions, so read them off the first.
+    const duplicateKeys = Number(duplicates[0]?.DUPLICATE_KEYS ?? 0)
+    const duplicateRows = Number(duplicates[0]?.DUPLICATE_ROWS ?? 0)
+
     return NextResponse.json({
       rows: rows.map(toMapping),
       total,
       limit,
       offset,
-      duplicates,
+      duplicateKeys,
+      // The surplus — the number of extra billing rows the fan-out produces.
+      duplicateExcess: Math.max(0, duplicateRows - duplicateKeys),
+      duplicateExamples: duplicates.map((d) => String(d.PRODUCT_KEY)),
       driftCount: drift.length,
       table: PRODUCT_MAPPING.table,
     })

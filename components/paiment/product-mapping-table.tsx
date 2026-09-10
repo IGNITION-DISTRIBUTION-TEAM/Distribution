@@ -24,7 +24,18 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertTriangle, Plus, Search, Trash2, Upload, X } from "lucide-react"
+import {
+  AlertTriangle,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Banner } from "@/components/kit/banner"
 import { SectionHeading } from "@/components/kit/heading"
@@ -33,6 +44,13 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -40,6 +58,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { pageInfo, type PageInfo } from "@/lib/pagination"
 
 type Mapping = {
   productName: string
@@ -81,16 +100,125 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
-const PAGE = 100
+/**
+ * 50 by default rather than 100. The live mapping runs to thousands of rows and
+ * a hundred of them is a long scroll before you reach anything — which is what
+ * made the old bottom-only pager unusable.
+ */
+const PAGE_SIZES = [25, 50, 100, 200] as const
+const DEFAULT_PAGE_SIZE = 50
+
+/**
+ * Rendered ABOVE and below the table.
+ *
+ * Above is the one that matters: with a page of rows between you and the
+ * controls, changing page meant scrolling past everything you had just read.
+ * Below stays because that is where your eye is when you finish a page.
+ *
+ * First and Last are here because Next-repeatedly is not navigation when the
+ * table runs to thousands of rows. The arithmetic is all in lib/pagination.ts
+ * so the boundaries are tested rather than eyeballed.
+ */
+function Pager({
+  info,
+  total,
+  pageSize,
+  onOffset,
+  onPageSize,
+  showSize,
+}: {
+  info: PageInfo
+  total: number
+  pageSize: number
+  onOffset: (offset: number) => void
+  onPageSize: (size: number) => void
+  /** Only the top pager carries the size selector; two would just disagree. */
+  showSize?: boolean
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-muted-foreground">
+          {total === 0 ? "No products" : `Showing ${info.from}–${info.to} of ${total}`}
+        </span>
+        {showSize && (
+          <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
+            <SelectTrigger className="h-8 w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n} a page
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      {info.pages > 1 && (
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label="First page"
+            disabled={!info.canPrev}
+            onClick={() => onOffset(0)}
+          >
+            <ChevronFirst className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!info.canPrev}
+            onClick={() => onOffset(info.prevOffset)}
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {info.page} of {info.pages}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!info.canNext}
+            onClick={() => onOffset(info.nextOffset)}
+          >
+            Next
+            <ChevronRight className="ml-1 h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label="Last page"
+            disabled={!info.canNext}
+            onClick={() => onOffset(info.lastOffset)}
+          >
+            <ChevronLast className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function ProductMappingTable() {
   const [rows, setRows] = useState<Mapping[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [duplicates, setDuplicates] = useState<{ PRODUCT_KEY: string; ROWS_FOUND: number }[]>([])
+  const [duplicateKeys, setDuplicateKeys] = useState(0)
+  const [duplicateExcess, setDuplicateExcess] = useState(0)
+  const [duplicateExamples, setDuplicateExamples] = useState<string[]>([])
   const [driftCount, setDriftCount] = useState(0)
 
   const [editing, setEditing] = useState<Mapping | null>(null)
@@ -101,17 +229,28 @@ export function ProductMappingTable() {
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async (q: string, off: number) => {
+  const load = useCallback(async (q: string, off: number, size: number) => {
     setLoading(true)
     setError(null)
     try {
-      const params = new URLSearchParams({ search: q, limit: String(PAGE), offset: String(off) })
+      const params = new URLSearchParams({ search: q, limit: String(size), offset: String(off) })
       const res = await fetch(`/api/paiment/product-mappings?${params}`, { cache: "no-store" })
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
-      setRows((data.rows as Mapping[]) ?? [])
-      setTotal(Number(data.total ?? 0))
-      setDuplicates((data.duplicates as { PRODUCT_KEY: string; ROWS_FOUND: number }[]) ?? [])
+      const got = (data.rows as Mapping[]) ?? []
+      const count = Number(data.total ?? 0)
+      // Deleting the last row of the last page leaves the offset pointing past
+      // the end: the server returns nothing while the pager, which clamps,
+      // cheerfully reports a range. Snap back rather than show an empty page.
+      if (got.length === 0 && count > 0 && off > 0) {
+        setOffset(pageInfo(count, size, off).lastOffset)
+        return
+      }
+      setRows(got)
+      setTotal(count)
+      setDuplicateKeys(Number(data.duplicateKeys ?? 0))
+      setDuplicateExcess(Number(data.duplicateExcess ?? 0))
+      setDuplicateExamples((data.duplicateExamples as string[]) ?? [])
       setDriftCount(Number(data.driftCount ?? 0))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -123,9 +262,11 @@ export function ProductMappingTable() {
 
   // Debounced so typing in the search box does not fire a query per keystroke.
   useEffect(() => {
-    const t = setTimeout(() => void load(search, offset), 250)
+    const t = setTimeout(() => void load(search, offset, pageSize), 250)
     return () => clearTimeout(t)
-  }, [search, offset, load])
+  }, [search, offset, pageSize, load])
+
+  const pager = pageInfo(total, pageSize, offset)
 
   const save = async () => {
     if (!editing) return
@@ -140,7 +281,7 @@ export function ProductMappingTable() {
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       toast.success(data.created ? "Mapping added" : "Mapping updated")
       setEditing(null)
-      await load(search, offset)
+      await load(search, offset, pageSize)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -162,7 +303,7 @@ export function ProductMappingTable() {
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       toast.success("Mapping removed")
-      await load(search, offset)
+      await load(search, offset, pageSize)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
@@ -249,7 +390,7 @@ export function ProductMappingTable() {
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       toast.success(`${data.applied} mapping(s) written`)
       setPreview(null)
-      await load(search, offset)
+      await load(search, offset, pageSize)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -272,16 +413,25 @@ export function ProductMappingTable() {
     <div className="flex flex-col gap-4">
       {error && <Banner tone="error"><span>{error}</span></Banner>}
 
-      {duplicates.length > 0 && (
+      {duplicateKeys > 0 && (
         <Banner tone="error">
           <span>
-            <strong>{duplicates.length} product name{duplicates.length === 1 ? " appears" : "s appear"} more than once.</strong>{" "}
-            The billing history joins to this mapping, so a duplicated name multiplies that
-            product&apos;s billing rows and overstates its revenue. Remove the extra rows:{" "}
+            <strong>
+              {duplicateExcess} surplus row{duplicateExcess === 1 ? "" : "s"} across{" "}
+              {duplicateKeys} repeated product name{duplicateKeys === 1 ? "" : "s"}.
+            </strong>{" "}
+            The billing history joins to this mapping on the product name alone, so every
+            surplus row duplicates that product&apos;s billing rows and overstates its revenue
+            today. Worst offenders:{" "}
+            <span className="font-mono text-xs">{duplicateExamples.join(", ")}</span>
+            {duplicateKeys > duplicateExamples.length
+              ? ` and ${duplicateKeys - duplicateExamples.length} more names`
+              : ""}
+            . Run{" "}
             <span className="font-mono text-xs">
-              {duplicates.slice(0, 3).map((d) => d.PRODUCT_KEY).join(", ")}
-              {duplicates.length > 3 ? ` and ${duplicates.length - 3} more` : ""}
-            </span>
+              scripts/paiment/00-resolve-and-diagnose.sql
+            </span>{" "}
+            section 4d for the full list.
           </span>
         </Banner>
       )}
@@ -355,7 +505,22 @@ export function ProductMappingTable() {
           />
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+        <div className="mt-4">
+          <Pager
+            info={pager}
+            total={total}
+            pageSize={pageSize}
+            showSize
+            onOffset={setOffset}
+            onPageSize={(size) => {
+              // Back to page 1: page 4 of 50-a-page does not exist at 200.
+              setPageSize(size)
+              setOffset(0)
+            }}
+          />
+        </div>
+
+        <div className="mt-3 overflow-x-auto rounded-lg border border-border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -369,7 +534,7 @@ export function ProductMappingTable() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <SkeletonRows cols={6} rows={6} />
+                <SkeletonRows cols={6} rows={Math.min(pageSize, 8)} />
               ) : rows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
@@ -417,31 +582,15 @@ export function ProductMappingTable() {
           </Table>
         </div>
 
-        {total > PAGE && (
-          <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              {offset + 1}–{Math.min(offset + PAGE, total)} of {total}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - PAGE))}
-              >
-                Previous
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={offset + PAGE >= total}
-                onClick={() => setOffset(offset + PAGE)}
-              >
-                Next
-              </Button>
-            </div>
+        {pager.pages > 1 && (
+          <div className="mt-3">
+            <Pager
+              info={pager}
+              total={total}
+              pageSize={pageSize}
+              onOffset={setOffset}
+              onPageSize={setPageSize}
+            />
           </div>
         )}
       </Card>

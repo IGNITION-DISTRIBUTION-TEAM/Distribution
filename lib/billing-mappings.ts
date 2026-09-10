@@ -304,20 +304,45 @@ export function buildDelete(productName: string): string {
   )
 }
 
+/** How many duplicated names the screen names before saying "and N more". */
+export const DUPLICATE_EXAMPLES = 5
+
 /**
  * Product names that appear more than once under the join's own comparison.
  *
- * Not a tidiness check. Each duplicate multiplies the billing rows for that
- * product in the full-history table, so this is a revenue-accuracy check and
- * the screen surfaces it rather than burying it.
+ * Not a tidiness check. Each extra row multiplies that product's billing rows
+ * in the full-history table, so this is a revenue-accuracy check and the screen
+ * surfaces it rather than burying it.
+ *
+ * TOP-N PLUS TOTALS, FROM ONE PASS. This runs on every page load, and the live
+ * table has hundreds of duplicated names — shipping all of them to a browser
+ * that renders a count was most of the cost of opening the screen. The window
+ * functions run over the already-grouped set, so the totals come free rather
+ * than from a second GROUP BY:
+ *
+ *   DUPLICATE_KEYS  how many distinct names repeat
+ *   DUPLICATE_ROWS  how many rows those names occupy in total
+ *
+ * DUPLICATE_ROWS - DUPLICATE_KEYS is the EXCESS: the number of surplus rows,
+ * and therefore the number of extra billing rows the fan-out is producing. That
+ * is the figure that describes the damage, so it is the one the banner leads
+ * with — "795 names repeat" is a smaller-sounding number for the same problem.
+ *
+ * ORDER BY before LIMIT, so the examples are the worst offenders rather than
+ * whichever rows came back first.
  */
 export function buildDuplicateCheck(): string {
   const c = PRODUCT_MAPPING.cols
   return (
-    `SELECT TRIM(UPPER(${c.name})) AS PRODUCT_KEY,\n` +
-    `       COUNT(*) AS ROWS_FOUND,\n` +
-    `       LISTAGG(DISTINCT IFNULL(${c.brandOverride}, '(none)'), ' | ') AS BRAND_OVERRIDES\n` +
-    `  FROM ${PRODUCT_MAPPING.table}\n GROUP BY 1 HAVING COUNT(*) > 1\n ORDER BY ROWS_FOUND DESC`
+    `WITH D AS (\n` +
+    `  SELECT TRIM(UPPER(${c.name})) AS PRODUCT_KEY, COUNT(*) AS ROWS_FOUND\n` +
+    `    FROM ${PRODUCT_MAPPING.table}\n` +
+    `   GROUP BY 1 HAVING COUNT(*) > 1\n)\n` +
+    `SELECT PRODUCT_KEY,\n` +
+    `       ROWS_FOUND,\n` +
+    `       COUNT(*) OVER ()        AS DUPLICATE_KEYS,\n` +
+    `       SUM(ROWS_FOUND) OVER () AS DUPLICATE_ROWS\n` +
+    `  FROM D\n ORDER BY ROWS_FOUND DESC, PRODUCT_KEY\n LIMIT ${DUPLICATE_EXAMPLES}`
   )
 }
 

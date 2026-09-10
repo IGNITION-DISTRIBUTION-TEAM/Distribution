@@ -24,6 +24,7 @@ import {
   type ProductMapping,
 } from "../../lib/billing-mappings"
 import { lit, litOrNull } from "../../lib/sql-literal"
+import { pageInfo } from "../../lib/pagination"
 
 let failures = 0
 function check(name: string, ok: boolean, detail = "") {
@@ -182,7 +183,18 @@ console.log("\nreads")
   check("search escapes the term", buildSearch("O'Brien", 10, 0).includes("O''Brien"))
   check("getOne matches like the join does", buildGetOne(" x ").includes("TRIM(UPPER("))
   check("delete targets the table", buildDelete("A").startsWith(`DELETE FROM ${PRODUCT_MAPPING.table}`))
-  check("the duplicate check groups on the join key", buildDuplicateCheck().includes("HAVING COUNT(*) > 1"))
+  const dup = buildDuplicateCheck()
+  check("the duplicate check groups on the join key", dup.includes("HAVING COUNT(*) > 1"))
+  // It runs on EVERY page load and the live table has hundreds of duplicated
+  // names — returning all of them to render a count was most of the cost of
+  // opening the screen.
+  check("it returns only a handful of examples", /LIMIT \d+$/.test(dup.trim()), dup)
+  check("but still reports the true totals, from the same scan",
+    dup.includes("COUNT(*) OVER ()") && dup.includes("SUM(ROWS_FOUND) OVER ()"), dup)
+  check("only one GROUP BY — the totals do not cost a second pass",
+    (dup.match(/GROUP BY/g) || []).length === 1, dup)
+  check("worst offenders first, so the examples are the useful ones",
+    dup.includes("ORDER BY ROWS_FOUND DESC"), dup)
 }
 
 console.log("\naudit and drift")
@@ -202,6 +214,54 @@ console.log("\naudit and drift")
   // is supposed to be gone.
   check("ignores deletes", sql.includes("l.ACTION <> 'delete'"), sql)
   check("is read-only", !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql.replace(/'delete'/g, "")))
+}
+
+console.log("\npageInfo — the pager boundaries")
+{
+  // The everyday case.
+  const p = pageInfo(3412, 50, 100)
+  check("page number is 1-based", p.page === 3, JSON.stringify(p))
+  check("range reads 101-150", p.from === 101 && p.to === 150, JSON.stringify(p))
+  check("both directions available mid-list", p.canPrev && p.canNext)
+  check("last offset lands on the final page", p.lastOffset === 3400, JSON.stringify(p))
+}
+{
+  // AN EXACT MULTIPLE. floor(100/50)+1 would say 3 pages; it is 2.
+  const p = pageInfo(100, 50, 50)
+  check("an exact multiple does not invent a trailing page", p.pages === 2, JSON.stringify(p))
+  check("and the last page disables Next", !p.canNext && p.canPrev)
+  check("the range ends exactly on the total", p.to === 100)
+}
+{
+  // NO ROWS. "1-0 of 0" is the classic pager bug.
+  const p = pageInfo(0, 50, 0)
+  check("an empty result has no row 1", p.from === 0 && p.to === 0, JSON.stringify(p))
+  check("still one page, so 'Page 1 of 0' cannot render", p.pages === 1 && p.page === 1)
+  check("and neither direction is offered", !p.canPrev && !p.canNext)
+}
+{
+  // A STALE OFFSET. Type in the search box while on page 8 and the result set
+  // shrinks under you.
+  const p = pageInfo(12, 50, 400)
+  check("an offset past the end clamps to the last page", p.page === 1 && p.pages === 1, JSON.stringify(p))
+  check("and reports the real range, not the stale one", p.from === 1 && p.to === 12)
+  check("'Page 8 of 1' cannot happen", p.page <= p.pages)
+}
+{
+  const p = pageInfo(3, 50, 0)
+  check("a limit larger than the total is one page", p.pages === 1 && !p.canNext, JSON.stringify(p))
+  check("and the range stops at the total", p.to === 3)
+}
+{
+  // A caller passing 0 would divide by zero and report Infinity pages.
+  const p = pageInfo(10, 0, 0)
+  check("a zero limit is floored rather than trusted", Number.isFinite(p.pages) && p.pages === 10, JSON.stringify(p))
+}
+{
+  const p = pageInfo(3412, 50, 3400)
+  check("the last page is partial and knows it", p.from === 3401 && p.to === 3412, JSON.stringify(p))
+  check("Next is disabled there", !p.canNext)
+  check("Previous still works", p.canPrev && p.prevOffset === 3350)
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)
