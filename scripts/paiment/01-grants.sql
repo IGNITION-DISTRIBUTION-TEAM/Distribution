@@ -41,7 +41,7 @@ GRANT USAGE ON SCHEMA DATAWAREHOUSE.BI     TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- The table the app edits.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  DATAWAREHOUSE.BI.BI_BILLING_PRODUCTGROUPS
+  DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS
   TO ROLE SVC_VERCEL_APP_ROLE;
 
 -- The view over it, which the diagnostics read.
@@ -137,11 +137,11 @@ SELECT AD_EMAIL, CREATED_AT, CREATED_BY
    ACCOUNTADMIN and it tells you what exists — not what the app can reach. The
    definitive test is the app's own session:
 
-     /api/distribution/snowflake-identity?object=DATAWAREHOUSE.BI.BI_BILLING_PRODUCTGROUPS
+     /api/distribution/snowflake-identity?object=DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS
 
    and then simply opening the Paiment screen. A missing grant surfaces there as
    a message naming this file, rather than as a raw Snowflake error.
 -------------------------------------------------------------------------------- */
 
-SHOW GRANTS ON TABLE DATAWAREHOUSE.BI.BI_BILLING_PRODUCTGROUPS;
+SHOW GRANTS ON TABLE DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS;
 SHOW GRANTS ON TABLE DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_BILLING_MAPPING_AUDIT;

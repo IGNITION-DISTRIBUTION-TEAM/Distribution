@@ -54,25 +54,30 @@
 import { lit, litOrNull } from "@/lib/sql-literal"
 
 /**
- * WHERE THE MAPPING ACTUALLY LIVES — CONFIRM THIS BEFORE FIRST USE.
+ * WHERE THE MAPPING ACTUALLY LIVES.
  *
  * The app writes to the BI table itself rather than keeping its own copy. That
  * was a deliberate choice; the risk it carries is that a file-driven reload of
  * this table would destroy business edits with no error, which is what the
  * audit table below exists to make detectable.
  *
- * VW_BI_BILLING_PRODUCTGROUPS is a VIEW and cannot be written to, so these are
- * the table underneath it and its real column names. THEY ARE NOT GUESSABLE and
- * the value below is the conventional shape, not a verified fact — run
- * scripts/paiment/00-resolve-and-diagnose.sql section 1, which resolves both
- * from GET_DDL, and correct this block if it differs. Everything else in this
- * file reads from here, so it is a one-place change.
+ * VW_BI_BILLING_PRODUCTGROUPS is a VIEW and cannot be written to, so `table` is
+ * the one underneath it. The name is NOT derivable from the view's — the view
+ * is VW_BI_BILLING_PRODUCTGROUPS, the table is BILLINGDATA_PRODUCTGROUPS — and
+ * it was confirmed against the warehouse rather than inferred. If BI ever
+ * renames it, scripts/paiment/00-resolve-and-diagnose.sql section 1 resolves
+ * the real one from GET_DDL and this block is the only place to change.
  *
- * Note the view exposes the name column as PRODUCT while the source workbook
- * calls it PRODUCTNAME; the base table could be either.
+ * THE COLUMN NAMES ARE STILL INFERRED, from the mapping workbook's own headers
+ * (PRODUCTNAME, PRODUCT_GROUP, VAS_BUTTON_FLAG, channel_override,
+ * brand_override — Snowflake folds the unquoted ones to upper case). That fits
+ * the view exposing the name column as PRODUCT, which means the view aliases
+ * it. Section 1c of the same script lists the real ones; a mismatch is the same
+ * one-place change, and the API turns the resulting error into a message naming
+ * this constant rather than a raw Snowflake fault.
  */
 export const PRODUCT_MAPPING = {
-  table: "DATAWAREHOUSE.BI.BI_BILLING_PRODUCTGROUPS",
+  table: "DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS",
   /** The view the full-history query joins to. Read-only; used for drift checks. */
   view: "DATAWAREHOUSE.BI.VW_BI_BILLING_PRODUCTGROUPS",
   cols: {

@@ -144,7 +144,7 @@ console.log("\nbuildUpsert — matched the way the billing join matches")
 {
   // A SQL-injection shaped name is data, not code — it must be escaped, not
   // rejected, because we cannot know a product will never look like this.
-  const nasty = "X'); DELETE FROM BI.BI_BILLING_PRODUCTGROUPS; --"
+  const nasty = "X'); DELETE FROM BI.BILLINGDATA_PRODUCTGROUPS; --"
   const sql = buildUpsert(row({ productName: nasty }))
   check("an injection-shaped name is escaped, not executed", sql.includes("X''); DELETE"), sql.slice(0, 160))
   // The semicolons are INSIDE the quoted literal, so counting them in the raw

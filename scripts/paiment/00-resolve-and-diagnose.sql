@@ -35,10 +35,15 @@
 /* -----------------------------------------------------------------------------
    SECTION 1 — what is actually underneath the view?
 
-   The app writes to the TABLE, not the view, and the table's name is a
-   documented assumption in lib/billing-mappings.ts until this section confirms
-   it. Whatever comes back here goes into PRODUCT_MAPPING.table and
-   PRODUCT_MAPPING.cols.
+   RESOLVED: the table is DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS, and
+   lib/billing-mappings.ts already points at it. Note it is NOT the view name
+   minus the VW_ prefix, which is why it had to be looked up rather than
+   derived.
+
+   So 1a and 1b are now a re-check rather than a discovery — worth running if
+   BI ever renames the object. 1c AND 1d ARE STILL WORTH RUNNING NOW: the
+   COLUMN names remain inferred from the workbook headers, and 1d says whether
+   the table is file-loaded, which is the risk the audit log exists to catch.
 -------------------------------------------------------------------------------- */
 
 SELECT GET_DDL('VIEW', 'DATAWAREHOUSE.BI.VW_BI_BILLING_PRODUCTGROUPS') AS VIEW_DDL;

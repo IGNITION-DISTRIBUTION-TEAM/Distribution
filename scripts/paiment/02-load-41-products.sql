@@ -18,11 +18,12 @@
    -----------------------------------------------------------------------------
    TWO THINGS THIS FILE DOES ON PURPOSE
 
-   1. IT WRITES TO THE TABLE, NOT THE VIEW, and the name below is the
-      conventional shape rather than a verified fact. Section 1 of the diagnose
-      script resolves the real one from GET_DDL. Correct the two names in the
-      MERGE if they differ, and correct PRODUCT_MAPPING in
-      lib/billing-mappings.ts to match.
+   1. IT WRITES TO THE TABLE, NOT THE VIEW. Those are BILLINGDATA_PRODUCTGROUPS
+      and VW_BI_BILLING_PRODUCTGROUPS respectively — the table's name is not
+      the view's minus a prefix, so read the MERGE target carefully rather than
+      assuming. Both are confirmed. Section 1 of the diagnose script re-resolves
+      them from GET_DDL if BI ever renames one, and PRODUCT_MAPPING in
+      lib/billing-mappings.ts has to move with it.
 
    2. IT MATCHES ON TRIM(UPPER(...)), the same expression the full-history view
       joins on. Anything looser could leave two rows that both satisfy that
@@ -62,7 +63,7 @@ SELECT COUNT(*)                                 AS PRODUCTS,
    brand, and inventing a product group would be a guess.
 -------------------------------------------------------------------------------- */
 
-MERGE INTO DATAWAREHOUSE.BI.BI_BILLING_PRODUCTGROUPS t
+MERGE INTO DATAWAREHOUSE.BI.BILLINGDATA_PRODUCTGROUPS t
 USING (
   SELECT 'DSTV Explora Ultra Standalone With R5000 Life Cover + Decoder Protection @ R259 PM x24 Months' AS PRODUCTNAME, 'DISTRIBUTION' AS CHANNEL_OVERRIDE, 'ONAIR' AS BRAND_OVERRIDE
   UNION ALL SELECT 'DSTV Explora Ultra Standalone @ R299 PM x24 Months', 'DISTRIBUTION', 'ONAIR'
