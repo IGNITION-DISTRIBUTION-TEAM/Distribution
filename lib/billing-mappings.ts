@@ -101,7 +101,15 @@ export const SF_OPTS = { database: "DATAWAREHOUSE", schema: "BI" } as const
 export const AUDIT_TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_BILLING_MAPPING_AUDIT"
 export const AUDIT_SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 
-export type MappingAction = "create" | "update" | "delete" | "import"
+export type MappingAction =
+  | "create"
+  | "update"
+  | "delete"
+  | "import"
+  /** Bulk removal of identical duplicate rows. */
+  | "collapse"
+  /** One conflicted product: a winning row chosen, the rest discarded. */
+  | "resolve"
 
 export type ProductMapping = {
   productName: string
@@ -366,6 +374,158 @@ export function buildDuplicateCheck(): string {
     `       SUM(IFF(DISTINCT_SHAPES > 1, 1, 0)) OVER () AS CONFLICTING_KEYS\n` +
     `  FROM D\n ORDER BY DISTINCT_SHAPES DESC, ROWS_FOUND DESC, PRODUCT_KEY\n` +
     ` LIMIT ${DUPLICATE_EXAMPLES}`
+  )
+}
+
+// ------------------------------------------------------- resolving duplicates
+
+/**
+ * Duplicate groups, paged, split by whether the rows agree.
+ *
+ * `mode` decides which half you get:
+ *   conflicts  the rows disagree — a person has to pick a winner
+ *   copies     the rows are identical — collapsing is lossless
+ *   all        both, conflicts first
+ *
+ * Conflicts always sort first within a page, because they are the work.
+ */
+export type DuplicateMode = "conflicts" | "copies" | "all"
+
+/** The four mapped columns as one comparable string. */
+function shapeExpr(): string {
+  const c = PRODUCT_MAPPING.cols
+  return (
+    `IFNULL(${c.group}, '~') || '|' || IFNULL(${c.vasFlag}, '~') || '|' || ` +
+    `IFNULL(${c.channelOverride}, '~') || '|' || IFNULL(${c.brandOverride}, '~')`
+  )
+}
+
+/**
+ * IFNULL to a sentinel before concatenating, always. `NULL || 'x'` is NULL in
+ * Snowflake, so without it every partly-empty row collapses to the same shape
+ * and a real disagreement is reported as an exact copy — which would send it
+ * through the lossless bulk collapse and silently pick a winner.
+ */
+function duplicateGroupsCte(mode: DuplicateMode): string {
+  const c = PRODUCT_MAPPING.cols
+  const having =
+    mode === "conflicts"
+      ? " AND COUNT(DISTINCT " + shapeExpr() + ") > 1"
+      : mode === "copies"
+        ? " AND COUNT(DISTINCT " + shapeExpr() + ") = 1"
+        : ""
+  return (
+    `WITH D AS (\n` +
+    `  SELECT TRIM(UPPER(${c.name})) AS PRODUCT_KEY,\n` +
+    `         COUNT(*) AS ROWS_FOUND,\n` +
+    `         COUNT(DISTINCT ${shapeExpr()}) AS DISTINCT_SHAPES\n` +
+    `    FROM ${PRODUCT_MAPPING.table}\n` +
+    `   GROUP BY 1 HAVING COUNT(*) > 1${having}\n)`
+  )
+}
+
+export function buildDuplicateGroups(mode: DuplicateMode, limit: number, offset: number): string {
+  return (
+    `${duplicateGroupsCte(mode)}\n` +
+    `SELECT PRODUCT_KEY, ROWS_FOUND, DISTINCT_SHAPES\n  FROM D\n` +
+    ` ORDER BY DISTINCT_SHAPES DESC, ROWS_FOUND DESC, PRODUCT_KEY\n` +
+    ` LIMIT ${limit} OFFSET ${offset}`
+  )
+}
+
+export function buildDuplicateGroupCount(mode: DuplicateMode): string {
+  return `${duplicateGroupsCte(mode)}\nSELECT COUNT(*) AS CNT FROM D`
+}
+
+/** Every row belonging to the given keys, so the UI can show the competitors. */
+export function buildRowsForKeys(keys: string[]): string {
+  const c = PRODUCT_MAPPING.cols
+  const list = keys.map((k) => lit(k.trim().toUpperCase())).join(", ")
+  return (
+    `SELECT ${c.name} AS PRODUCT_NAME, ${c.group} AS PRODUCT_GROUP,\n` +
+    `       ${c.vasFlag} AS VAS_BUTTON_FLAG, ${c.channelOverride} AS CHANNEL_OVERRIDE,\n` +
+    `       ${c.brandOverride} AS BRAND_OVERRIDE\n` +
+    `  FROM ${PRODUCT_MAPPING.table}\n WHERE TRIM(UPPER(${c.name})) IN (${list})\n` +
+    ` ORDER BY ${c.name}`
+  )
+}
+
+/** How many keys the bulk collapse would touch, and how many rows it removes. */
+export function buildExactCopyImpact(): string {
+  return (
+    `${duplicateGroupsCte("copies")}\n` +
+    `SELECT COUNT(*) AS KEYS_AFFECTED, IFNULL(SUM(ROWS_FOUND) - COUNT(*), 0) AS ROWS_REMOVED\n` +
+    `  FROM D`
+  )
+}
+
+/**
+ * Collapse every group whose rows are identical, to one row each.
+ *
+ * WHY THIS IS DELETE-AND-REINSERT RATHER THAN A DELETE. Identical rows are
+ * indistinguishable: the table has no key and no row id, so there is no
+ * predicate that matches one copy and not the other. `DELETE ... WHERE name =
+ * 'X'` removes all of them. The only way to keep exactly one is to remove them
+ * all and put one back.
+ *
+ * WHICH MAKES THE TRANSACTION LOAD BEARING, not hygiene. If the INSERT failed
+ * after the DELETE this would delete mappings outright, so the whole thing is
+ * one scripting block with an explicit BEGIN/COMMIT and a handler that ROLLBACKs
+ * and re-raises. It is sent as ONE statement, so it cannot be half-applied by a
+ * dropped connection either.
+ *
+ * ONLY GROUPS WHERE EVERY ROW AGREES. Anything with a disagreement is excluded
+ * by the CTE, so this can never resolve a conflict by accident — those need a
+ * person, and buildResolveOne is how they say so.
+ *
+ * The QUALIFY picks a canonical row per key. Within an exact-copy group the
+ * four mapped columns are identical by definition, so the only thing it is
+ * really choosing is the spelling of the name when copies differ in case.
+ */
+export function buildCollapseExactCopies(): string {
+  const c = PRODUCT_MAPPING.cols
+  const cols = `${c.name}, ${c.group}, ${c.vasFlag}, ${c.channelOverride}, ${c.brandOverride}`
+  const keys =
+    `SELECT TRIM(UPPER(${c.name})) FROM ${PRODUCT_MAPPING.table}\n` +
+    `        GROUP BY 1 HAVING COUNT(*) > 1 AND COUNT(DISTINCT ${shapeExpr()}) = 1`
+  return (
+    `EXECUTE IMMEDIATE $$\nBEGIN\n` +
+    `  CREATE OR REPLACE TEMPORARY TABLE TMP_MAPPING_KEEP AS\n` +
+    `    SELECT ${cols}\n      FROM ${PRODUCT_MAPPING.table}\n` +
+    `     WHERE TRIM(UPPER(${c.name})) IN (${keys})\n` +
+    `    QUALIFY ROW_NUMBER() OVER (PARTITION BY TRIM(UPPER(${c.name}))\n` +
+    `                               ORDER BY ${c.name}) = 1;\n` +
+    `  BEGIN TRANSACTION;\n` +
+    `  DELETE FROM ${PRODUCT_MAPPING.table}\n` +
+    `   WHERE TRIM(UPPER(${c.name})) IN (SELECT TRIM(UPPER(${c.name})) FROM TMP_MAPPING_KEEP);\n` +
+    `  INSERT INTO ${PRODUCT_MAPPING.table} (${cols})\n` +
+    `  SELECT ${cols} FROM TMP_MAPPING_KEEP;\n` +
+    `  COMMIT;\n` +
+    `  RETURN 'collapsed';\n` +
+    `EXCEPTION\n  WHEN OTHER THEN\n    ROLLBACK;\n    RAISE;\nEND\n$$`
+  )
+}
+
+/**
+ * Resolve one conflicted product: keep the chosen row, drop the rest.
+ *
+ * Same delete-and-reinsert for the same reason, scoped to one key, in one
+ * transactional block. `keep` has already been validated by the caller.
+ */
+export function buildResolveOne(productKey: string, keep: ProductMapping): string {
+  const c = PRODUCT_MAPPING.cols
+  const cols = `${c.name}, ${c.group}, ${c.vasFlag}, ${c.channelOverride}, ${c.brandOverride}`
+  const key = lit(productKey.trim().toUpperCase())
+  const values =
+    `${lit(normProductName(keep.productName))}, ${litOrNull(keep.productGroup)}, ` +
+    `${litOrNull(keep.vasButtonFlag)}, ${litOrNull(keep.channelOverride)}, ` +
+    `${litOrNull(keep.brandOverride)}`
+  return (
+    `EXECUTE IMMEDIATE $$\nBEGIN\n  BEGIN TRANSACTION;\n` +
+    `  DELETE FROM ${PRODUCT_MAPPING.table} WHERE TRIM(UPPER(${c.name})) = ${key};\n` +
+    `  INSERT INTO ${PRODUCT_MAPPING.table} (${cols}) VALUES (${values});\n` +
+    `  COMMIT;\n  RETURN 'resolved';\n` +
+    `EXCEPTION\n  WHEN OTHER THEN\n    ROLLBACK;\n    RAISE;\nEND\n$$`
   )
 }
 

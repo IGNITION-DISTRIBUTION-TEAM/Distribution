@@ -12,8 +12,14 @@ import {
   buildAuditInsert,
   buildDelete,
   buildDriftCheck,
+  buildCollapseExactCopies,
   buildDuplicateCheck,
+  buildDuplicateGroupCount,
+  buildDuplicateGroups,
+  buildExactCopyImpact,
   buildGetOne,
+  buildResolveOne,
+  buildRowsForKeys,
   buildImportMerge,
   buildSearch,
   buildUpsert,
@@ -224,6 +230,75 @@ console.log("\naudit and drift")
   // is supposed to be gone.
   check("ignores deletes", sql.includes("l.ACTION <> 'delete'"), sql)
   check("is read-only", !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql.replace(/'delete'/g, "")))
+}
+
+console.log("\nresolving duplicates")
+{
+  const conflicts = buildDuplicateGroups("conflicts", 25, 0)
+  const copies = buildDuplicateGroups("copies", 25, 0)
+  const all = buildDuplicateGroups("all", 25, 0)
+  check("conflicts asks for groups whose rows disagree", conflicts.includes(") > 1"), conflicts)
+  check("copies asks for groups whose rows agree", copies.includes(") = 1"), copies)
+  check("all filters on neither",
+    !all.includes("AND COUNT(DISTINCT") , all)
+  check("every mode still requires an actual duplicate",
+    [conflicts, copies, all].every((q) => q.includes("HAVING COUNT(*) > 1")))
+  check("conflicts sort first within a page",
+    conflicts.includes("ORDER BY DISTINCT_SHAPES DESC"), conflicts)
+  check("the count uses the same filter as the list",
+    buildDuplicateGroupCount("conflicts").includes(") > 1"))
+}
+{
+  const sql = buildRowsForKeys(["A'B", "C D"])
+  check("keys are escaped", sql.includes("'A''B'"), sql)
+  check("keys are matched the way the join matches", sql.includes("TRIM(UPPER("), sql)
+}
+{
+  const sql = buildExactCopyImpact()
+  check("impact counts only groups that agree", sql.includes(") = 1"), sql)
+  check("and reports rows removed, not rows present",
+    sql.includes("SUM(ROWS_FOUND) - COUNT(*)"), sql)
+}
+
+console.log("\nbuildCollapseExactCopies — the dangerous one")
+{
+  const sql = buildCollapseExactCopies()
+  // Identical rows are indistinguishable — no key, no row id — so there is no
+  // predicate that matches one copy and not the other. Delete-and-reinsert is
+  // the only way to keep exactly one, which makes the transaction the thing
+  // standing between this and deleting mappings outright.
+  check("wraps the delete and the reinsert in one transaction",
+    sql.includes("BEGIN TRANSACTION;") && sql.includes("COMMIT;"), sql)
+  check("rolls back if the reinsert fails",
+    sql.includes("EXCEPTION") && sql.includes("ROLLBACK;"), sql)
+  check("and re-raises rather than swallowing the error", sql.includes("RAISE;"), sql)
+  check("is a single statement, so a dropped connection cannot half-apply it",
+    (sql.match(/EXECUTE IMMEDIATE/g) || []).length === 1 && sql.trim().endsWith("$$"))
+  // THE SAFETY PROPERTY. If this could touch a conflicted group it would
+  // silently pick a winner for a decision that belongs to a person.
+  check("only ever touches groups whose rows all agree",
+    sql.includes("COUNT(DISTINCT IFNULL(") && sql.includes(") = 1"), sql)
+  check("keeps exactly one row per key", sql.includes("ROW_NUMBER() OVER (PARTITION BY"), sql)
+  check("deletes only the keys it is about to reinsert",
+    sql.includes("IN (SELECT TRIM(UPPER(") && sql.includes("TMP_MAPPING_KEEP"), sql)
+}
+
+console.log("\nbuildResolveOne")
+{
+  const sql = buildResolveOne("A B", row({ productName: "A B", brandOverride: "" }))
+  check("is transactional too", sql.includes("BEGIN TRANSACTION;") && sql.includes("COMMIT;"))
+  check("rolls back on failure", sql.includes("ROLLBACK;") && sql.includes("RAISE;"))
+  check("scoped to the one key", (sql.match(/DELETE FROM/g) || []).length === 1, sql)
+  check("matches the key the way the join does", sql.includes("TRIM(UPPER("), sql)
+  check("a cleared override is reinserted as NULL, not ''",
+    sql.includes("NULL)") || sql.includes(", NULL,"), sql)
+}
+{
+  const sql = buildResolveOne("O'BRIEN", row({ productName: "O'Brien" }))
+  check("the key is escaped", sql.includes("'O''BRIEN'"), sql)
+  const skeleton = sql.replace(/'(?:[^']|'')*'/g, "''")
+  check("quotes stay balanced around the block", (sql.match(/'/g) || []).length % 2 === 0)
+  check("nothing executable escapes the literals", !/\bDROP\b/i.test(skeleton))
 }
 
 console.log("\npageInfo — the pager boundaries")
