@@ -78,6 +78,7 @@ import {
   Check,
   ChevronsUpDown,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Download,
   Files,
@@ -8454,14 +8455,59 @@ function CampaignSettingsPanel() {
   const [saving, setSaving] = useState(false)
   // New-procedure input for the per-campaign update-HLL list.
   const [newHllProc, setNewHllProc] = useState("")
+  // Which row is open for editing, and its working value. -1 is "none".
+  const [editHllIdx, setEditHllIdx] = useState(-1)
+  const [editHllText, setEditHllText] = useState("")
   const PROC_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\s*\([A-Za-z0-9_,\s]*\))?$/
+  const PROC_HINT = 'Procedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP(608)'
   const addHllProc = () => {
     const p = newHllProc.trim()
     if (!p) return
-    if (!PROC_RE.test(p)) { toast.error('Procedure must be "DATABASE.SCHEMA.PROC" with optional (args), e.g. DB.SCHEMA.SP(608)'); return }
-    if (updateHllProcs.includes(p)) { setNewHllProc(""); return }
+    if (!PROC_RE.test(p)) { toast.error(PROC_HINT); return }
+    // Was a silent clear, which looked exactly like a successful add.
+    if (updateHllProcs.includes(p)) { toast.error("That procedure is already in the list."); return }
     setUpdateHllProcs((prev) => [...prev, p])
     setNewHllProc("")
+  }
+  const startEditHllProc = (i: number) => {
+    setEditHllIdx(i)
+    setEditHllText(updateHllProcs[i] ?? "")
+  }
+  const cancelEditHllProc = () => {
+    setEditHllIdx(-1)
+    setEditHllText("")
+  }
+  /**
+   * Save an edit back AT THE SAME INDEX.
+   *
+   * The position is the point. These run in order at step 4 and the order is
+   * load bearing — one procedure writes SCORE and a later one reads it — so the
+   * old remove-and-retype route silently moved a corrected procedure to the end
+   * of the list and changed what the campaign does.
+   */
+  const saveEditHllProc = () => {
+    const p = editHllText.trim()
+    if (!p) return
+    if (!PROC_RE.test(p)) { toast.error(PROC_HINT); return }
+    // Any OTHER row holding the same value is a duplicate; this row holding it
+    // is just an unchanged save.
+    if (updateHllProcs.some((existing, idx) => idx !== editHllIdx && existing === p)) {
+      toast.error("That procedure is already in the list.")
+      return
+    }
+    setUpdateHllProcs((prev) => prev.map((existing, idx) => (idx === editHllIdx ? p : existing)))
+    cancelEditHllProc()
+  }
+  /** Swap a row with its neighbour. Order is what step 4 executes. */
+  const moveHllProc = (i: number, delta: number) => {
+    const j = i + delta
+    setUpdateHllProcs((prev) => {
+      if (j < 0 || j >= prev.length) return prev
+      const next = [...prev]
+      ;[next[i], next[j]] = [next[j], next[i]]
+      return next
+    })
+    cancelEditHllProc()
   }
   // One-click import from the old shared TSK_HLL_UPDATE_PROCEDURES list, so the
   // procedures that used to live there can be pulled into this campaign's list.
@@ -9280,22 +9326,86 @@ function CampaignSettingsPanel() {
                     <ul className="mt-2 flex flex-col divide-y divide-border/60 rounded-md border border-border">
                       {updateHllProcs.map((p, i) => (
                         <li key={`${p}-${i}`} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                          <span className="font-mono text-xs text-foreground">
-                            <span className="mr-2 text-muted-foreground">{i + 1}.</span>{p}
-                          </span>
-                          <button
-                            type="button"
-                            className="text-xs text-rose-400 hover:text-rose-300"
-                            onClick={() => setUpdateHllProcs((prev) => prev.filter((_, idx) => idx !== i))}
-                          >
-                            Remove
-                          </button>
+                          {editHllIdx === i ? (
+                            <>
+                              <span className="text-xs text-muted-foreground">{i + 1}.</span>
+                              <Input
+                                autoFocus
+                                value={editHllText}
+                                onChange={(e) => setEditHllText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); saveEditHllProc() }
+                                  if (e.key === "Escape") { e.preventDefault(); cancelEditHllProc() }
+                                }}
+                                className="h-7 flex-1 font-mono text-xs"
+                              />
+                              <button
+                                type="button"
+                                className="text-xs text-emerald-400 hover:text-emerald-300"
+                                onClick={saveEditHllProc}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                                onClick={cancelEditHllProc}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="min-w-0 break-all font-mono text-xs text-foreground">
+                                <span className="mr-2 text-muted-foreground">{i + 1}.</span>{p}
+                              </span>
+                              <span className="flex shrink-0 items-center gap-2">
+                                {/* Order is what step 4 executes, so it has to be changeable
+                                    without rebuilding the whole list. */}
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${p} up`}
+                                  disabled={i === 0}
+                                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                  onClick={() => moveHllProc(i, -1)}
+                                >
+                                  <ChevronUp className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${p} down`}
+                                  disabled={i === updateHllProcs.length - 1}
+                                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                  onClick={() => moveHllProc(i, 1)}
+                                >
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={() => startEditHllProc(i)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="text-xs text-rose-400 hover:text-rose-300"
+                                  onClick={() => {
+                                    setUpdateHllProcs((prev) => prev.filter((_, idx) => idx !== i))
+                                    cancelEditHllProc()
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </span>
+                            </>
+                          )}
                         </li>
                       ))}
                     </ul>
                   )}
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Specific to this campaign. In the run they execute in this order (Step 4). Include any argument, e.g. <span className="font-mono">…SP_X(608)</span>.
+                    Specific to this campaign. In the run they execute in this order (Step 4) — use the arrows to change it. Include any argument, e.g. <span className="font-mono">…SP_X(608)</span>.
                   </p>
                 </div>
                 <div className="sm:col-span-2">
