@@ -36,6 +36,7 @@ type YaxxaCampaign = {
   ownedBy: { ssId: string; ssTitle: string | null } | null
 }
 type Resolved = { table: string; id: string | null; label: string | null }
+type Mode = "all" | "mapped" | "unmapped"
 
 /**
  * The Yaxxa picker asks for this many and no more.
@@ -65,9 +66,12 @@ export function CampaignMapper() {
   const [offset, setOffset] = useState(0)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState("")
+  // Defaults to everything, which is what the screen did before the tabs — a
+  // default that hides 450 rows would surprise anyone who already knows it.
+  const [mode, setMode] = useState<Mode>("all")
+  const [tabs, setTabs] = useState({ all: 0, mapped: 0, unmapped: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [unmapped, setUnmapped] = useState(0)
   const [staleCount, setStaleCount] = useState(0)
   const [doubleBookedCount, setDoubleBookedCount] = useState(0)
   const [resolved, setResolved] = useState<{ silversurfer: Resolved; yaxxa: Resolved } | null>(null)
@@ -82,17 +86,28 @@ export function CampaignMapper() {
   const [showTaken, setShowTaken] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
-  const load = useCallback(async (q: string, off: number, size: number) => {
+  const load = useCallback(async (q: string, off: number, size: number, m: Mode) => {
     setLoading(true)
     setError(null)
     try {
-      const params = new URLSearchParams({ search: q, limit: String(size), offset: String(off) })
+      const params = new URLSearchParams({
+        search: q,
+        limit: String(size),
+        offset: String(off),
+        mode: m,
+      })
       const res = await fetch(`/api/dialler/campaign-map?${params}`, { cache: "no-store" })
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       setCampaigns((data.campaigns as SsCampaign[]) ?? [])
       setTotal(Number(data.total ?? 0))
-      setUnmapped(Number(data.unmapped ?? 0))
+      setTabs(
+        (data.tabs as { all: number; mapped: number; unmapped: number }) ?? {
+          all: 0,
+          mapped: 0,
+          unmapped: 0,
+        }
+      )
       setStaleCount(Number(data.staleCount ?? 0))
       setDoubleBookedCount(Number(data.doubleBookedCount ?? 0))
       setResolved((data.resolved as { silversurfer: Resolved; yaxxa: Resolved }) ?? null)
@@ -105,9 +120,9 @@ export function CampaignMapper() {
   }, [])
 
   useEffect(() => {
-    const t = setTimeout(() => void load(search, offset, pageSize), 250)
+    const t = setTimeout(() => void load(search, offset, pageSize, mode), 250)
     return () => clearTimeout(t)
-  }, [search, offset, pageSize, load])
+  }, [search, offset, pageSize, mode, load])
 
   const loadYaxxa = useCallback(async (q: string) => {
     setYaxxaLoading(true)
@@ -167,7 +182,7 @@ export function CampaignMapper() {
           ? `Moved "${y.name}" from ${moved.ssTitle || moved.ssId}`
           : `Attached "${y.name}"`
       )
-      await Promise.all([load(search, offset, pageSize), loadYaxxa(yaxxaSearch)])
+      await Promise.all([load(search, offset, pageSize, mode), loadYaxxa(yaxxaSearch)])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -186,7 +201,7 @@ export function CampaignMapper() {
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       toast.success("Detached")
-      await load(search, offset, pageSize)
+      await load(search, offset, pageSize, mode)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -251,9 +266,29 @@ export function CampaignMapper() {
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SectionHeading>Active SilverSurfer campaigns</SectionHeading>
-          <span className="text-sm text-muted-foreground">
-            {unmapped > 0 ? `${unmapped} with no Yaxxa campaign attached` : "All mapped"}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["unmapped", "Not mapped", tabs.unmapped],
+                ["mapped", "Mapped", tabs.mapped],
+                ["all", "All", tabs.all],
+              ] as const
+            ).map(([id, label, count]) => (
+              <Button
+                key={id}
+                type="button"
+                variant={mode === id ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setMode(id)
+                  setOffset(0)
+                }}
+              >
+                {label}
+                <span className="ml-1.5 text-muted-foreground">{count}</span>
+              </Button>
+            ))}
+          </div>
         </div>
 
         <p className="mt-1 text-sm text-muted-foreground">
@@ -279,7 +314,7 @@ export function CampaignMapper() {
             info={pager}
             total={total}
             pageSize={pageSize}
-            noun="active campaigns"
+            noun={mode === "mapped" ? "mapped campaigns" : "campaigns"}
             showSize
             onOffset={setOffset}
             onPageSize={(size) => {
@@ -294,7 +329,13 @@ export function CampaignMapper() {
           <SkeletonPanel className="mt-4" />
         ) : campaigns.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">
-            {search ? "No campaign matches that search." : "No active campaigns found."}
+            {search
+              ? "No campaign matches that search."
+              : mode === "mapped"
+                ? "Nothing mapped yet — attach a Yaxxa campaign from the Not mapped tab."
+                : mode === "unmapped"
+                  ? "Every active campaign has a Yaxxa campaign attached."
+                  : "No active campaigns found."}
           </p>
         ) : (
           <div className="mt-4 flex flex-col gap-3">
@@ -458,7 +499,7 @@ export function CampaignMapper() {
               info={pager}
               total={total}
               pageSize={pageSize}
-              noun="active campaigns"
+              noun={mode === "mapped" ? "mapped campaigns" : "campaigns"}
               onOffset={setOffset}
               onPageSize={setPageSize}
             />

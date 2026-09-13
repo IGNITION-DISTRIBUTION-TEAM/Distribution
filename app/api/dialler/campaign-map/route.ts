@@ -14,8 +14,9 @@ import {
   buildMappingsFor,
   buildOwnerOf,
   buildStaleMappings,
-  buildUnmappedCount,
+  buildTabCounts,
   isResolved,
+  type MapFilter,
   type ResolvedColumns,
 } from "@/lib/dialler-campaign-map"
 import { resolveSourceColumns } from "@/lib/dialler-campaign-columns"
@@ -66,6 +67,8 @@ export async function GET(request: NextRequest) {
 
   const url = request.nextUrl
   const search = url.searchParams.get("search") ?? ""
+  const modeRaw = url.searchParams.get("mode")
+  const mode: MapFilter = modeRaw === "mapped" || modeRaw === "unmapped" ? modeRaw : "all"
   const limitRaw = Number(url.searchParams.get("limit") ?? 25)
   const offsetRaw = Number(url.searchParams.get("offset") ?? 0)
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 && limitRaw <= 200 ? limitRaw : 25
@@ -83,11 +86,11 @@ export async function GET(request: NextRequest) {
 
     const [campaigns, counts] = await Promise.all([
       executeSnowflakeQuery<CampaignRow>(
-        buildCampaigns(SS_SOURCE, ssCols, search, limit, offset),
+        buildCampaigns(SS_SOURCE, ssCols, search, limit, offset, mode),
         { database: SS_SOURCE.database, schema: SS_SOURCE.schema }
       ),
       executeSnowflakeQuery<{ CNT: number | string }>(
-        buildCampaignCount(SS_SOURCE, ssCols, search),
+        buildCampaignCount(SS_SOURCE, ssCols, search, mode),
         { database: SS_SOURCE.database, schema: SS_SOURCE.schema }
       ),
     ])
@@ -109,17 +112,19 @@ export async function GET(request: NextRequest) {
 
     // Health checks are best effort. A screen that will not load because a
     // diagnostic failed is worse than one without its warnings.
-    let unmapped = 0
+    let tabTotal = 0
+    let tabMapped = 0
     let stale: unknown[] = []
     let doubleBooked: unknown[] = []
     try {
-      const r = await executeSnowflakeQuery<{ CNT: number | string }>(
-        buildUnmappedCount(ssCols),
+      const r = await executeSnowflakeQuery<{ TOTAL: number | string; MAPPED: number | string }>(
+        buildTabCounts(ssCols, search),
         { database: SS_SOURCE.database, schema: SS_SOURCE.schema }
       )
-      unmapped = Number(r[0]?.CNT ?? 0)
+      tabTotal = Number(r[0]?.TOTAL ?? 0)
+      tabMapped = Number(r[0]?.MAPPED ?? 0)
     } catch (e) {
-      console.error("[/api/dialler/campaign-map] unmapped count failed:", e)
+      console.error("[/api/dialler/campaign-map] tab counts failed:", e)
     }
     try {
       stale = await executeSnowflakeQuery(buildStaleMappings(ssCols, yaxxaCols), MAP_SF_OPTS)
@@ -133,10 +138,12 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
+      mode,
       total: Number(counts[0]?.CNT ?? 0),
       limit,
       offset,
-      unmapped,
+      // For the tab labels. Derived from one scan so the three always add up.
+      tabs: { all: tabTotal, mapped: tabMapped, unmapped: Math.max(0, tabTotal - tabMapped) },
       staleCount: stale.length,
       doubleBookedCount: doubleBooked.length,
       // Echoed so a wrong resolution is visible on the screen rather than

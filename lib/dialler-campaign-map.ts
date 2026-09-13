@@ -142,6 +142,31 @@ export function resolveColumns(source: CampaignSource, present: string[]): Resol
   }
 }
 
+/**
+ * Which SilverSurfer campaigns to list.
+ *
+ *   unmapped  nothing attached yet — the queue of work
+ *   mapped    already has at least one Yaxxa campaign — the review list
+ *   all       everything active
+ */
+export type MapFilter = "all" | "mapped" | "unmapped"
+
+/**
+ * Correlated EXISTS against the map, for the tab filters.
+ *
+ * A JOIN would multiply a campaign by its number of attached Yaxxa campaigns —
+ * a one-to-many mapping joined naively turns a list of campaigns into a list of
+ * pairs, and the pager would then report far more rows than the screen shows.
+ * EXISTS asks the only question the tabs need: is there at least one?
+ */
+export function mapFilterClause(alias: string, cols: ResolvedColumns, mode: MapFilter): string {
+  if (mode === "all") return ""
+  const exists =
+    `EXISTS (SELECT 1 FROM ${MAP_TABLE} m ` +
+    `WHERE m.SS_CAMPAIGNID = CAST(${alias}.${cols.id} AS VARCHAR))`
+  return mode === "mapped" ? exists : `NOT ${exists}`
+}
+
 /** Is a resolved pair usable? Both halves are needed to render a picker. */
 export function isResolved(cols: ResolvedColumns): boolean {
   return Boolean(cols.id && cols.label)
@@ -164,35 +189,42 @@ export function buildCampaigns(
   cols: ResolvedColumns,
   search: string,
   limit: number,
-  offset: number
+  offset: number,
+  /** Only meaningful for the SilverSurfer side; the Yaxxa list has no tabs. */
+  mode: MapFilter = "all"
 ): string {
   const q = search.trim()
   const filter = q
-    ? `(UPPER(${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
-      `OR CAST(${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
+    ? `(UPPER(c.${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
+      `OR CAST(c.${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
     : ""
   // Aliased EXTRA_n rather than by their own names, so the route and the UI do
   // not have to know which columns a given source happens to carry.
-  const extras = cols.extras.map((c, i) => `, ${c} AS EXTRA_${i}`).join("")
+  const extras = cols.extras.map((col, i) => `, c.${col} AS EXTRA_${i}`).join("")
+  // Aliased `c` so the EXISTS subquery has something to correlate against.
   return (
-    `SELECT CAST(${cols.id} AS VARCHAR) AS CAMPAIGN_ID, ${cols.label} AS LABEL${extras}\n` +
-    `  FROM ${source.table}` +
-    whereClauses([source.activeFilter, filter]) +
-    `\n ORDER BY ${cols.label}\n LIMIT ${limit} OFFSET ${offset}`
+    `SELECT CAST(c.${cols.id} AS VARCHAR) AS CAMPAIGN_ID, c.${cols.label} AS LABEL${extras}\n` +
+    `  FROM ${source.table} c` +
+    whereClauses([source.activeFilter, filter, mapFilterClause("c", cols, mode)]) +
+    `\n ORDER BY c.${cols.label}\n LIMIT ${limit} OFFSET ${offset}`
   )
 }
 
 export function buildCampaignCount(
   source: CampaignSource,
   cols: ResolvedColumns,
-  search: string
+  search: string,
+  mode: MapFilter = "all"
 ): string {
   const q = search.trim()
   const filter = q
-    ? `(UPPER(${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
-      `OR CAST(${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
+    ? `(UPPER(c.${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
+      `OR CAST(c.${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
     : ""
-  return `SELECT COUNT(*) AS CNT FROM ${source.table}${whereClauses([source.activeFilter, filter])}`
+  return (
+    `SELECT COUNT(*) AS CNT FROM ${source.table} c` +
+    whereClauses([source.activeFilter, filter, mapFilterClause("c", cols, mode)])
+  )
 }
 
 // -------------------------------------------------------------------- the map
@@ -278,19 +310,32 @@ export function buildDetach(ssId: string, yaxxaId: string): string {
 // ----------------------------------------------------------- health checks
 
 /**
- * Active SilverSurfer campaigns with nothing attached — the queue of work.
+ * How many active campaigns there are, and how many already have something
+ * attached — for the tab labels.
  *
- * Counted rather than listed: the screen already lists them, it just needs to
- * know how many there are in total rather than on this page.
+ * ONE SCAN FOR BOTH. Three separate counts would be three passes over the same
+ * table to draw three numbers that must add up, and any drift between them
+ * would show as tabs whose totals disagree.
+ *
+ * It honours the SEARCH, so the tab counts describe what the current search
+ * would show rather than the whole table — otherwise "Mapped 15" next to an
+ * empty Mapped tab is the obvious confusion.
  */
-export function buildUnmappedCount(cols: ResolvedColumns): string {
+export function buildTabCounts(cols: ResolvedColumns, search: string): string {
+  const q = search.trim()
+  const filter = q
+    ? `(UPPER(c.${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
+      `OR CAST(c.${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
+    : ""
+  // DISTINCT in the CTE because the map is one row per PAIR — a campaign with
+  // three Yaxxa campaigns attached must count once, not three times.
   return (
-    `SELECT COUNT(*) AS CNT\n  FROM ${SS_SOURCE.table} c\n` +
-    whereClauses([
-      SS_SOURCE.activeFilter,
-      `NOT EXISTS (SELECT 1 FROM ${MAP_TABLE} m ` +
-        `WHERE m.SS_CAMPAIGNID = CAST(c.${cols.id} AS VARCHAR))`,
-    ])
+    `WITH MAPPED AS (SELECT DISTINCT SS_CAMPAIGNID FROM ${MAP_TABLE})\n` +
+    `SELECT COUNT(*)                              AS TOTAL,\n` +
+    `       COUNT_IF(m.SS_CAMPAIGNID IS NOT NULL) AS MAPPED\n` +
+    `  FROM ${SS_SOURCE.table} c\n` +
+    `  LEFT JOIN MAPPED m ON m.SS_CAMPAIGNID = CAST(c.${cols.id} AS VARCHAR)` +
+    whereClauses([SS_SOURCE.activeFilter, filter])
   )
 }
 

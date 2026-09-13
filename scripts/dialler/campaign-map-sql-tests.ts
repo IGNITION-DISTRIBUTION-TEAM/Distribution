@@ -29,7 +29,8 @@ import {
   buildMappingsFor,
   buildOwnerOf,
   buildStaleMappings,
-  buildUnmappedCount,
+  buildTabCounts,
+  mapFilterClause,
   isResolved,
   resolveColumns,
 } from "../../lib/dialler-campaign-map"
@@ -108,9 +109,9 @@ console.log("\nbuildCampaigns")
 {
   const sql = buildCampaigns(SS_SOURCE, SS_COLS, "", 25, 0)
   check("applies the active filter", sql.includes("ACTIVE = 1"), sql)
-  check("casts the id so a numeric key still compares as text", sql.includes("CAST(CAMPAIGNID AS VARCHAR)"), sql)
+  check("casts the id so a numeric key still compares as text", sql.includes("CAST(c.CAMPAIGNID AS VARCHAR)"), sql)
   check("paginates", sql.includes("LIMIT 25 OFFSET 0"))
-  check("orders by the readable column", sql.includes("ORDER BY TITLE"), sql)
+  check("orders by the readable column", sql.includes("ORDER BY c.TITLE"), sql)
 }
 {
   const sql = buildCampaigns(YAXXA_SOURCE, Y_COLS, "", 50, 0)
@@ -127,7 +128,7 @@ console.log("\nbuildCampaigns")
   // filtering on a meaning nobody has confirmed.
   check("does NOT filter on CAMP_STATUS", !/WHERE[\s\S]*CAMP_STATUS/.test(sql), sql)
   check("selects the extras it resolved",
-    sql.includes("CAMP_STATUS AS EXTRA_0") && sql.includes("CAMP_DESC AS EXTRA_1"), sql)
+    sql.includes("c.CAMP_STATUS AS EXTRA_0") && sql.includes("c.CAMP_DESC AS EXTRA_1"), sql)
 }
 {
   // A source with no extras must not emit a trailing comma into the SELECT.
@@ -139,7 +140,7 @@ console.log("\nbuildCampaigns")
   const sql = buildCampaigns(SS_SOURCE, SS_COLS, "O'Brien", 25, 0)
   check("the search term is escaped", sql.includes("O''Brien"), sql)
   check("quotes stay balanced", (sql.match(/'/g) || []).length % 2 === 0)
-  check("searches the id as well as the name", sql.includes("CAST(CAMPAIGNID AS VARCHAR) LIKE"), sql)
+  check("searches the id as well as the name", sql.includes("CAST(c.CAMPAIGNID AS VARCHAR) LIKE"), sql)
   check("keeps the active filter alongside the search", sql.includes("ACTIVE = 1"), sql)
 }
 {
@@ -190,8 +191,42 @@ console.log("\nreads and health checks")
   check("owner lookup targets the map table", buildOwnerOf("Y1").includes(MAP_TABLE))
 }
 {
-  const sql = buildUnmappedCount(SS_COLS)
-  check("unmapped counts active campaigns with no row", sql.includes("NOT EXISTS") && sql.includes("ACTIVE = 1"), sql)
+  const sql = buildTabCounts(SS_COLS, "")
+  check("tab counts come from one scan, not three",
+    (sql.match(/SELECT/g) || []).length === 2, sql)
+  check("and report both numbers", sql.includes("AS TOTAL") && sql.includes("AS MAPPED"), sql)
+  // The map is one row per PAIR. Without DISTINCT a campaign with three Yaxxa
+  // campaigns attached would count three times and the tabs would not add up.
+  check("counts a campaign once however many Yaxxa campaigns it has",
+    sql.includes("SELECT DISTINCT SS_CAMPAIGNID"), sql)
+  check("keeps the active filter", sql.includes("ACTIVE = 1"), sql)
+  const searched = buildTabCounts(SS_COLS, "onair")
+  // Otherwise "Mapped 15" sits next to an empty Mapped tab.
+  check("the counts honour the search", searched.includes("'%onair%'"), searched)
+}
+
+console.log("\nmapFilterClause — the tabs")
+{
+  check("all filters nothing", mapFilterClause("c", SS_COLS, "all") === "")
+  const mapped = mapFilterClause("c", SS_COLS, "mapped")
+  const unmapped = mapFilterClause("c", SS_COLS, "unmapped")
+  check("mapped asks for a row", mapped.startsWith("EXISTS ("), mapped)
+  check("unmapped is its negation", unmapped === `NOT ${mapped}`, unmapped)
+  // A JOIN would multiply a campaign by its attached Yaxxa campaigns, and the
+  // pager would then report more rows than the list can show.
+  check("uses EXISTS, not a join", !/JOIN/i.test(mapped), mapped)
+  check("correlates on the aliased id", mapped.includes("CAST(c.CAMPAIGNID AS VARCHAR)"), mapped)
+}
+{
+  const list = buildCampaigns(SS_SOURCE, SS_COLS, "", 25, 0, "mapped")
+  check("the list carries the tab filter", list.includes("EXISTS ("), list)
+  const count = buildCampaignCount(SS_SOURCE, SS_COLS, "", "mapped")
+  // A count on a different filter from the list is how you get a pager
+  // offering pages that come back empty.
+  check("and the count carries the same one", count.includes("EXISTS ("), count)
+  check("all-mode adds no EXISTS to either",
+    !buildCampaigns(SS_SOURCE, SS_COLS, "", 25, 0, "all").includes("EXISTS") &&
+      !buildCampaignCount(SS_SOURCE, SS_COLS, "", "all").includes("EXISTS"))
 }
 {
   const sql = buildStaleMappings(SS_COLS, Y_COLS)
