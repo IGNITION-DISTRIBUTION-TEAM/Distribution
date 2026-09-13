@@ -4745,6 +4745,26 @@ function paceIntradaySales(
   }
 }
 
+/**
+ * Drop dead buckets from the ENDS of a series.
+ *
+ * A dialler day runs roughly 07:30 to 17:30; the other thirty-odd half-hours
+ * are flat zero and were eating two thirds of the x-axis, squashing the shape
+ * that the chart exists to show.
+ *
+ * INTERIOR GAPS ARE KEPT, deliberately. A zero in the middle of a trading day
+ * is a fact — an outage, a campaign paused for an hour — and closing it up
+ * would redraw that gap as continuity, which is the sort of quiet edit a chart
+ * should never make. Only the empty ends go.
+ */
+function trimEmptyEdges<T>(series: T[], isEmpty: (row: T) => boolean): T[] {
+  let start = 0
+  let end = series.length - 1
+  while (start <= end && isEmpty(series[start])) start++
+  while (end >= start && isEmpty(series[end])) end--
+  return start > end ? [] : series.slice(start, end + 1)
+}
+
 /** Colour for a predicted series. Emerald is the actual line; violet separates
  *  from it at dE 29.6 under deuteranopia (orange manages only 10.8), and matches
  *  "predicted" in the quality mix outlook. */
@@ -6144,6 +6164,16 @@ type DiallerData = {
     avgScore: number | null
   }
   byBucket: { bucket: string; leads: number }[]
+  /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
+  bucketProfile?: {
+    buckets: { bucket: string; share: number }[]
+    days: number
+    from: string
+    to: string
+  }
+  /** Trailing daily series the forecast is fitted on. Multi-day view only. */
+  dailyHistory?: { date: string; leads: number }[]
+  historyFrom?: string | null
   byStatus: { status: string; leads: number }[]
   byCampaign: { campaignName: string; leads: number }[]
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
@@ -6535,11 +6565,74 @@ function DiallerResolutionNotes({
   )
 }
 
+type DiallerChartRow = {
+  bucket: string
+  leads: number | null
+  predicted: number | null
+  projected?: boolean
+}
+
 function DiallerSummary({ data }: { data: DiallerData }) {
   const chartMotion = useChartMotion()
   const dateLabel =
     data.startDate === data.endDate ? data.startDate : `${data.startDate} → ${data.endDate}`
   const avgPerDay = data.totals.days > 0 ? data.totals.totalLeads / data.totals.days : 0
+
+  // A projection of a day that has already finished is not a forecast, so the
+  // single-day line is described differently depending on whether the selected
+  // day is still running. The arithmetic is the same either way: the historical
+  // half-hour shape scaled to the day's own volume.
+  const isToday = data.startDate === data.endDate && data.startDate === todayLocalIso()
+
+  // Both estimators are the Sales report's, unchanged — same series shape, same
+  // problem. Leads are mapped onto their `sales` field rather than copied into
+  // a second implementation that would drift from it.
+  const intraday = useMemo(() => {
+    const profile = data.bucketProfile
+    if (data.granularity !== "halfHour" || !profile || profile.buckets.length === 0) return null
+    return paceIntradaySales(
+      data.byBucket.map((b) => ({ date: b.bucket, sales: b.leads })),
+      profile.buckets.map((p) => ({ hour: p.bucket, share: p.share })),
+      profile.days
+    )
+  }, [data.granularity, data.bucketProfile, data.byBucket])
+
+  const forecast = useMemo(() => {
+    if (data.granularity !== "day") return null
+    return forecastDailySales(
+      (data.dailyHistory ?? []).map((d) => ({ date: d.date, sales: d.leads })),
+      data.byBucket.map((b) => ({ date: b.bucket, sales: b.leads })),
+      14
+    )
+  }, [data.granularity, data.dailyHistory, data.byBucket])
+
+  const chartSeries = useMemo<DiallerChartRow[]>(() => {
+    const rows: DiallerChartRow[] = forecast
+      ? forecast.merged.map((m) => ({
+          bucket: m.date,
+          leads: m.sales,
+          predicted: m.predicted,
+          projected: m.projected,
+        }))
+      : intraday
+      ? intraday.series.map((r) => ({
+          bucket: r.hour,
+          leads: r.sales,
+          predicted: r.predicted,
+        }))
+      : data.byBucket.map((b) => ({ bucket: b.bucket, leads: b.leads, predicted: null }))
+
+    // Under a lead a half-hour is not activity, it is the profile's rounding.
+    // Without this the projected line keeps the dead hours alive at 0.3 leads
+    // and nothing gets trimmed.
+    return trimEmptyEdges(
+      rows,
+      (r) => (r.leads ?? 0) === 0 && (r.predicted ?? 0) < 1 && !r.projected
+    )
+  }, [forecast, intraday, data.byBucket])
+
+  const hasPrediction = Boolean(forecast || intraday)
+  const trimmed = Math.max(0, data.byBucket.length - chartSeries.filter((r) => !r.projected).length)
 
   return (
     <>
@@ -6568,7 +6661,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
       </div>
 
       {/* Leads over time / by half-hour */}
-      {data.byBucket.length > 0 && (
+      {chartSeries.length > 0 && (
         <Card>
           <div className="mb-2">
             <SectionHeading>
@@ -6585,12 +6678,19 @@ function DiallerSummary({ data }: { data: DiallerData }) {
                   per <span className="font-mono">CALL_START_TIME</span> · {dateLabel}
                 </>
               )}
+              {trimmed > 0 && (
+                <>
+                  {" "}
+                  · {trimmed} empty {data.granularity === "halfHour" ? "half-hour" : "day"}
+                  {trimmed === 1 ? "" : "s"} trimmed from the ends
+                </>
+              )}
             </p>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={data.byBucket}
+                data={chartSeries}
                 margin={{ top: 10, right: 16, bottom: 0, left: -10 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -6612,7 +6712,22 @@ function DiallerSummary({ data }: { data: DiallerData }) {
                     borderRadius: "0.5rem",
                     fontSize: "0.875rem",
                   }}
+                  formatter={(value, name) => [Math.round(Number(value)).toLocaleString(), name]}
                 />
+                {hasPrediction && <Legend wrapperStyle={{ fontSize: "0.75rem" }} />}
+                {forecast?.firstProjectedDate && (
+                  <ReferenceLine
+                    x={forecast.firstProjectedDate}
+                    stroke="hsl(var(--muted-foreground))"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: "forecast",
+                      position: "insideTopRight",
+                      fill: "hsl(var(--muted-foreground))",
+                      fontSize: 10,
+                    }}
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="leads"
@@ -6621,11 +6736,106 @@ function DiallerSummary({ data }: { data: DiallerData }) {
                   strokeWidth={2}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
+                  // The actuals must STOP where the data stops. Joining across
+                  // the null tail would draw the forecast window as if it had
+                  // been observed.
+                  connectNulls={false}
                 {...chartMotion}
                 />
+                {hasPrediction && (
+                  <Line
+                    type="monotone"
+                    dataKey="predicted"
+                    name={
+                      intraday
+                        ? isToday
+                          ? "Expected pace"
+                          : "Typical shape"
+                        : "Predicted"
+                    }
+                    stroke={PREDICTED_LINE}
+                    strokeWidth={2}
+                    strokeDasharray="5 4"
+                    dot={false}
+                    connectNulls
+                  {...chartMotion}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
+          {intraday && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              {isToday ? (
+                <p>
+                  On pace for{" "}
+                  <span className="font-mono text-foreground">
+                    {Math.round(intraday.dayTotal).toLocaleString()}
+                  </span>{" "}
+                  leads today —{" "}
+                  <span className="font-mono">{intraday.soFar.toLocaleString()}</span> so far, from{" "}
+                  {intraday.basisHours} completed half-hour
+                  {intraday.basisHours === 1 ? "" : "s"} carrying{" "}
+                  <span className="font-mono">{(intraday.elapsedShare * 100).toFixed(0)}%</span> of
+                  a typical day.
+                  {intraday.elapsedShare < 0.25 && (
+                    <span className="text-amber-200">
+                      {" "}
+                      Early in the day this swings on small numbers — treat it as indicative.
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p>
+                  This day is over, so the dashed line is not a forecast: it is how the last{" "}
+                  {intraday.profileDays} day{intraday.profileDays === 1 ? "" : "s"} normally run,
+                  scaled to this day&apos;s own volume. Read it as shape against shape — where the
+                  green sits above or below it is where this day was busier or quieter than usual.
+                </p>
+              )}
+              <p>
+                Built from the half-hour shape of the four weeks before{" "}
+                {data.bucketProfile?.from && <>({data.bucketProfile.from} to {data.bucketProfile.to})</>}
+                , under the same campaign and call-status filters. The in-progress half-hour is left
+                out of the basis, since it always under-reports and would drag the projection low
+                all day.
+              </p>
+            </div>
+          )}
+          {forecast && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <p>
+                Predicted line: the day-of-week pattern times the trend of the deseasonalised
+                series, projected {forecast.horizon} days
+                {data.historyFrom && <> · fitted on leads since {data.historyFrom}</>}.
+                {forecast.mape !== null && (
+                  <>
+                    {" "}
+                    Across the history shown it lands within{" "}
+                    <span className="font-mono text-foreground">{forecast.mape.toFixed(1)}%</span>{" "}
+                    of actual on average
+                  </>
+                )}
+                {Math.abs(forecast.slopePerDay) >= 1 && (
+                  <>
+                    , on an underlying trend of{" "}
+                    <span
+                      className={forecast.slopePerDay > 0 ? "text-emerald-300" : "text-rose-300"}
+                    >
+                      {forecast.slopePerDay > 0 ? "+" : ""}
+                      {Math.round(forecast.slopePerDay).toLocaleString()} leads/day
+                    </span>
+                  </>
+                )}
+                .
+              </p>
+              <p>
+                It extrapolates the recent pattern and nothing else — a campaign starting or
+                stopping, or a decision to push volume, are invisible to it. Judge it by the gap
+                between the two lines over history, not by how far the dashes reach.
+              </p>
+            </div>
+          )}
         </Card>
       )}
 

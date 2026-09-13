@@ -19,6 +19,23 @@ function escSql(s: string): string {
 }
 
 /**
+ * The half-hour bucket, shifted +2h for SAST.
+ *
+ * ONE definition, used by the time series, the heatgrid AND the historical
+ * profile. The projection is drawn against the actuals on the same axis, so if
+ * the profile bucketed an hour differently the two lines would be offset from
+ * each other by half an hour and nothing on screen would say so.
+ */
+const HALF_HOUR_BUCKET = "TO_CHAR(TIMEADD(HOUR, 2, TIME_BUCKET_30MIN), 'HH24:MI')"
+
+/** Shift an ISO date by whole days, in UTC so it cannot land a day out. */
+function dayShift(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
  * THE CAMPAIGN FILTER IS A MAPPED FILTER, NOT A NAME MATCH.
  *
  * This view's only campaign column is CAMPAIGN_NAME, and that name comes from
@@ -56,6 +73,9 @@ type Resolution = {
 
 const EMPTY_FIGURES = {
   totals: { totalLeads: 0, rows: 0, days: 0, campaigns: 0, avgScore: null as number | null },
+  bucketProfile: { buckets: [] as { bucket: string; share: number }[], days: 0, from: "", to: "" },
+  dailyHistory: [] as { date: string; leads: number }[],
+  historyFrom: null as string | null,
   byBucket: [] as { bucket: string; leads: number }[],
   byStatus: [] as { status: string; leads: number }[],
   byCampaign: [] as { campaignName: string; leads: number }[],
@@ -185,7 +205,30 @@ export async function GET(request: NextRequest) {
       ${inClause("CALL_STATUS", callStatuses)}
   `
 
-    const [totals, byBucket, byStatus, byCampaign, byScoreDate] = await Promise.all([
+    // For the single-day view the half-hour shape has to come from OTHER days —
+    // the selected one is the thing being projected. Every filter is reused
+    // except the date; four weeks back, ending the day before.
+    const profileStart = dayShift(startDate, -28)
+    const profileEnd = dayShift(startDate, -1)
+    const profileWhere = `
+    WHERE ${campaignFilter}
+      CALL_START_TIME BETWEEN '${profileStart}' AND '${profileEnd}'
+      ${inClause("CALL_STATUS", callStatuses)}
+  `
+
+    // The daily forecast must not depend on how wide a range the user happened
+    // to pick — "this month" is about three weeks and cannot support
+    // day-of-week factors on its own — so it always fits on 12 trailing weeks
+    // ending at the selected end date.
+    const historyStart = dayShift(endDate, -84)
+    const historyWhere = `
+    WHERE ${campaignFilter}
+      CALL_START_TIME BETWEEN '${historyStart}' AND '${endDate}'
+      ${inClause("CALL_STATUS", callStatuses)}
+  `
+
+    const [totals, byBucket, byStatus, byCampaign, byScoreDate, bucketProfile, dailyHistory] =
+      await Promise.all([
       executeSnowflakeQuery<{
         TOTAL_LEADS: number | string | null
         TOTAL_ROWS: number | string
@@ -207,7 +250,7 @@ export async function GET(request: NextRequest) {
       executeSnowflakeQuery<{ BUCKET: string; LEADS: number | string | null }>(
         startDate === endDate
           ? `SELECT
-               TO_CHAR(TIMEADD(HOUR, 2, TIME_BUCKET_30MIN), 'HH24:MI') AS BUCKET,
+               ${HALF_HOUR_BUCKET} AS BUCKET,
                SUM(LEADS) AS LEADS
              FROM ${VIEW}
              ${where}
@@ -248,7 +291,7 @@ export async function GET(request: NextRequest) {
         startDate === endDate
           ? `SELECT
                COALESCE(NULLIF(TRIM(SCOREGROUP), ''), '(none)') AS SCOREGROUP,
-               TO_CHAR(TIMEADD(HOUR, 2, TIME_BUCKET_30MIN), 'HH24:MI') AS DAY,
+               ${HALF_HOUR_BUCKET} AS DAY,
                SUM(LEADS) AS LEADS
              FROM ${VIEW}
              ${where}
@@ -264,6 +307,40 @@ export async function GET(request: NextRequest) {
              ORDER BY 1, 2`,
         SF_OPTS
       ),
+      // Half-hour-of-day shape over the trailing four weeks, for the intraday
+      // projection. Same bucket expression as the series above, so the two line
+      // up on the axis. Not asked for on a multi-day range.
+      startDate === endDate
+        ? executeSnowflakeQuery<{
+            BUCKET: string
+            LEADS: number | string | null
+            DAYS: number | string
+          }>(
+            `SELECT
+               ${HALF_HOUR_BUCKET} AS BUCKET,
+               SUM(LEADS) AS LEADS,
+               COUNT(DISTINCT TO_CHAR(CALL_START_TIME, 'YYYY-MM-DD')) AS DAYS
+             FROM ${VIEW}
+             ${profileWhere}
+             GROUP BY 1
+             ORDER BY 1`,
+            SF_OPTS
+          )
+        : Promise.resolve([]),
+      // Daily series for FITTING the forecast — deliberately wider than the
+      // selected range. Not asked for on a single day, which uses the profile.
+      startDate === endDate
+        ? Promise.resolve([])
+        : executeSnowflakeQuery<{ BUCKET: string; LEADS: number | string | null }>(
+            `SELECT
+               TO_CHAR(CALL_START_TIME, 'YYYY-MM-DD') AS BUCKET,
+               SUM(LEADS) AS LEADS
+             FROM ${VIEW}
+             ${historyWhere}
+             GROUP BY 1
+             ORDER BY 1`,
+            SF_OPTS
+          ),
     ])
 
     const t = totals[0] ?? {}
@@ -301,6 +378,31 @@ export async function GET(request: NextRequest) {
         avgScore: numFloat(t.AVG_SCORE),
       },
       byBucket: byBucket.map((r) => ({ bucket: r.BUCKET, leads: num(r.LEADS) })),
+      // Share of a day's leads landing in each half-hour, over the trailing
+      // window. Empty on a multi-day range.
+      bucketProfile: (() => {
+        const rows = bucketProfile as {
+          BUCKET: string
+          LEADS: number | string | null
+          DAYS: number | string
+        }[]
+        const total = rows.reduce((a, r) => a + num(r.LEADS), 0)
+        if (!(total > 0)) return { buckets: [], days: 0, from: profileStart, to: profileEnd }
+        return {
+          buckets: rows.map((r) => ({ bucket: r.BUCKET, share: num(r.LEADS) / total })),
+          // The busiest bucket's day count, not the sum: a bucket nobody dials
+          // in would otherwise drag the reported basis below the real one.
+          days: Math.max(...rows.map((r) => Number(r.DAYS) || 0), 0),
+          from: profileStart,
+          to: profileEnd,
+        }
+      })(),
+      // Trailing daily series the forecast is fitted on, independent of the
+      // selected range. Empty on a single-day view.
+      dailyHistory: (dailyHistory as { BUCKET: string; LEADS: number | string | null }[]).map(
+        (r) => ({ date: r.BUCKET, leads: num(r.LEADS) })
+      ),
+      historyFrom: historyStart,
       byStatus: byStatus.map((r) => ({
         status: r.CALL_STATUS ?? "(none)",
         leads: num(r.LEADS),
