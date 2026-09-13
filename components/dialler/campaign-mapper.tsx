@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react"
 import { Link2, Plus, Search, X } from "lucide-react"
 import { toast } from "sonner"
 import { Banner } from "@/components/kit/banner"
+import { DEFAULT_PAGE_SIZE, Pager } from "@/components/kit/pager"
 import { SectionHeading } from "@/components/kit/heading"
 import { SkeletonPanel } from "@/components/kit/skeleton"
 import { Button } from "@/components/ui/button"
@@ -36,7 +37,14 @@ type YaxxaCampaign = {
 }
 type Resolved = { table: string; id: string | null; label: string | null }
 
-const PAGE = 25
+/**
+ * The Yaxxa picker asks for this many and no more.
+ *
+ * Not paged, deliberately — see the truncation notice below. Paging inside a
+ * dropdown loses your place; typing three letters of the campaign name does
+ * not.
+ */
+const YAXXA_PICKER_LIMIT = 50
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const text = await res.text()
@@ -55,6 +63,7 @@ export function CampaignMapper() {
   const [campaigns, setCampaigns] = useState<SsCampaign[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -68,15 +77,16 @@ export function CampaignMapper() {
   const [yaxxaSearch, setYaxxaSearch] = useState("")
   const [yaxxaRows, setYaxxaRows] = useState<YaxxaCampaign[]>([])
   const [yaxxaExtraColumns, setYaxxaExtraColumns] = useState<string[]>([])
+  const [yaxxaTotal, setYaxxaTotal] = useState(0)
   const [yaxxaLoading, setYaxxaLoading] = useState(false)
   const [showTaken, setShowTaken] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
-  const load = useCallback(async (q: string, off: number) => {
+  const load = useCallback(async (q: string, off: number, size: number) => {
     setLoading(true)
     setError(null)
     try {
-      const params = new URLSearchParams({ search: q, limit: String(PAGE), offset: String(off) })
+      const params = new URLSearchParams({ search: q, limit: String(size), offset: String(off) })
       const res = await fetch(`/api/dialler/campaign-map?${params}`, { cache: "no-store" })
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
@@ -95,19 +105,20 @@ export function CampaignMapper() {
   }, [])
 
   useEffect(() => {
-    const t = setTimeout(() => void load(search, offset), 250)
+    const t = setTimeout(() => void load(search, offset, pageSize), 250)
     return () => clearTimeout(t)
-  }, [search, offset, load])
+  }, [search, offset, pageSize, load])
 
   const loadYaxxa = useCallback(async (q: string) => {
     setYaxxaLoading(true)
     try {
-      const params = new URLSearchParams({ search: q, limit: "50" })
+      const params = new URLSearchParams({ search: q, limit: String(YAXXA_PICKER_LIMIT) })
       const res = await fetch(`/api/dialler/campaign-map/yaxxa?${params}`, { cache: "no-store" })
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       setYaxxaRows((data.campaigns as YaxxaCampaign[]) ?? [])
       setYaxxaExtraColumns((data.extraColumns as string[]) ?? [])
+      setYaxxaTotal(Number(data.total ?? 0))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setYaxxaRows([])
@@ -122,7 +133,7 @@ export function CampaignMapper() {
     return () => clearTimeout(t)
   }, [pickerFor, yaxxaSearch, loadYaxxa])
 
-  const pager = pageInfo(total, PAGE, offset)
+  const pager = pageInfo(total, pageSize, offset)
 
   const attach = async (ss: SsCampaign, y: YaxxaCampaign) => {
     if (y.ownedBy && y.ownedBy.ssId !== ss.id) {
@@ -156,7 +167,7 @@ export function CampaignMapper() {
           ? `Moved "${y.name}" from ${moved.ssTitle || moved.ssId}`
           : `Attached "${y.name}"`
       )
-      await Promise.all([load(search, offset), loadYaxxa(yaxxaSearch)])
+      await Promise.all([load(search, offset, pageSize), loadYaxxa(yaxxaSearch)])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -175,7 +186,7 @@ export function CampaignMapper() {
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       toast.success("Detached")
-      await load(search, offset)
+      await load(search, offset, pageSize)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -263,35 +274,20 @@ export function CampaignMapper() {
           />
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            {total === 0 ? "No active campaigns" : `Showing ${pager.from}–${pager.to} of ${total}`}
-          </span>
-          {pager.pages > 1 && (
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!pager.canPrev}
-                onClick={() => setOffset(pager.prevOffset)}
-              >
-                Previous
-              </Button>
-              <span>
-                Page {pager.page} of {pager.pages}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!pager.canNext}
-                onClick={() => setOffset(pager.nextOffset)}
-              >
-                Next
-              </Button>
-            </div>
-          )}
+        <div className="mt-3">
+          <Pager
+            info={pager}
+            total={total}
+            pageSize={pageSize}
+            noun="active campaigns"
+            showSize
+            onOffset={setOffset}
+            onPageSize={(size) => {
+              // Back to page 1: page 3 of 50-a-page does not exist at 200.
+              setPageSize(size)
+              setOffset(0)
+            }}
+          />
         </div>
 
         {loading ? (
@@ -361,6 +357,13 @@ export function CampaignMapper() {
                       placeholder="Search Yaxxa campaigns…"
                       className="h-8 text-xs"
                     />
+                    {yaxxaTotal > yaxxaRows.length && (
+                      <p className="mt-1.5 text-xs text-amber-200">
+                        Showing the first {yaxxaRows.length} of {yaxxaTotal} — type a few letters
+                        of the campaign name to narrow it. A campaign missing from this list is
+                        not necessarily missing from the dialler.
+                      </p>
+                    )}
                     <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                       <input
                         type="checkbox"
@@ -446,6 +449,19 @@ export function CampaignMapper() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {pager.pages > 1 && (
+          <div className="mt-4">
+            <Pager
+              info={pager}
+              total={total}
+              pageSize={pageSize}
+              noun="active campaigns"
+              onOffset={setOffset}
+              onPageSize={setPageSize}
+            />
           </div>
         )}
       </Card>

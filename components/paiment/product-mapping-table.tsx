@@ -24,32 +24,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import {
-  AlertTriangle,
-  ChevronFirst,
-  ChevronLast,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react"
+import { AlertTriangle, Plus, Search, Trash2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Banner } from "@/components/kit/banner"
+import { DEFAULT_PAGE_SIZE, Pager } from "@/components/kit/pager"
 import { SectionHeading } from "@/components/kit/heading"
 import { SkeletonRows } from "@/components/kit/skeleton"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -58,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { pageInfo, type PageInfo } from "@/lib/pagination"
+import { pageInfo } from "@/lib/pagination"
 
 type Mapping = {
   productName: string
@@ -98,114 +81,6 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
         : `HTTP ${res.status}: ${text.slice(0, 200)}`
     )
   }
-}
-
-/**
- * 50 by default rather than 100. The live mapping runs to thousands of rows and
- * a hundred of them is a long scroll before you reach anything — which is what
- * made the old bottom-only pager unusable.
- */
-const PAGE_SIZES = [25, 50, 100, 200] as const
-const DEFAULT_PAGE_SIZE = 50
-
-/**
- * Rendered ABOVE and below the table.
- *
- * Above is the one that matters: with a page of rows between you and the
- * controls, changing page meant scrolling past everything you had just read.
- * Below stays because that is where your eye is when you finish a page.
- *
- * First and Last are here because Next-repeatedly is not navigation when the
- * table runs to thousands of rows. The arithmetic is all in lib/pagination.ts
- * so the boundaries are tested rather than eyeballed.
- */
-function Pager({
-  info,
-  total,
-  pageSize,
-  onOffset,
-  onPageSize,
-  showSize,
-}: {
-  info: PageInfo
-  total: number
-  pageSize: number
-  onOffset: (offset: number) => void
-  onPageSize: (size: number) => void
-  /** Only the top pager carries the size selector; two would just disagree. */
-  showSize?: boolean
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-muted-foreground">
-          {total === 0 ? "No products" : `Showing ${info.from}–${info.to} of ${total}`}
-        </span>
-        {showSize && (
-          <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
-            <SelectTrigger className="h-8 w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZES.map((n) => (
-                <SelectItem key={n} value={String(n)}>
-                  {n} a page
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
-
-      {info.pages > 1 && (
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="First page"
-            disabled={!info.canPrev}
-            onClick={() => onOffset(0)}
-          >
-            <ChevronFirst className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!info.canPrev}
-            onClick={() => onOffset(info.prevOffset)}
-          >
-            <ChevronLeft className="mr-1 h-4 w-4" />
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {info.page} of {info.pages}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!info.canNext}
-            onClick={() => onOffset(info.nextOffset)}
-          >
-            Next
-            <ChevronRight className="ml-1 h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="Last page"
-            disabled={!info.canNext}
-            onClick={() => onOffset(info.lastOffset)}
-          >
-            <ChevronLast className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function ProductMappingTable() {
@@ -530,6 +405,7 @@ export function ProductMappingTable() {
             info={pager}
             total={total}
             pageSize={pageSize}
+            noun="products"
             showSize
             onOffset={setOffset}
             onPageSize={(size) => {
@@ -608,6 +484,7 @@ export function ProductMappingTable() {
               info={pager}
               total={total}
               pageSize={pageSize}
+              noun="products"
               onOffset={setOffset}
               onPageSize={setPageSize}
             />
