@@ -12,17 +12,44 @@
 --     single-day views bucket on that column, shifted +2 hours for SAST; the
 --     multi-day views bucket on CALL_START_TIME as a date.
 --
--- Campaigns are matched BY NAME (CAMPAIGN_NAME), not by id. The report passes
--- the campaign titles it shows in the picker. No campaign selected sends no
--- predicate at all, so the whole book is returned.
+-- CAMPAIGNS COME THROUGH THE MAPPING, NOT BY NAME. This used to say the report
+-- passed the SilverSurfer titles from its picker straight into CAMPAIGN_NAME,
+-- which is a YAXXA name — so it matched only where the two systems happened to
+-- spell a campaign identically. That was fixed: the picker now sends
+-- SilverSurfer campaign IDS, and the route translates them through
+-- DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_DIALLER_MAP into Yaxxa names.
+-- Section 0 is that translation. No campaign selected sends no predicate at
+-- all, so the whole book is returned.
 --
--- Replace the WHERE below to match what the report sends. The report builds it
+-- Replace the WHERE below to match what the report sends. The route builds it
 -- as:
---     WHERE [CAMPAIGN_NAME IN (...) AND]
+--     WHERE [TRIM(UPPER(CAMPAIGN_NAME)) IN (...) AND]
 --       CALL_START_TIME BETWEEN '<start>' AND '<end>'
 --       [AND CALL_STATUS IN (...)]
 -- with the campaign and status predicates omitted entirely when nothing is
--- selected.
+-- selected. The comparison is trimmed and upper-cased on both sides, because
+-- nothing guarantees this view spells a name the way CAMPAIGN_MASTER does.
+--
+-- Credit scores are NOT in this file — they cannot be joined to a view with no
+-- id on it. See scripts/dialler/02-credit-scores.sql.
+
+
+-- ============================================================================
+-- 0. Selected campaigns → the Yaxxa names the filter uses
+--    What the route runs before anything else, given the ids from the picker.
+-- ============================================================================
+WITH SEL AS (SELECT * FROM VALUES ('608'), ('11204') AS v(SS_CAMPAIGNID))
+SELECT s.SS_CAMPAIGNID,
+       m.YAXXA_CAMPAIGNID,
+       IFNULL(NULLIF(TRIM(y.CAMP_NAME), ''), m.YAXXA_NAME) AS YAXXA_NAME
+  FROM SEL s
+  LEFT JOIN DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_DIALLER_MAP m
+         ON m.SS_CAMPAIGNID = s.SS_CAMPAIGNID
+  LEFT JOIN DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER y
+         ON CAST(y.CAMP_ID AS VARCHAR) = m.YAXXA_CAMPAIGNID
+ ORDER BY s.SS_CAMPAIGNID, YAXXA_NAME;
+-- A row with a NULL YAXXA_CAMPAIGNID is a campaign nobody has mapped. Its
+-- activity is absent from every figure below, and the report says so.
 
 
 -- ============================================================================
@@ -33,7 +60,11 @@ SELECT
     COUNT(*)                          AS TOTAL_ROWS,
     COUNT(DISTINCT CALL_START_TIME)   AS DISTINCT_DAYS,
     COUNT(DISTINCT CAMPAIGN_NAME)     AS DISTINCT_CAMPAIGNS,
-    AVG(SCORE)                        AS AVG_SCORE
+    -- ZERO IS THE UNSCORED SENTINEL, not a score of nought. This was a bare
+    -- AVG(SCORE), which averaged every unscored lead in as a zero and
+    -- understated the tile. The count comes back so the exclusion is visible.
+    AVG(IFF(SCORE > 0, SCORE, NULL))  AS AVG_SCORE,
+    COUNT_IF(NVL(SCORE, 0) = 0)       AS UNSCORED_ROWS
 FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_DIALLER_STATS
 WHERE CALL_START_TIME BETWEEN '2026-08-01' AND '2026-08-21';
 

@@ -28,6 +28,35 @@ function escSql(s: string): string {
  */
 const HALF_HOUR_BUCKET = "TO_CHAR(TIMEADD(HOUR, 2, TIME_BUCKET_30MIN), 'HH24:MI')"
 
+/**
+ * The score band for the heatgrid.
+ *
+ * SCOREGROUP IS EMPTY ON THIS VIEW. The grid was rendering every lead in a
+ * single '(none)' row — one band, no breakdown, the whole point of the panel
+ * gone — and it read as "these leads have no score" rather than "this column is
+ * not populated". scripts/dialler-stats.sql section 6b flagged the risk; the
+ * report confirmed it.
+ *
+ * So the band is derived from SCORE when SCOREGROUP is blank, using the same
+ * expression as app/api/dashboard/leads-loaded/route.ts:146 so the Distributed
+ * report and this one band a lead identically. A score of 0 is the UNSCORED
+ * sentinel and stays '(none)' — that is a real answer, not a missing one.
+ *
+ * If the grid is still one '(none)' row after this, SCORE is empty here too and
+ * the credit panel below it is the only place scores exist.
+ */
+const SCORE_BAND = `COALESCE(
+             NULLIF(TRIM(SCOREGROUP), ''),
+             CASE
+               WHEN TRY_TO_NUMBER(SCORE) IS NULL OR TRY_TO_NUMBER(SCORE) <= 0 THEN NULL
+               WHEN TRY_TO_NUMBER(SCORE) < 600 THEN '0-599'
+               WHEN TRY_TO_NUMBER(SCORE) >= 900 THEN '900+'
+               ELSE TO_VARCHAR(FLOOR(TRY_TO_NUMBER(SCORE) / 50) * 50) || '-'
+                 || TO_VARCHAR(FLOOR(TRY_TO_NUMBER(SCORE) / 50) * 50 + 49)
+             END,
+             '(none)'
+           )`
+
 /** Shift an ISO date by whole days, in UTC so it cannot land a day out. */
 function dayShift(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`)
@@ -71,11 +100,145 @@ type Resolution = {
   namesWithNoRows: string[]
 }
 
+const SCORE_VIEW = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_DIALLER_CREDIT_SCORES"
+const MAP_VIEW_FOR_SCORES = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_CAMPAIGN_DIALLER_MAP"
+
+type ScoreRow = {
+  SCOREGROUP3: string | null
+  LEADS: number | string
+  SCORED_LEADS: number | string
+  UNSCORED_LEADS: number | string
+  NO_CREDIT_SNAPSHOT: number | string
+  SUM_SCORE3: number | string | null
+  SUM_SALARY: number | string | null
+  SALARY_LEADS: number | string
+  SUM_AVAILABLE_SPEND: number | string | null
+  AVAILABLE_SPEND_LEADS: number | string
+  SUM_CREDIT_RATIO: number | string | null
+  CREDIT_RATIO_LEADS: number | string
+  DEBT_REVIEW: number | string
+  SEQUESTRATION: number | string
+  ADMIN_ORDER: number | string
+  DECEASED: number | string
+  JUDGEMENT_12M: number | string
+  DEFAULTS_12M: number | string
+  NO_CREDIT_INFO: number | string
+}
+
+/**
+ * Credit scores for the selected campaigns.
+ *
+ * READS A DIFFERENT POPULATION FROM THE REST OF THE PAGE, and the screen says
+ * so. Every other figure here counts leads CALLED, from VW_DIALLER_STATS.
+ * These count leads DISTRIBUTED, from the HLL — the dialler view is
+ * pre-aggregated and carries no id, so there is nothing to join credit data
+ * onto. The two are not the same number and must never be added.
+ *
+ * FILTERED ON THE SILVERSURFER CAMPAIGN, which is what the picker sends anyway.
+ * Aggregating the scores up to Yaxxa campaign names would fan out: one
+ * SilverSurfer campaign feeds many Yaxxa campaigns, so a campaign running on
+ * three dialler campaigns would have each of its distributed leads counted
+ * three times. Nothing in the HLL says which Yaxxa campaign a lead ended up on
+ * — that is exactly what the dialler knows and the HLL does not.
+ *
+ * With NOTHING selected the report covers the whole dialler book, so the scores
+ * are narrowed to campaigns that HAVE a dialler mapping. Otherwise this panel
+ * would quietly include every campaign in the business, dialler or not.
+ */
+function buildScoreQuery(ssIds: string[], startDate: string, endDate: string): string {
+  const scope =
+    ssIds.length > 0
+      ? `SS_CAMPAIGNID IN (${ssIds.map((id) => `'${escSql(id)}'`).join(",")})`
+      : `EXISTS (SELECT 1 FROM ${MAP_VIEW_FOR_SCORES} m WHERE m.SS_CAMPAIGNID = s.SS_CAMPAIGNID)`
+  return `SELECT SCOREGROUP3,
+                 SUM(LEADS) AS LEADS,
+                 SUM(SCORED_LEADS) AS SCORED_LEADS,
+                 SUM(UNSCORED_LEADS) AS UNSCORED_LEADS,
+                 SUM(NO_CREDIT_SNAPSHOT) AS NO_CREDIT_SNAPSHOT,
+                 SUM(SUM_SCORE3) AS SUM_SCORE3,
+                 SUM(SUM_SALARY) AS SUM_SALARY,
+                 SUM(SALARY_LEADS) AS SALARY_LEADS,
+                 SUM(SUM_AVAILABLE_SPEND) AS SUM_AVAILABLE_SPEND,
+                 SUM(AVAILABLE_SPEND_LEADS) AS AVAILABLE_SPEND_LEADS,
+                 SUM(SUM_CREDIT_RATIO) AS SUM_CREDIT_RATIO,
+                 SUM(CREDIT_RATIO_LEADS) AS CREDIT_RATIO_LEADS,
+                 SUM(DEBT_REVIEW) AS DEBT_REVIEW,
+                 SUM(SEQUESTRATION) AS SEQUESTRATION,
+                 SUM(ADMIN_ORDER) AS ADMIN_ORDER,
+                 SUM(DECEASED) AS DECEASED,
+                 SUM(JUDGEMENT_12M) AS JUDGEMENT_12M,
+                 SUM(DEFAULTS_12M) AS DEFAULTS_12M,
+                 SUM(NO_CREDIT_INFO) AS NO_CREDIT_INFO
+            FROM ${SCORE_VIEW} s
+           WHERE ${scope}
+             AND LOAD_DATE BETWEEN '${startDate}' AND '${endDate}'
+           GROUP BY 1
+           ORDER BY 1`
+}
+
+/**
+ * Roll the bands up into one set of figures.
+ *
+ * SUMS DIVIDED BY THEIR OWN COUNTS, never an average of the view's averages —
+ * that would weight a band of 9 leads the same as one of 9,000. And each
+ * measure uses its OWN denominator: salary is populated on a different set of
+ * leads from score, so one shared count would be wrong for at least one of
+ * them.
+ */
+function summariseScores(rows: ScoreRow[]) {
+  const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0)
+  const sum = (pick: (r: ScoreRow) => unknown) => rows.reduce((a, r) => a + n(pick(r)), 0)
+  const ratio = (total: number, count: number) => (count > 0 ? total / count : null)
+
+  const leads = sum((r) => r.LEADS)
+  const scored = sum((r) => r.SCORED_LEADS)
+  const salaryLeads = sum((r) => r.SALARY_LEADS)
+  const spendLeads = sum((r) => r.AVAILABLE_SPEND_LEADS)
+  const ratioLeads = sum((r) => r.CREDIT_RATIO_LEADS)
+
+  return {
+    bands: rows.map((r) => ({
+      band: (r.SCOREGROUP3 ?? "(none)").trim() || "(none)",
+      leads: n(r.LEADS),
+      scored: n(r.SCORED_LEADS),
+      avgScore: ratio(n(r.SUM_SCORE3), n(r.SCORED_LEADS)),
+    })),
+    totals: {
+      leads,
+      scored,
+      unscored: sum((r) => r.UNSCORED_LEADS),
+      noCreditSnapshot: sum((r) => r.NO_CREDIT_SNAPSHOT),
+      avgScore: ratio(sum((r) => r.SUM_SCORE3), scored),
+      avgSalary: ratio(sum((r) => r.SUM_SALARY), salaryLeads),
+      avgAvailableSpend: ratio(sum((r) => r.SUM_AVAILABLE_SPEND), spendLeads),
+      avgCreditRatio: ratio(sum((r) => r.SUM_CREDIT_RATIO), ratioLeads),
+    },
+    flags: {
+      debtReview: sum((r) => r.DEBT_REVIEW),
+      sequestration: sum((r) => r.SEQUESTRATION),
+      adminOrder: sum((r) => r.ADMIN_ORDER),
+      deceased: sum((r) => r.DECEASED),
+      judgement12m: sum((r) => r.JUDGEMENT_12M),
+      defaults12m: sum((r) => r.DEFAULTS_12M),
+      noCreditInfo: sum((r) => r.NO_CREDIT_INFO),
+    },
+  }
+}
+
 const EMPTY_FIGURES = {
-  totals: { totalLeads: 0, rows: 0, days: 0, campaigns: 0, avgScore: null as number | null },
+  totals: {
+    totalLeads: 0,
+    rows: 0,
+    days: 0,
+    campaigns: 0,
+    avgScore: null as number | null,
+    unscoredRows: 0,
+  },
   bucketProfile: { buckets: [] as { bucket: string; share: number }[], days: 0, from: "", to: "" },
   dailyHistory: [] as { date: string; leads: number }[],
   historyFrom: null as string | null,
+  scores: null as unknown,
+  scoresError: null as string | null,
   byBucket: [] as { bucket: string; leads: number }[],
   byStatus: [] as { status: string; leads: number }[],
   byCampaign: [] as { campaignName: string; leads: number }[],
@@ -235,13 +398,20 @@ export async function GET(request: NextRequest) {
         DISTINCT_DAYS: number | string
         DISTINCT_CAMPAIGNS: number | string
         AVG_SCORE: number | string | null
+        UNSCORED_ROWS: number | string
       }>(
+        // ZERO IS NOT A SCORE, it is the unscored sentinel that CREDITRISK uses
+        // (SCORE3 = 0 alongside SCOREGROUP3 = '0'). This was a bare AVG(SCORE),
+        // so every unscored lead was averaged in as a zero and the tile has
+        // been understated for as long as it has existed. The count comes back
+        // too, so "excluded" is visible on screen rather than a silent filter.
         `SELECT
            SUM(LEADS) AS TOTAL_LEADS,
            COUNT(*) AS TOTAL_ROWS,
            COUNT(DISTINCT CALL_START_TIME) AS DISTINCT_DAYS,
            COUNT(DISTINCT CAMPAIGN_NAME) AS DISTINCT_CAMPAIGNS,
-           AVG(SCORE) AS AVG_SCORE
+           AVG(IFF(SCORE > 0, SCORE, NULL)) AS AVG_SCORE,
+           COUNT_IF(NVL(SCORE, 0) = 0) AS UNSCORED_ROWS
          FROM ${VIEW}
          ${where}`,
         SF_OPTS
@@ -290,7 +460,7 @@ export async function GET(request: NextRequest) {
       }>(
         startDate === endDate
           ? `SELECT
-               COALESCE(NULLIF(TRIM(SCOREGROUP), ''), '(none)') AS SCOREGROUP,
+               ${SCORE_BAND} AS SCOREGROUP,
                ${HALF_HOUR_BUCKET} AS DAY,
                SUM(LEADS) AS LEADS
              FROM ${VIEW}
@@ -298,7 +468,7 @@ export async function GET(request: NextRequest) {
              GROUP BY 1, 2
              ORDER BY 1, 2`
           : `SELECT
-               COALESCE(NULLIF(TRIM(SCOREGROUP), ''), '(none)') AS SCOREGROUP,
+               ${SCORE_BAND} AS SCOREGROUP,
                TO_CHAR(CALL_START_TIME, 'YYYY-MM-DD') AS DAY,
                SUM(LEADS) AS LEADS
              FROM ${VIEW}
@@ -351,6 +521,24 @@ export async function GET(request: NextRequest) {
       return Number.isFinite(n) ? n : null
     }
 
+    // BEST EFFORT, like the health checks in the campaign-map route. The view
+    // is deployed separately (scripts/dialler/02-credit-scores.sql) and the app
+    // has no grant on CREDITRISK until somebody runs section F — a report that
+    // will not load because an optional panel is not provisioned yet is worse
+    // than one without the panel.
+    let scores: unknown = null
+    let scoresError: string | null = null
+    try {
+      const rows = await executeSnowflakeQuery<ScoreRow>(
+        buildScoreQuery(ssIds, startDate, endDate),
+        SF_OPTS
+      )
+      scores = summariseScores(rows)
+    } catch (e) {
+      scoresError = e instanceof Error ? e.message : String(e)
+      console.error("[/api/dashboard/dialler-stats] credit scores failed:", scoresError)
+    }
+
     const granularity: "day" | "halfHour" = startDate === endDate ? "halfHour" : "day"
 
     // A mapping that is right but returns nothing is a DIFFERENT fault from a
@@ -370,12 +558,15 @@ export async function GET(request: NextRequest) {
       endDate,
       granularity,
       resolution,
+      scores,
+      scoresError,
       totals: {
         totalLeads: num(t.TOTAL_LEADS),
         rows: num(t.TOTAL_ROWS),
         days: num(t.DISTINCT_DAYS),
         campaigns: num(t.DISTINCT_CAMPAIGNS),
         avgScore: numFloat(t.AVG_SCORE),
+        unscoredRows: num(t.UNSCORED_ROWS),
       },
       byBucket: byBucket.map((r) => ({ bucket: r.BUCKET, leads: num(r.LEADS) })),
       // Share of a day's leads landing in each half-hour, over the trailing

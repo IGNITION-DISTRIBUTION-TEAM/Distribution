@@ -6142,6 +6142,37 @@ type FilterKey = "providerTypes" | "isInsurable"
  * Null when no campaign was picked — "all campaigns" sends no predicate and
  * has nothing to resolve.
  */
+/**
+ * Credit scores behind the selected campaigns.
+ *
+ * A DIFFERENT POPULATION from everything else on the page: these are leads
+ * DISTRIBUTED, from the HLL, because VW_DIALLER_STATS is pre-aggregated and
+ * carries no id to attach credit data to. The panel says so rather than letting
+ * two lead counts sit side by side as if they measured the same thing.
+ */
+type DiallerScores = {
+  bands: { band: string; leads: number; scored: number; avgScore: number | null }[]
+  totals: {
+    leads: number
+    scored: number
+    unscored: number
+    noCreditSnapshot: number
+    avgScore: number | null
+    avgSalary: number | null
+    avgAvailableSpend: number | null
+    avgCreditRatio: number | null
+  }
+  flags: {
+    debtReview: number
+    sequestration: number
+    adminOrder: number
+    deceased: number
+    judgement12m: number
+    defaults12m: number
+    noCreditInfo: number
+  }
+}
+
 type DiallerResolution = {
   requestedSsIds: string[]
   mapped: { ssId: string; yaxxaId: string; yaxxaName: string }[]
@@ -6162,7 +6193,12 @@ type DiallerData = {
     days: number
     campaigns: number
     avgScore: number | null
+    /** Rows carrying the unscored sentinel, excluded from avgScore. */
+    unscoredRows?: number
   }
+  /** Credit scores for the same campaigns. Null when the view is unreachable. */
+  scores?: DiallerScores | null
+  scoresError?: string | null
   byBucket: { bucket: string; leads: number }[]
   /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
   bucketProfile?: {
@@ -6632,6 +6668,12 @@ function DiallerSummary({ data }: { data: DiallerData }) {
   }, [forecast, intraday, data.byBucket])
 
   const hasPrediction = Boolean(forecast || intraday)
+
+  // Every lead in one "(none)" band: the view's SCORE and SCOREGROUP are both
+  // empty, so even the derived band has nothing to work from.
+  const scoreBandsUnavailable =
+    data.byScoreDate.length > 0 && data.byScoreDate.every((r) => r.scoreGroup === "(none)")
+
   const trimmed = Math.max(0, data.byBucket.length - chartSeries.filter((r) => !r.projected).length)
 
   return (
@@ -6659,6 +6701,17 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           tone="primary"
         />
       </div>
+
+      {/* Zero is CREDITRISK's unscored sentinel, not a score of nought. It used
+          to be averaged in and drag this tile down; now it is excluded, and the
+          exclusion is stated rather than applied silently. */}
+      {(data.totals.unscoredRows ?? 0) > 0 && (
+        <p className="-mt-4 text-xs text-muted-foreground">
+          Avg score covers scored leads only —{" "}
+          <span className="font-mono">{data.totals.unscoredRows?.toLocaleString()}</span> unscored
+          row{data.totals.unscoredRows === 1 ? "" : "s"} excluded.
+        </p>
+      )}
 
       {/* Leads over time / by half-hour */}
       {chartSeries.length > 0 && (
@@ -6840,7 +6893,26 @@ function DiallerSummary({ data }: { data: DiallerData }) {
       )}
 
       {/* Heatgrid SCOREGROUP × CALL_START_TIME */}
-      {data.byScoreDate.length > 0 && <ScoreDateHeatgrid data={data.byScoreDate} />}
+      {data.byScoreDate.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {/* One band and it is "(none)" means the dialler view carries no score
+              at all — not that these leads are unscored. Without saying so the
+              grid reads as a measurement when it is an empty column. */}
+          {scoreBandsUnavailable && (
+            <Banner tone="info">
+              <p>
+                The dialler view carries no score on these rows, so the grid below has a single
+                band. This is a missing column, not a finding about the leads.
+              </p>
+              <p className="mt-1">
+                Their credit scores are in the panel further down, read from the lead history
+                instead.
+              </p>
+            </Banner>
+          )}
+          <ScoreDateHeatgrid data={data.byScoreDate} />
+        </div>
+      )}
 
       {/* Call status breakdown */}
       {data.byStatus.length > 0 && (
@@ -6902,6 +6974,14 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         </div>
       )}
 
+      {(data.scores || data.scoresError) && (
+        <DiallerCreditScores
+          scores={data.scores ?? null}
+          error={data.scoresError ?? null}
+          dateLabel={dateLabel}
+        />
+      )}
+
       {data.totals.rows === 0 && (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
           No dialler activity for the selected campaign{data.campaignNames.length === 1 ? "" : "s"}{" "}
@@ -6909,6 +6989,194 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * Credit profile of the leads behind the selected campaigns.
+ *
+ * THE HEADING SAYS "DISTRIBUTED", AND THAT IS THE POINT. Every other lead count
+ * on this page is leads CALLED, from the dialler. These are leads LOADED, from
+ * the HLL — the only place credit data can be attached, since the dialler view
+ * is pre-aggregated and has no id on it. The two numbers will not agree, and a
+ * reader who assumes they should has been misled by the layout rather than the
+ * data.
+ */
+function DiallerCreditScores({
+  scores,
+  error,
+  dateLabel,
+}: {
+  scores: DiallerScores | null
+  error: string | null
+  dateLabel: string
+}) {
+  // Same ordering the rest of the portal uses for these bands, so "(none)"
+  // lands last instead of sorting under the brackets.
+  const bands = useMemo(
+    () =>
+      [...(scores?.bands ?? [])].sort(
+        (a, b) => scoreGroupSortKey(a.band) - scoreGroupSortKey(b.band)
+      ),
+    [scores]
+  )
+
+  if (error) {
+    return (
+      <Banner tone="warning">
+        <p className="font-medium">Credit scores unavailable.</p>
+        <p className="mt-1 break-words">{error}</p>
+        <p className="mt-1">
+          The view is deployed separately — run{" "}
+          <span className="font-mono">scripts/dialler/02-credit-scores.sql</span>, including the
+          grants in section F. Nothing else on this page is affected.
+        </p>
+      </Banner>
+    )
+  }
+  if (!scores || scores.totals.leads === 0) return null
+
+  const t = scores.totals
+  const pct = (n: number) => (t.leads > 0 ? (100 * n) / t.leads : 0)
+  const money = (v: number | null) =>
+    v === null ? "—" : `R ${Math.round(v).toLocaleString()}`
+
+  const FLAGS: { label: string; value: number }[] = [
+    { label: "Debt review", value: scores.flags.debtReview },
+    { label: "Sequestration", value: scores.flags.sequestration },
+    { label: "Admin order", value: scores.flags.adminOrder },
+    { label: "Judgement (12m)", value: scores.flags.judgement12m },
+    { label: "Defaults (12m)", value: scores.flags.defaults12m },
+    { label: "Deceased", value: scores.flags.deceased },
+    { label: "No credit info", value: scores.flags.noCreditInfo },
+  ]
+
+  return (
+    <Card>
+      <div className="mb-3">
+        <SectionHeading>Credit profile of leads distributed</SectionHeading>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-mono">SCORE3</span> /{" "}
+          <span className="font-mono">SCOREGROUP3</span> as at the load date · {dateLabel}.
+          These are leads <strong>loaded</strong> to these campaigns, not leads called — a
+          different measure from every other figure on this page, so the two totals will not
+          agree.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <StatTile size="sm" label="Leads loaded" value={t.leads.toLocaleString()} tone="primary" />
+        <StatTile
+          size="sm"
+          label="Avg score"
+          value={t.avgScore === null ? "—" : t.avgScore.toFixed(1)}
+          tone="success"
+        />
+        <StatTile size="sm" label="Avg salary" value={money(t.avgSalary)} tone="muted" />
+        <StatTile
+          size="sm"
+          label="Avg available spend"
+          value={money(t.avgAvailableSpend)}
+          tone="muted"
+        />
+        <StatTile
+          size="sm"
+          label="Avg credit ratio"
+          value={t.avgCreditRatio === null ? "—" : t.avgCreditRatio.toFixed(2)}
+          tone="muted"
+        />
+      </div>
+
+      {(t.unscored > 0 || t.noCreditSnapshot > 0) && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {t.unscored > 0 && (
+            <>
+              <span className="font-mono">{t.unscored.toLocaleString()}</span> unscored (
+              {pct(t.unscored).toFixed(1)}%) — excluded from the averages above, counted in the
+              bands below.
+            </>
+          )}
+          {t.noCreditSnapshot > 0 && (
+            <>
+              {" "}
+              <span className="font-mono">{t.noCreditSnapshot.toLocaleString()}</span> had no
+              credit snapshot at their load date, so they carry no flags.
+            </>
+          )}
+        </p>
+      )}
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+            Leads by score band
+          </p>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Band</TableHead>
+                  <TableHead className="text-right">Leads</TableHead>
+                  <TableHead className="text-right">Share</TableHead>
+                  <TableHead className="text-right">Avg score</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {bands.map((b) => (
+                  <TableRow key={b.band}>
+                    <TableCell className="text-sm">{b.band}</TableCell>
+                    <TableCell className="text-right font-mono">
+                      {b.leads.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {pct(b.leads).toFixed(1)}%
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {b.avgScore === null ? "—" : b.avgScore.toFixed(1)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+            Credit flags
+          </p>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Flag</TableHead>
+                  <TableHead className="text-right">Leads</TableHead>
+                  <TableHead className="text-right">Share</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {FLAGS.map((f) => (
+                  <TableRow key={f.label}>
+                    <TableCell className="text-sm">{f.label}</TableCell>
+                    <TableCell className="text-right font-mono">
+                      {f.value.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {pct(f.value).toFixed(1)}%
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Flags are independent, not a partition: one person can be under
+              debt review AND carry a judgement, so these do not sum to 100%. */}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Flags overlap — one lead can carry several, so these do not add up to the total.
+          </p>
+        </div>
+      </div>
+    </Card>
   )
 }
 
