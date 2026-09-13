@@ -406,3 +406,72 @@ export function buildMapView(ssCols: ResolvedColumns, yaxxaCols: ResolvedColumns
     `    ON CAST(y.${yaxxaCols.id} AS VARCHAR) = m.YAXXA_CAMPAIGNID`
   )
 }
+
+// -------------------------------------------------- consumers of the mapping
+
+/**
+ * The Yaxxa campaign names behind a set of SELECTED SilverSurfer campaigns.
+ *
+ * WHY THIS EXISTS. Reporting → Dialler reads VW_DIALLER_STATS, whose only
+ * campaign column is CAMPAIGN_NAME — a YAXXA name. Its picker lists
+ * SILVERSURFER campaigns. Before this, the report sent the SilverSurfer TITLE
+ * straight into that filter, so it matched only where the two systems happened
+ * to spell a campaign identically and returned an empty report otherwise, with
+ * nothing on screen to say why. The mapping answers exactly that question.
+ *
+ * THE TRANSLATION HAS TO END AT A NAME. VW_DIALLER_STATS carries no campaign
+ * id, so there is nothing better to filter on. What makes it sound is that the
+ * name now comes from CAMPAIGN_MASTER rather than from SilverSurfer — the
+ * comparison is Yaxxa-to-Yaxxa, and only the id crosses systems.
+ *
+ * ONE ROW PER SELECTED CAMPAIGN, EVEN WHEN NOTHING IS MAPPED. The unmapped
+ * ones are the whole point: they are the campaigns whose activity is silently
+ * missing from every figure on the report, and the caller can only say so if
+ * they come back with a null YAXXA_CAMPAIGNID rather than vanishing. Hence the
+ * VALUES list on the left of the join.
+ *
+ * The live name wins over the stored snapshot, as in buildMapView — but only
+ * when it is actually a name; a blank in CAMPAIGN_MASTER would otherwise
+ * replace a good snapshot with an empty filter value.
+ *
+ * `ssIds` MUST be non-empty — an empty VALUES list is a syntax error, and
+ * "no campaigns selected" means no predicate at all rather than an empty one.
+ */
+export function buildYaxxaNamesForSs(
+  ssIds: string[],
+  /** Null, or unresolved, falls back to the snapshot name. */
+  yaxxaCols: ResolvedColumns | null
+): string {
+  const values = ssIds.map((id) => `(${lit(id)})`).join(", ")
+  const id = yaxxaCols?.id ?? null
+  const label = yaxxaCols?.label ?? null
+  const name =
+    id && label ? `IFNULL(NULLIF(TRIM(y.${label}), ''), m.YAXXA_NAME)` : "m.YAXXA_NAME"
+  const join =
+    id && label
+      ? `\n  LEFT JOIN ${YAXXA_SOURCE.table} y\n` +
+        `    ON CAST(y.${id} AS VARCHAR) = m.YAXXA_CAMPAIGNID`
+      : ""
+  return (
+    `WITH SEL AS (SELECT * FROM VALUES ${values} AS v(SS_CAMPAIGNID))\n` +
+    `SELECT s.SS_CAMPAIGNID,\n` +
+    `       m.YAXXA_CAMPAIGNID,\n` +
+    `       ${name} AS YAXXA_NAME\n` +
+    `  FROM SEL s\n` +
+    `  LEFT JOIN ${MAP_TABLE} m ON m.SS_CAMPAIGNID = s.SS_CAMPAIGNID` +
+    join +
+    `\n ORDER BY s.SS_CAMPAIGNID, YAXXA_NAME`
+  )
+}
+
+/**
+ * How a Yaxxa name is compared against VW_DIALLER_STATS.CAMPAIGN_NAME.
+ *
+ * Trimmed and upper-cased on BOTH sides. The stats view is built elsewhere and
+ * nothing guarantees it spells a name with the same case or padding as
+ * CAMPAIGN_MASTER does; an exact match would drop a whole campaign's figures
+ * over a trailing space, and silently.
+ */
+export function diallerStatsNameKey(name: string): string {
+  return name.trim().toUpperCase()
+}

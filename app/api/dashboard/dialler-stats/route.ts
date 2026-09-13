@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
+import {
+  MAP_SF_OPTS,
+  YAXXA_SOURCE,
+  buildYaxxaNamesForSs,
+  diallerStatsNameKey,
+} from "@/lib/dialler-campaign-map"
+import { resolveSourceColumns } from "@/lib/dialler-campaign-columns"
 
 export const dynamic = "force-dynamic"
 
@@ -11,26 +18,71 @@ function escSql(s: string): string {
   return s.replace(/'/g, "''")
 }
 
+/**
+ * THE CAMPAIGN FILTER IS A MAPPED FILTER, NOT A NAME MATCH.
+ *
+ * This view's only campaign column is CAMPAIGN_NAME, and that name comes from
+ * YAXXA. The picker on the report lists SILVERSURFER campaigns. Until now the
+ * route took `campaignNames` and put the SilverSurfer TITLE straight into the
+ * predicate, so it matched only where the two systems happened to spell a
+ * campaign identically — and returned an empty report otherwise, with nothing
+ * to say why. "All campaigns" looked fine because it sends no predicate.
+ *
+ * So the route now takes `ssCampaignIds` and translates them through
+ * TSK_CAMPAIGN_DIALLER_MAP. IDS, NOT TITLES: a title is a label somebody can
+ * rename, and a report filter keyed on one silently changes meaning when they
+ * do.
+ *
+ * THERE IS NO FALLBACK TO THE OLD BEHAVIOUR. A selection with nothing mapped
+ * returns no data and says so. Falling back would hide the exact fault this
+ * exists to fix, and would hide it by appearing to work.
+ */
+
+type MapRow = {
+  SS_CAMPAIGNID: string
+  YAXXA_CAMPAIGNID: string | null
+  YAXXA_NAME: string | null
+}
+
+type Resolution = {
+  /** What the caller asked for. */
+  requestedSsIds: string[]
+  mapped: { ssId: string; yaxxaId: string; yaxxaName: string }[]
+  /** Selected campaigns with no Yaxxa campaign attached — missing from every figure. */
+  unmappedSsIds: string[]
+  /** Mapped, but the stats view has no rows under that name in this window. */
+  namesWithNoRows: string[]
+}
+
+const EMPTY_FIGURES = {
+  totals: { totalLeads: 0, rows: 0, days: 0, campaigns: 0, avgScore: null as number | null },
+  byBucket: [] as { bucket: string; leads: number }[],
+  byStatus: [] as { status: string; leads: number }[],
+  byCampaign: [] as { campaignName: string; leads: number }[],
+  byScoreDate: [] as { scoreGroup: string; date: string; count: number }[],
+}
+
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "distribution")
   if (guard instanceof NextResponse) return guard
 
   const { searchParams } = new URL(request.url)
-  const namesRaw = searchParams.get("campaignNames")
+  const idsRaw = searchParams.get("ssCampaignIds")
   const startDate = searchParams.get("startDate")
   const endDate = searchParams.get("endDate") ?? startDate
 
-  // No campaignNames at all means EVERY campaign — the report defaults to the
-  // whole book rather than refusing to load until something is picked.
-  const names = Array.from(
+  // No ids at all means EVERY campaign — the report defaults to the whole book
+  // rather than refusing to load until something is picked. That path sends no
+  // campaign predicate and is deliberately untouched by the mapping.
+  const ssIds = Array.from(
     new Set(
-      (namesRaw ?? "")
+      (idsRaw ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
     )
   )
-  if (names.length > 200) {
+  if (ssIds.length > 200) {
     return NextResponse.json({ error: "Max 200 campaigns per request" }, { status: 400 })
   }
   if (!startDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
@@ -66,22 +118,73 @@ export async function GET(request: NextRequest) {
   }
   const callStatuses = collectMulti("callStatuses")
 
-  // Empty list = no campaign predicate, rather than an IN over every name.
-  const campaignFilter =
-    names.length > 0
-      ? `CAMPAIGN_NAME IN (${names.map((n) => `'${escSql(n)}'`).join(",")}) AND`
-      : ""
+  try {
+    // ------------------------------------------------ selection → Yaxxa names
+    let resolution: Resolution | null = null
+    let names: string[] = []
 
-  const inClause = (col: string, vals: string[]) =>
-    vals.length > 0 ? `AND ${col} IN (${vals.map((v) => `'${escSql(v)}'`).join(",")})` : ""
+    if (ssIds.length > 0) {
+      // A failed probe is not fatal here: the map stores a snapshot of the
+      // Yaxxa name at attach time, and a report that filters on a slightly
+      // stale name beats one that will not load.
+      const yaxxaCols = await resolveSourceColumns(YAXXA_SOURCE).catch(() => null)
+      const rows = await executeSnowflakeQuery<MapRow>(
+        buildYaxxaNamesForSs(ssIds, yaxxaCols),
+        MAP_SF_OPTS
+      )
 
-  const where = `
+      const mapped: Resolution["mapped"] = []
+      const withSomething = new Set<string>()
+      for (const r of rows) {
+        const yaxxaId = r.YAXXA_CAMPAIGNID == null ? "" : String(r.YAXXA_CAMPAIGNID)
+        const yaxxaName = (r.YAXXA_NAME == null ? "" : String(r.YAXXA_NAME)).trim()
+        if (!yaxxaId) continue
+        withSomething.add(String(r.SS_CAMPAIGNID))
+        mapped.push({ ssId: String(r.SS_CAMPAIGNID), yaxxaId, yaxxaName })
+      }
+
+      // A mapping with no usable name cannot be filtered on, so it counts as
+      // mapped (it is) but contributes nothing to the predicate.
+      names = Array.from(new Set(mapped.map((m) => m.yaxxaName).filter(Boolean)))
+
+      resolution = {
+        requestedSsIds: ssIds,
+        mapped,
+        unmappedSsIds: ssIds.filter((id) => !withSomething.has(id)),
+        namesWithNoRows: [],
+      }
+
+      // Nothing to filter on. Returning zeroes with the resolution attached is
+      // the honest answer; running the queries with no predicate would report
+      // the WHOLE BOOK as if it belonged to the selected campaigns.
+      if (names.length === 0) {
+        return NextResponse.json({
+          campaignNames: [],
+          startDate,
+          endDate,
+          granularity: startDate === endDate ? "halfHour" : "day",
+          resolution,
+          ...EMPTY_FIGURES,
+        })
+      }
+    }
+
+    const campaignFilter =
+      names.length > 0
+        ? `TRIM(UPPER(CAMPAIGN_NAME)) IN (` +
+          names.map((n) => `'${escSql(diallerStatsNameKey(n))}'`).join(",") +
+          `) AND`
+        : ""
+
+    const inClause = (col: string, vals: string[]) =>
+      vals.length > 0 ? `AND ${col} IN (${vals.map((v) => `'${escSql(v)}'`).join(",")})` : ""
+
+    const where = `
     WHERE ${campaignFilter}
       CALL_START_TIME BETWEEN '${startDate}' AND '${endDate}'
       ${inClause("CALL_STATUS", callStatuses)}
   `
 
-  try {
     const [totals, byBucket, byStatus, byCampaign, byScoreDate] = await Promise.all([
       executeSnowflakeQuery<{
         TOTAL_LEADS: number | string | null
@@ -173,11 +276,23 @@ export async function GET(request: NextRequest) {
 
     const granularity: "day" | "halfHour" = startDate === endDate ? "halfHour" : "day"
 
+    // A mapping that is right but returns nothing is a DIFFERENT fault from a
+    // campaign that was never mapped, and the screen separates them. Compared
+    // on the same key the predicate used, or a name that did match would be
+    // reported as missing.
+    if (resolution) {
+      const present = new Set(
+        byCampaign.map((r) => diallerStatsNameKey(String(r.CAMPAIGN_NAME ?? "")))
+      )
+      resolution.namesWithNoRows = names.filter((n) => !present.has(diallerStatsNameKey(n)))
+    }
+
     return NextResponse.json({
       campaignNames: names,
       startDate,
       endDate,
       granularity,
+      resolution,
       totals: {
         totalLeads: num(t.TOTAL_LEADS),
         rows: num(t.TOTAL_ROWS),

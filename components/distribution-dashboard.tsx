@@ -6116,11 +6116,26 @@ type SalesData = {
 
 type FilterKey = "providerTypes" | "isInsurable"
 
+/**
+ * What the report could and could not resolve from the campaign mapping.
+ *
+ * Null when no campaign was picked — "all campaigns" sends no predicate and
+ * has nothing to resolve.
+ */
+type DiallerResolution = {
+  requestedSsIds: string[]
+  mapped: { ssId: string; yaxxaId: string; yaxxaName: string }[]
+  unmappedSsIds: string[]
+  namesWithNoRows: string[]
+}
+
 type DiallerData = {
+  /** The YAXXA names the figures below were filtered on. */
   campaignNames: string[]
   startDate: string
   endDate: string
   granularity: "day" | "halfHour"
+  resolution: DiallerResolution | null
   totals: {
     totalLeads: number
     rows: number
@@ -6150,6 +6165,7 @@ export function DiallerDashboardPanel() {
 
   const [statusOptions, setStatusOptions] = useState<string[]>([])
   const [statusError, setStatusError] = useState<string | undefined>(undefined)
+  const [statusHasRows, setStatusHasRows] = useState<boolean | null>(null)
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
 
   // Load campaigns
@@ -6189,6 +6205,7 @@ export function DiallerDashboardPanel() {
         if (cancelled) return
         setStatusOptions(d.values?.callStatuses ?? [])
         setStatusError(d.errors?.callStatuses)
+        setStatusHasRows(typeof d.hasRows === "boolean" ? d.hasRows : null)
       } catch {
         /* swallow */
       }
@@ -6220,8 +6237,12 @@ export function DiallerDashboardPanel() {
       setLoading(true)
       setError(null)
       try {
+        // IDS, NOT TITLES. The stats view is filtered on a YAXXA campaign
+        // name; these are SILVERSURFER campaigns. The route translates them
+        // through the Dialler campaign mapping, so what goes over the wire has
+        // to be the thing the mapping is keyed on.
         const params = new URLSearchParams({
-          campaignNames: selectedCampaigns.map((c) => c.title).join(","),
+          ssCampaignIds: selectedCampaignIds.join(","),
           startDate,
           endDate,
         })
@@ -6247,7 +6268,10 @@ export function DiallerDashboardPanel() {
     return () => {
       cancelled = true
     }
-  }, [selectedCampaigns, startDate, endDate, selectedStatuses, reloadKey])
+    // Depends on the IDS, not on the loaded campaign objects — otherwise the
+    // report refetches every time the campaign list is reloaded, and a
+    // selection made before that list arrives is silently dropped.
+  }, [selectedCampaignIds, startDate, endDate, selectedStatuses, reloadKey])
 
   const toggleCampaign = (id: string) =>
     setSelectedCampaignIds((prev) =>
@@ -6387,6 +6411,13 @@ export function DiallerDashboardPanel() {
             selected={selectedStatuses}
             onChange={setSelectedStatuses}
             error={statusError}
+            emptyNote={
+              statusHasRows === false
+                ? "The dialler stats view has no rows at all — every figure below will be empty."
+                : statusHasRows === true
+                ? "The view has rows, but none of them carry a call status."
+                : undefined
+            }
           />
         </div>
       </Card>
@@ -6397,11 +6428,76 @@ export function DiallerDashboardPanel() {
         </Banner>
       )}
 
-      {selectedCampaigns.length > 0 && loading && !data && (
-        <SkeletonPanel title="Dialler stats" tiles={4} height={256} />
+      {data?.resolution && (
+        <DiallerResolutionNotes resolution={data.resolution} campaigns={selectedCampaigns} />
       )}
 
-      {selectedCampaigns.length > 0 && data && <DiallerSummary data={data} />}
+      {loading && !data && <SkeletonPanel title="Dialler stats" tiles={4} height={256} />}
+
+      {data && <DiallerSummary data={data} />}
+    </div>
+  )
+}
+
+/**
+ * What the campaign mapping could not answer.
+ *
+ * The report filters a YAXXA view using a SILVERSURFER selection, so the
+ * translation can come up short in two quite different ways, and telling them
+ * apart is most of the value of showing anything at all:
+ *
+ *   unmapped        nobody has linked this campaign to a dialler campaign, so
+ *                   its activity is absent from every figure. Fixable, and the
+ *                   fix is a screen away.
+ *   no rows for it  the link exists and the dialler simply has nothing under
+ *                   that name in this window. Nothing to fix, unless the stats
+ *                   view spells the name differently.
+ *
+ * Before this, both produced an empty report with no explanation.
+ */
+function DiallerResolutionNotes({
+  resolution,
+  campaigns,
+}: {
+  resolution: DiallerResolution
+  campaigns: Campaign[]
+}) {
+  const { unmappedSsIds, namesWithNoRows } = resolution
+  if (unmappedSsIds.length === 0 && namesWithNoRows.length === 0) return null
+
+  // The picker holds the titles; the API deals only in ids, so that a renamed
+  // campaign cannot change what the filter means.
+  const titleFor = (id: string) => campaigns.find((c) => c.id === id)?.title ?? id
+
+  return (
+    <div className="flex flex-col gap-2">
+      {unmappedSsIds.length > 0 && (
+        <Banner tone="warning">
+          <p className="font-medium">
+            {unmappedSsIds.length === 1
+              ? "1 selected campaign has"
+              : `${unmappedSsIds.length} selected campaigns have`}{" "}
+            no dialler campaign mapped.
+          </p>
+          <p className="mt-1">
+            {unmappedSsIds.map(titleFor).join(", ")} — their dialler activity is missing from
+            every figure below. Link them under Dialler → Campaign mapping.
+          </p>
+        </Banner>
+      )}
+      {namesWithNoRows.length > 0 && (
+        <Banner tone="info">
+          <p>
+            Mapped, but no dialler activity in this date range under{" "}
+            {namesWithNoRows.length === 1 ? "the name" : "the names"}{" "}
+            <span className="font-mono">{namesWithNoRows.join(", ")}</span>.
+          </p>
+          <p className="mt-1">
+            The mapping is in place, so either there were no calls, or the stats view spells the
+            campaign differently from the dialler&apos;s own campaign list.
+          </p>
+        </Banner>
+      )}
     </div>
   )
 }
@@ -6868,12 +6964,15 @@ function MultiSelectFilter({
   selected,
   onChange,
   error,
+  emptyNote,
 }: {
   label: string
   options: string[]
   selected: string[]
   onChange: (next: string[]) => void
   error?: string
+  /** Shown when the list is empty for a reason that is NOT an error. */
+  emptyNote?: string
 }) {
   const [open, setOpen] = useState(false)
 
@@ -6953,11 +7052,16 @@ function MultiSelectFilter({
           ))}
         </div>
       )}
-      {error && (
-        <p className="mt-1 text-xs text-amber-400" title={error}>
-          {label} column unavailable in view
+      {/* The old copy asserted a cause it did not know ("column unavailable"),
+          which sent people looking at the view definition when the fault was
+          usually a missing grant. Show what actually came back. */}
+      {error ? (
+        <p className="mt-1 break-words text-xs text-amber-400" title={error}>
+          {label} unavailable: {error}
         </p>
-      )}
+      ) : options.length === 0 && emptyNote ? (
+        <p className="mt-1 break-words text-xs text-muted-foreground">{emptyNote}</p>
+      ) : null}
     </div>
   )
 }

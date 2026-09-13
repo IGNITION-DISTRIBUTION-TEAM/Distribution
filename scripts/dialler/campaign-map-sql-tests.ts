@@ -30,6 +30,8 @@ import {
   buildOwnerOf,
   buildStaleMappings,
   buildTabCounts,
+  buildYaxxaNamesForSs,
+  diallerStatsNameKey,
   mapFilterClause,
   isResolved,
   resolveColumns,
@@ -251,6 +253,49 @@ console.log("\nbuildMapView")
     sql.includes("IFNULL(s.TITLE, m.SS_TITLE)") && sql.includes("IFNULL(y.CAMP_NAME, m.YAXXA_NAME)"), sql)
   check("exposes IS_STALE rather than dropping stale rows", sql.includes("IS_STALE"), sql)
   check("keeps stale rows visible via LEFT JOIN", (sql.match(/LEFT JOIN/g) || []).length === 2, sql)
+}
+
+console.log("\nbuildYaxxaNamesForSs — the report's campaign filter")
+{
+  const sql = buildYaxxaNamesForSs(["100", "O'Brien"], Y_COLS)
+  check("escapes the ids it is given", sql.includes("('O''Brien')"), sql)
+  // The selection drives the join from the left, so a campaign nobody has
+  // mapped comes back with a null Yaxxa id instead of vanishing — which is the
+  // only way the report can say "this one is missing from the figures".
+  check("selection is the LEFT side, so unmapped ids survive",
+    sql.includes("FROM SEL s") && sql.includes(`LEFT JOIN ${MAP_TABLE} m`), sql)
+  check("prefers the live name over the snapshot",
+    sql.includes("IFNULL(NULLIF(TRIM(y.CAMP_NAME), ''), m.YAXXA_NAME)"), sql)
+  // A blank live name would otherwise replace a good snapshot with an empty
+  // filter value, which matches nothing and looks like no activity.
+  check("a blank live name does not beat the snapshot", sql.includes("NULLIF(TRIM("), sql)
+  check("is read-only", !/\b(INSERT|UPDATE|DELETE|MERGE|CREATE)\b/i.test(sql), sql)
+}
+{
+  // One SilverSurfer campaign to many Yaxxa ones is the whole cardinality: the
+  // query must not collapse them, or the filter silently drops campaigns.
+  const sql = buildYaxxaNamesForSs(["100"], Y_COLS)
+  check("does not DISTINCT away the second Yaxxa campaign", !/\bDISTINCT\b/i.test(sql), sql)
+  check("returns the pair, not just the name",
+    sql.includes("m.YAXXA_CAMPAIGNID") && sql.includes("s.SS_CAMPAIGNID"), sql)
+}
+{
+  // The probe can fail on a missing grant. The map keeps a snapshot of the name
+  // for exactly that case, so the report degrades to a slightly stale filter
+  // rather than refusing to load.
+  const sql = buildYaxxaNamesForSs(["100"], null)
+  check("falls back to the snapshot when the columns are unresolved",
+    sql.includes("m.YAXXA_NAME AS YAXXA_NAME") && !sql.includes("CAMPAIGN_MASTER"), sql)
+  const half = buildYaxxaNamesForSs(["100"], { id: "CAMP_ID", label: null, extras: [] })
+  check("and when only half of them resolved", !half.includes("CAMPAIGN_MASTER"), half)
+}
+
+console.log("\ndiallerStatsNameKey")
+{
+  // VW_DIALLER_STATS is built elsewhere; an exact match would drop a whole
+  // campaign's figures over a trailing space, and drop them silently.
+  check("trims and upper-cases", diallerStatsNameKey("  Vc Cvm Upgrades ") === "VC CVM UPGRADES")
+  check("is stable", diallerStatsNameKey(diallerStatsNameKey("x y")) === "X Y")
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`)
