@@ -50,17 +50,36 @@ SELECT ACTIVE, COUNT(*) AS CAMPAIGNS
 
 
 /* -----------------------------------------------------------------------------
-   SECTION 2 — Yaxxa campaigns
+   SECTION 2 — Yaxxa campaigns. RESOLVED; this is now a re-check.
 
-   Same question, and this one is the bigger unknown: nothing in this repo has
-   ever referenced YAXXA_DW_REPLICATION. Candidates tried, in order:
+     id     CAMP_ID
+     name   CAMP_NAME
+     shown  CAMP_STATUS, CAMP_TYPE, CAMP_DIALER, CAMP_DESC
+     scope  TENANT_ID = 1002 AND IFNULL(_EDGE_DELETED, FALSE) = FALSE
 
-     id     CAMPAIGN_ID, CAMPAIGNID, ID, CAMPAIGN_CODE, CAMPAIGNCODE
-     name   CAMPAIGN_NAME, CAMPAIGNNAME, NAME, TITLE, DESCRIPTION, CAMPAIGN_DESC
+   The first attempt guessed CAMPAIGN_ID and CAMPAIGN_NAME and resolved neither.
+   The screen said so, naming every candidate it had tried — which is the whole
+   reason the probe exists rather than a hard-coded guess.
 
-   NO ACTIVE FILTER IS APPLIED to this side, deliberately — CAMPAIGN_MASTER may
-   have no such column, and a filter that excludes everything is worse than no
-   filter. If 2a shows an active or status column, say so and it can be added.
+   THREE THINGS THE REAL TABLE TURNED UP, all of which changed the design:
+
+   1. TENANT_ID. The dialler is MULTI-TENANT. 1000 and 1001 carry Internal,
+      inbound_camp, outbound_camp and auto_camp; the real work is on 1002.
+      Mapping a SilverSurfer campaign to another tenant's test campaign would be
+      quietly wrong rather than an error, so the picker is scoped. 2d checks
+      whether that scope is still right.
+
+   2. CAMP_STATUS, holding Y, X and N. NOT filtered on, because nobody has
+      confirmed what they mean — Y clusters on newer ids and X on older, which
+      is suggestive and not evidence. The status is displayed on every row
+      instead. 2e is the query that would settle it.
+
+   3. CAMP_NAME IS NOT UNIQUE. "VC CVM Upgrades" is CAMP_ID 47, 78 and 81.
+      The picker prints the id beside the name for exactly this reason. 2f
+      lists them.
+
+   Run 2a and 2b again if Yaxxa ever changes shape; the screen's "Where this
+   reads from" card is the faster check day to day.
 -------------------------------------------------------------------------------- */
 
 SELECT ORDINAL_POSITION AS POS, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
@@ -71,9 +90,48 @@ SELECT ORDINAL_POSITION AS POS, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
 
 SELECT * FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER LIMIT 10;
 
--- 2c. How many, and is the id actually unique? The mapping keys on it, so a
+-- 2c. How many, and is CAMP_ID actually unique? The mapping keys on it, so a
 --     repeated id would make "which campaign is this" ambiguous.
-SELECT COUNT(*) AS ROWS_TOTAL FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER;
+SELECT COUNT(*) AS ROWS_TOTAL, COUNT(DISTINCT CAMP_ID) AS DISTINCT_IDS
+  FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER;
+
+-- 2d. The tenants, so the 1002 scope can be sanity-checked. If real campaigns
+--     appear under another tenant, the filter in lib/dialler-campaign-map.ts
+--     needs widening — the picker will simply not show them until it does.
+SELECT TENANT_ID,
+       COUNT(*)                                   AS CAMPAIGNS,
+       LISTAGG(DISTINCT CAMP_NAME, ' | ')
+         WITHIN GROUP (ORDER BY CAMP_NAME)        AS SAMPLE_NAMES
+  FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER
+ GROUP BY TENANT_ID
+ ORDER BY CAMPAIGNS DESC;
+
+-- 2e. WHAT DOES CAMP_STATUS MEAN? Still open. If Y turns out to be the only
+--     live value, it becomes a filter in YAXXA_SOURCE.activeFilter and the
+--     picker gets shorter. Until then every campaign is offered with its
+--     status shown, which is the safer way round.
+SELECT CAMP_STATUS,
+       COUNT(*)                                        AS CAMPAIGNS,
+       MIN(CAMP_ID)                                    AS LOWEST_ID,
+       MAX(CAMP_ID)                                    AS HIGHEST_ID,
+       COUNT_IF(DELETED_AT IS NOT NULL)                AS SOFT_DELETED
+  FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER
+ WHERE TENANT_ID = 1002
+ GROUP BY CAMP_STATUS
+ ORDER BY CAMPAIGNS DESC;
+
+-- 2f. DUPLICATE CAMPAIGN NAMES. Not a fault — a dialler may well run the same
+--     campaign several ways — but it means the NAME cannot identify a campaign,
+--     which is why the picker shows the id and why the mapping stores the id.
+SELECT CAMP_NAME,
+       COUNT(*)                                        AS COPIES,
+       LISTAGG(CAMP_ID, ', ') WITHIN GROUP (ORDER BY CAMP_ID) AS IDS,
+       LISTAGG(DISTINCT CAMP_DIALER, ', ')             AS DIALLER_MODES
+  FROM DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER
+ WHERE TENANT_ID = 1002
+ GROUP BY CAMP_NAME
+HAVING COUNT(*) > 1
+ ORDER BY COPIES DESC, CAMP_NAME;
 
 
 /* -----------------------------------------------------------------------------
@@ -168,9 +226,11 @@ SELECT YAXXA_CAMPAIGNID,
       lib/dialler-campaign-map.ts — the list is ordered and the first match
       wins, so putting the right name first is enough.
 
-   2. If section 2 showed an active or status column on CAMPAIGN_MASTER, the
-      Yaxxa list is currently showing retired campaigns too. Say so and
-      YAXXA_SOURCE.activeFilter takes one.
+   2. Section 2e is the open question: what Y, X and N mean on CAMP_STATUS. If
+      only one of them is live, say so and YAXXA_SOURCE.activeFilter takes it —
+      the picker gets shorter and nothing else changes. Until then every
+      campaign is offered with its status shown, which errs towards showing too
+      much rather than hiding something mappable.
 
    3. If section 3 returned rows, two screens in this portal disagree about
       which campaigns are active. That is worth settling before the mapping is

@@ -48,6 +48,12 @@ export type CampaignSource = {
   /** First match wins. */
   idCandidates: string[]
   labelCandidates: string[]
+  /**
+   * Columns worth SHOWING if the table has them — status, type, and so on.
+   * Resolved by the same probe, so a source without them degrades quietly
+   * instead of erroring on an invalid identifier.
+   */
+  extraCandidates?: string[]
 }
 
 /**
@@ -67,24 +73,38 @@ export const SS_SOURCE: CampaignSource = {
   labelCandidates: ["TITLE", "CAMPAIGNNAME", "CAMPAIGN_NAME", "NAME", "DESCRIPTION"],
 }
 
+/**
+ * CONFIRMED AGAINST THE REAL TABLE. The first attempt guessed CAMPAIGN_ID and
+ * CAMPAIGN_NAME and resolved neither — which the screen reported, naming every
+ * candidate it had tried. That is what the probe is for.
+ *
+ * TENANT_ID = 1002 IS A REAL FILTER, NOT TIDYING. The dialler is multi-tenant:
+ * 1000 and 1001 carry Internal, inbound_camp, outbound_camp and auto_camp, and
+ * mapping a SilverSurfer campaign to another tenant's test campaign would be
+ * quietly wrong rather than an error.
+ *
+ * `IFNULL(_EDGE_DELETED, FALSE) = FALSE` can only ever exclude a row the
+ * replication has explicitly flagged as deleted; a null or a missing column
+ * keeps the row. That asymmetry is deliberate — if the semantics are not what
+ * they look like, the failure is showing too much rather than an empty picker
+ * nobody can explain.
+ *
+ * NO FILTER ON CAMP_STATUS. It holds Y, X and N, and nobody has confirmed what
+ * they mean — Y clusters on newer ids and X on older ones, which is suggestive
+ * and not evidence. It is shown on every row instead, so the person attaching
+ * a campaign can see it and decide.
+ */
 export const YAXXA_SOURCE: CampaignSource = {
   table: "DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER",
   database: "DATAWAREHOUSE",
   schema: "YAXXA_DW_REPLICATION",
   name: "CAMPAIGN_MASTER",
-  // Unknown until the probe runs — CAMPAIGN_MASTER may have no active flag at
-  // all, so this stays empty rather than inventing a filter that excludes
-  // everything.
-  activeFilter: "",
-  idCandidates: ["CAMPAIGN_ID", "CAMPAIGNID", "ID", "CAMPAIGN_CODE", "CAMPAIGNCODE"],
-  labelCandidates: [
-    "CAMPAIGN_NAME",
-    "CAMPAIGNNAME",
-    "NAME",
-    "TITLE",
-    "DESCRIPTION",
-    "CAMPAIGN_DESC",
-  ],
+  activeFilter: "TENANT_ID = 1002 AND IFNULL(_EDGE_DELETED, FALSE) = FALSE",
+  idCandidates: ["CAMP_ID", "CAMPAIGN_ID", "CAMPAIGNID", "ID"],
+  labelCandidates: ["CAMP_NAME", "CAMPAIGN_NAME", "CAMPAIGNNAME", "NAME", "TITLE"],
+  // CAMP_NAME is sometimes the cryptic one — "VCCVMUpgrades" with CAMP_DESC
+  // "VC CVM Upgrades" — so the description earns its place in the picker.
+  extraCandidates: ["CAMP_STATUS", "CAMP_TYPE", "CAMP_DIALER", "CAMP_DESC"],
 }
 
 export const MAP_TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_DIALLER_MAP"
@@ -92,7 +112,12 @@ export const MAP_VIEW = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_CAMPAIGN_DIALLER_MA
 export const MAP_SF_OPTS = { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" } as const
 
 /** Which columns a probe settled on. Null means nothing matched. */
-export type ResolvedColumns = { id: string | null; label: string | null }
+export type ResolvedColumns = {
+  id: string | null
+  label: string | null
+  /** Display-only columns that exist. Empty when the source declares none. */
+  extras: string[]
+}
 
 /** Every column on a source, so the route can pick from the candidates. */
 export function buildColumnProbe(source: CampaignSource): string {
@@ -113,6 +138,7 @@ export function resolveColumns(source: CampaignSource, present: string[]): Resol
   return {
     id: source.idCandidates.find((c) => have.has(c)) ?? null,
     label: source.labelCandidates.find((c) => have.has(c)) ?? null,
+    extras: (source.extraCandidates ?? []).filter((c) => have.has(c)),
   }
 }
 
@@ -145,8 +171,11 @@ export function buildCampaigns(
     ? `(UPPER(${cols.label}) LIKE UPPER(${lit(`%${q}%`)}) ` +
       `OR CAST(${cols.id} AS VARCHAR) LIKE ${lit(`%${q}%`)})`
     : ""
+  // Aliased EXTRA_n rather than by their own names, so the route and the UI do
+  // not have to know which columns a given source happens to carry.
+  const extras = cols.extras.map((c, i) => `, ${c} AS EXTRA_${i}`).join("")
   return (
-    `SELECT CAST(${cols.id} AS VARCHAR) AS CAMPAIGN_ID, ${cols.label} AS LABEL\n` +
+    `SELECT CAST(${cols.id} AS VARCHAR) AS CAMPAIGN_ID, ${cols.label} AS LABEL${extras}\n` +
     `  FROM ${source.table}` +
     whereClauses([source.activeFilter, filter]) +
     `\n ORDER BY ${cols.label}\n LIMIT ${limit} OFFSET ${offset}`

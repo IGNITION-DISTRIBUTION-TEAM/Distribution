@@ -91,20 +91,29 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
    still has a row; this lets a report decide for itself whether to trust it
    rather than silently dropping it or silently including it.
 
-   COLUMN NAMES BELOW ASSUME what 00-discover-columns.sql sections 1 and 2
-   found. If either source uses different id or name columns, correct the two
-   joins and the two IFNULLs — this view is the only SQL that hard-codes them,
-   because the app resolves them at run time and a view cannot.
+   THE COLUMN NAMES BELOW ARE CONFIRMED: CAMP_ID and CAMP_NAME on the Yaxxa
+   side, CAMPAIGNID and TITLE on the SilverSurfer side. An earlier draft of this
+   file guessed CAMPAIGN_ID / CAMPAIGN_NAME and would have failed on CREATE.
+
+   This view is the ONLY SQL here that hard-codes them — the app resolves its
+   columns at run time from a candidate list, and a view cannot. So if Yaxxa
+   ever renames one, the screen keeps working and this view stops: check here
+   first.
+
+   The TENANT_ID = 1002 scope matches what the screen shows. Without it the view
+   would resolve names for campaigns the picker never offered.
 -------------------------------------------------------------------------------- */
 
 CREATE OR REPLACE VIEW DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_CAMPAIGN_DIALLER_MAP
 COPY GRANTS
 AS
 SELECT m.SS_CAMPAIGNID,
-       IFNULL(s.TITLE, m.SS_TITLE)                AS SS_TITLE,
+       IFNULL(s.TITLE, m.SS_TITLE)             AS SS_TITLE,
        m.YAXXA_CAMPAIGNID,
-       IFNULL(y.CAMPAIGN_NAME, m.YAXXA_NAME)      AS YAXXA_NAME,
-       (s.CAMPAIGNID IS NULL OR y.CAMPAIGN_ID IS NULL) AS IS_STALE,
+       IFNULL(y.CAMP_NAME, m.YAXXA_NAME)       AS YAXXA_NAME,
+       y.CAMP_DESC                             AS YAXXA_DESCRIPTION,
+       y.CAMP_STATUS                           AS YAXXA_STATUS,
+       (s.CAMPAIGNID IS NULL OR y.CAMP_ID IS NULL) AS IS_STALE,
        m.CREATED_BY,
        m.CREATED_AT
   FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_DIALLER_MAP m
@@ -112,7 +121,8 @@ SELECT m.SS_CAMPAIGNID,
     ON CAST(s.CAMPAIGNID AS VARCHAR) = m.SS_CAMPAIGNID
    AND s.ACTIVE = 1
   LEFT JOIN DATAWAREHOUSE.YAXXA_DW_REPLICATION.CAMPAIGN_MASTER y
-    ON CAST(y.CAMPAIGN_ID AS VARCHAR) = m.YAXXA_CAMPAIGNID;
+    ON CAST(y.CAMP_ID AS VARCHAR) = m.YAXXA_CAMPAIGNID
+   AND y.TENANT_ID = 1002;
 
 GRANT SELECT ON VIEW
   DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_CAMPAIGN_DIALLER_MAP

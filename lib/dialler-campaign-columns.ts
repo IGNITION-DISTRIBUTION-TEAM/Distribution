@@ -47,7 +47,7 @@ export async function resolveSourceColumns(source: CampaignSource): Promise<Reso
     // Almost always a missing grant. The caller turns an unresolved source into
     // a message naming the grants script, which is more use than this stack.
     console.error(`[dialler-campaign-columns] probe failed for ${source.table}:`, error)
-    return { id: null, label: null }
+    return { id: null, label: null, extras: [] }
   }
 
   const resolved = resolveColumns(source, present)

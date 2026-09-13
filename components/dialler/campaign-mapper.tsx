@@ -30,6 +30,8 @@ type SsCampaign = { id: string; title: string; yaxxa: Attached[] }
 type YaxxaCampaign = {
   id: string
   name: string
+  /** Positionally matched to extraColumns — status, type, dialler, description. */
+  extras: string[]
   ownedBy: { ssId: string; ssTitle: string | null } | null
 }
 type Resolved = { table: string; id: string | null; label: string | null }
@@ -65,6 +67,7 @@ export function CampaignMapper() {
   const [pickerFor, setPickerFor] = useState<string | null>(null)
   const [yaxxaSearch, setYaxxaSearch] = useState("")
   const [yaxxaRows, setYaxxaRows] = useState<YaxxaCampaign[]>([])
+  const [yaxxaExtraColumns, setYaxxaExtraColumns] = useState<string[]>([])
   const [yaxxaLoading, setYaxxaLoading] = useState(false)
   const [showTaken, setShowTaken] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -104,6 +107,7 @@ export function CampaignMapper() {
       const data = await readJson(res)
       if (!res.ok) throw new Error(String(data.error ?? `Failed (${res.status})`))
       setYaxxaRows((data.campaigns as YaxxaCampaign[]) ?? [])
+      setYaxxaExtraColumns((data.extraColumns as string[]) ?? [])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setYaxxaRows([])
@@ -384,12 +388,39 @@ export function CampaignMapper() {
                             >
                               <span className="min-w-0">
                                 <span className="text-xs text-foreground">{y.name || y.id}</span>
+                                {/* The id is load bearing, not decoration: three
+                                    campaigns really are called "VC CVM Upgrades". */}
                                 <span className="ml-2 font-mono text-xs text-muted-foreground">
                                   {y.id}
                                 </span>
                                 {y.ownedBy && (
                                   <span className="ml-2 text-xs text-amber-200">
                                     mapped to {y.ownedBy.ssTitle || y.ownedBy.ssId}
+                                  </span>
+                                )}
+                                {yaxxaExtraColumns.length > 0 && (
+                                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                                    {yaxxaExtraColumns.map((col, i) => {
+                                      const v = y.extras[i]
+                                      if (!v) return null
+                                      // CAMP_DESC is the readable name when
+                                      // CAMP_NAME is cryptic ("VCCVMUpgrades"),
+                                      // and noise when it just repeats it.
+                                      if (col === "CAMP_DESC") {
+                                        return v.trim().toUpperCase() ===
+                                          y.name.trim().toUpperCase() ? null : (
+                                          <span key={col} className="mr-2 italic">
+                                            {v}
+                                          </span>
+                                        )
+                                      }
+                                      return (
+                                        <span key={col} className="mr-2">
+                                          {col.replace(/^CAMP_/, "").toLowerCase()}{" "}
+                                          <span className="text-foreground">{v}</span>
+                                        </span>
+                                      )
+                                    })}
                                   </span>
                                 )}
                               </span>

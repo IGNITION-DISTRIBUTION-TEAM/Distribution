@@ -27,7 +27,8 @@ export const runtime = "nodejs"
  * MOVES it, and that has to be a visible choice rather than a surprise.
  */
 
-type Row = { CAMPAIGN_ID: string; LABEL: string | null }
+/** EXTRA_n are whatever extraCandidates resolved, in order. */
+type Row = { CAMPAIGN_ID: string; LABEL: string | null } & Record<string, unknown>
 type Owned = { YAXXA_CAMPAIGNID: string; SS_CAMPAIGNID: string; SS_TITLE: string | null }
 
 export async function GET(request: NextRequest) {
@@ -79,11 +80,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       total: Number(counts[0]?.CNT ?? 0),
       limit,
+      // Named so the UI can label them without knowing which columns exist.
+      extraColumns: cols.extras,
       campaigns: rows.map((r) => {
         const owner = ownerOf.get(String(r.CAMPAIGN_ID))
         return {
           id: String(r.CAMPAIGN_ID),
-          name: r.LABEL ?? "",
+          name: String(r.LABEL ?? ""),
+          extras: cols.extras.map((_, i) => {
+            const v = r[`EXTRA_${i}`]
+            return v == null ? "" : String(v)
+          }),
           ownedBy: owner
             ? { ssId: String(owner.SS_CAMPAIGNID), ssTitle: owner.SS_TITLE ?? null }
             : null,
