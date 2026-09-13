@@ -6153,6 +6153,9 @@ export function DiallerDashboardPanel() {
   // Bumped by the Refresh button; the data effect depends on it.
   const [reloadKey, setReloadKey] = useState(0)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  // How many ACTIVE campaigns exist, mapped or not. The picker shows only the
+  // mapped ones, so this is what lets it say why it is shorter.
+  const [activeTotal, setActiveTotal] = useState<number | null>(null)
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [campaignsError, setCampaignsError] = useState<string | null>(null)
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false)
@@ -6175,7 +6178,10 @@ export function DiallerDashboardPanel() {
       setCampaignsLoading(true)
       setCampaignsError(null)
       try {
-        const res = await fetch("/api/campaigns")
+        // MAPPED CAMPAIGNS ONLY. This report filters a Yaxxa view through the
+        // campaign mapping, so a campaign with nothing attached has no answer
+        // to give here — offering it just produces a report of zeroes.
+        const res = await fetch("/api/campaigns?mappedToDialler=1")
         const d = await res.json()
         if (cancelled) return
         if (!res.ok) {
@@ -6183,6 +6189,7 @@ export function DiallerDashboardPanel() {
           return
         }
         setCampaigns(d.campaigns || [])
+        setActiveTotal(typeof d.activeTotal === "number" ? d.activeTotal : null)
       } catch (err) {
         if (!cancelled) setCampaignsError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -6278,10 +6285,20 @@ export function DiallerDashboardPanel() {
       prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
     )
 
+  // Nothing to pick from, and it is not an error — the mapping is simply
+  // empty. A disabled dropdown with no explanation would read as a fault.
+  const nothingMapped = !campaignsLoading && !campaignsError && campaigns.length === 0
+
   const triggerLabel = campaignsLoading
     ? "Loading campaigns..."
+    : nothingMapped
+    ? "No campaigns mapped to the dialler"
     : selectedCampaigns.length === 0
-    ? "All campaigns"
+    ? // NOT "All campaigns". With nothing picked the report sends no campaign
+      // filter at all, so it covers every campaign in the dialler — including
+      // ones nobody has mapped, which are deliberately absent from this list.
+      // The total can therefore exceed the sum of everything in the dropdown.
+      "All dialler campaigns"
     : selectedCampaigns.length === 1
     ? `${selectedCampaigns[0].title}  ·  ${selectedCampaigns[0].id}`
     : `${selectedCampaigns.length} campaigns selected`
@@ -6301,7 +6318,7 @@ export function DiallerDashboardPanel() {
                   role="combobox"
                   aria-expanded={campaignPickerOpen}
                   className="w-full justify-between"
-                  disabled={campaignsLoading || !!campaignsError}
+                  disabled={campaignsLoading || !!campaignsError || nothingMapped}
                 >
                   <span className="truncate">{triggerLabel}</span>
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -6364,6 +6381,22 @@ export function DiallerDashboardPanel() {
                   Clear all
                 </button>
               </div>
+            )}
+            {/* The list is SHORTER than every other campaign picker in the
+                portal, so it has to say why — otherwise the first person whose
+                campaign is missing concludes it stopped existing. */}
+            {!campaignsLoading && !campaignsError && activeTotal !== null && !nothingMapped && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {campaigns.length} of {activeTotal} active campaigns are mapped to a dialler
+                campaign. Only those can be reported on here.
+              </p>
+            )}
+            {nothingMapped && (
+              <p className="mt-2 text-xs text-amber-400">
+                No campaign has a dialler campaign mapped yet
+                {activeTotal ? ` (${activeTotal} active campaigns)` : ""}. Link them under Dialler
+                → Campaign mapping, then reload this page.
+              </p>
             )}
             {campaignsError && (
               <p className="mt-2 text-xs text-rose-400">
