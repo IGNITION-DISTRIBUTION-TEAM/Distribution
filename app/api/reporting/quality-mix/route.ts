@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import { requireDepartmentAccess } from "@/lib/admin-guard"
+import {
+  DATE_RE,
+  DEFAULT_SOURCE_TABLE,
+  QUALIFIED_RE,
+  IS_FIRST,
+  PAID,
+  SCORE_NUM,
+  VAS,
+  bandSql,
+  escSql,
+  num,
+  numOrNull,
+  rate,
+} from "@/lib/quality-mix-sql"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -72,59 +86,17 @@ export const maxDuration = 60
  * the raw billing table).
  */
 
-// What scripts/quality-mix.sql builds. Keep the two in step.
-const DEFAULT_SOURCE_TABLE = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_QUALITY_MIX_BASE"
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/
-const QUALIFIED = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
-
-function escSql(s: string): string {
-  return s.replace(/'/g, "''")
-}
-
-const num = (v: unknown): number => {
-  if (v === null || v === undefined) return 0
-  const n = typeof v === "number" ? v : Number(String(v))
-  return Number.isFinite(n) ? n : 0
-}
-const numOrNull = (v: unknown): number | null => {
-  if (v === null || v === undefined || String(v).trim() === "") return null
-  const n = typeof v === "number" ? v : Number(String(v))
-  return Number.isFinite(n) ? n : null
-}
-const rate = (a: number, b: number): number | null => (b > 0 ? a / b : null)
-
-
-/**
- * The account's score as a number, with 0 and non-numeric treated as missing so
- * MAX() ignores them rather than letting a placeholder win.
- */
-const SCORE_NUM = `NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0)`
-
-/**
- * Derived 50-point band from an already-numeric score column. Banding happens
- * after aggregating to the account (never as MAX over the band *string* — that
- * sorts 'unknown' above '900+' and would mis-bucket a scored account).
- */
-const bandSql = (col: string) => `
-  CASE
-    WHEN ${col} IS NULL THEN 'unknown'
-    WHEN ${col} < 600 THEN '<600'
-    WHEN ${col} >= 900 THEN '900+'
-    ELSE TO_VARCHAR(FLOOR(${col} / 50) * 50) || '-' || TO_VARCHAR(FLOOR(${col} / 50) * 50 + 49)
-  END`
-
-// PAID_FLAG / VAS_BUTTON_FLAG arrive as 0/1, sometimes as text.
-const PAID = `COALESCE(TRY_TO_NUMBER(TO_VARCHAR(PAID_FLAG)), 0)`
-const VAS = `COALESCE(TRY_TO_NUMBER(TO_VARCHAR(VAS_BUTTON_FLAG)), 0)`
-const IS_FIRST = `COALESCE(TRY_TO_NUMBER(TO_VARCHAR(ISFIRSTCOLLECTION)), 0) = 1`
+// Definitions live in lib/quality-mix-sql.ts so the VAS/telco split report reads
+// from the same ones. Band boundaries and "0 means missing" are business rules,
+// not formatting: two reports under one heading that band a score differently
+// produce figures nobody can add together.
 
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "reporting")
   if (guard instanceof NextResponse) return guard
 
   const table = (process.env.QUALITY_MIX_SOURCE_TABLE ?? "").trim() || DEFAULT_SOURCE_TABLE
-  if (!QUALIFIED.test(table)) {
+  if (!QUALIFIED_RE.test(table)) {
     return NextResponse.json(
       { error: `QUALITY_MIX_SOURCE_TABLE must be DATABASE.SCHEMA.OBJECT (got "${table}")` },
       { status: 400 }
@@ -166,7 +138,7 @@ export async function GET(request: NextRequest) {
   // since SCOREGROUP labels cross those boundaries.
   const bandMode = searchParams.get("bandMode") === "scoregroup" ? "scoregroup" : "derived"
 
-  if (!DATE.test(startDate) || !DATE.test(endDate)) {
+  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
     return NextResponse.json(
       { error: "startDate and endDate are required, format YYYY-MM-DD" },
       { status: 400 }

@@ -13,29 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DepartmentShell } from "@/components/department-shell"
 import { StatTile } from "@/components/kit/stat-tile"
 import { Banner } from "@/components/kit/banner"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
-import {
   AlertCircle,
   Check,
-  ChevronsUpDown,
   Download,
   LineChart as LineChartIcon,
   Loader2,
@@ -59,6 +42,7 @@ import {
 } from "@/components/distribution-dashboard"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
+import { QualityFilterBar, type QualityFilterState } from "@/components/reporting/quality-filters"
 import { PageHeading, SectionHeading } from "@/components/kit/heading"
 import { SkeletonReport } from "@/components/kit/skeleton"
 import { useChartMotion } from "@/hooks/use-chart-motion"
@@ -183,7 +167,7 @@ const fmtPct = (v: number | null) =>
 // "soon" and not selectable), which is how the quality reports appear until the
 // sales and billing feed lands.
 type ReportItem = { label: string; view: ReportView | null }
-type ReportView = "quality" | "distributed" | "sales" | "dialler" | "pool"
+type ReportView = "quality" | "vasTelco" | "distributed" | "sales" | "dialler" | "pool"
 
 const SECTIONS: { title: string; items: ReportItem[] }[] = [
   {
@@ -205,6 +189,7 @@ const SECTIONS: { title: string; items: ReportItem[] }[] = [
       // One report covers score mix, FTC/FID and VAS attachment — they share a
       // base (accounts written) and reading them apart invites wrong compares.
       { label: "Quality mix (FTC / FID)", view: "quality" },
+      { label: "VAS paid, telco declined", view: "vasTelco" },
     ],
   },
 ]
@@ -240,6 +225,7 @@ export function ReportingDashboard({ onBack }: { onBack?: () => void }) {
       onBack={onBack}
     >
       {active.view === "quality" && <QualityMixReport />}
+      {active.view === "vasTelco" && <VasTelcoSplitReport />}
       {active.view === "distributed" && <DistributedDashboardPanel />}
       {active.view === "pool" && <PoolAllocationReport />}
       {active.view === "sales" && <SalesDashboardPanel />}
@@ -553,9 +539,7 @@ function QualityMixReport() {
   const [startDate, setStartDate] = useState(isoDaysAgo(180))
   const [endDate, setEndDate] = useState(isoDaysAgo(0))
   const [products, setProducts] = useState<string[]>([])
-  const [productOpen, setProductOpen] = useState(false)
   const [bandFilter, setBandFilter] = useState<string[]>([])
-  const [bandOpen, setBandOpen] = useState(false)
   const [brand, setBrand] = useState("")
   const [data, setData] = useState<QualityPayload | null>(null)
   const [loading, setLoading] = useState(false)
@@ -758,185 +742,31 @@ function QualityMixReport() {
       </div>
 
       {/* ---- filters ---- */}
-      <Card padding="dense">
-        <div className="flex flex-wrap items-end gap-4">
-          <div>
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales from</Label>
-            <Input
-              type="date"
-              value={startDate}
-              max={endDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-[150px]"
-            />
-          </div>
-          <div>
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Sales to</Label>
-            <Input
-              type="date"
-              value={endDate}
-              min={startDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-[150px]"
-            />
-          </div>
-          <div className="min-w-[240px]">
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Product</Label>
-            <Popover open={productOpen} onOpenChange={setProductOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-between font-normal">
-                  <span className="truncate">
-                    {products.length === 0
-                      ? "All products"
-                      : products.length === 1
-                      ? products[0]
-                      : products.length + " products"}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 flex-shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[300px] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search products..." />
-                  <CommandList>
-                    <CommandEmpty>No product found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem onSelect={() => setProducts([])}>
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            products.length === 0 ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        All products
-                      </CommandItem>
-                      {productOptions.map((p) => (
-                        <CommandItem
-                          key={p}
-                          value={p}
-                          onSelect={() =>
-                            setProducts((prev) =>
-                              prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
-                            )
-                          }
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              products.includes(p) ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                          <span className="truncate">{p}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-          <div className="min-w-[200px]">
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Brand</Label>
-            <Select value={brand || "__all"} onValueChange={(v) => setBrand(v === "__all" ? "" : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="All brands" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">All brands</SelectItem>
-                {(data?.brands ?? []).map((b) => (
-                  <SelectItem key={b} value={b}>
-                    {b}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="min-w-[220px]">
-            <Label className="mb-1.5 block text-xs text-muted-foreground">Score band</Label>
-            <Popover open={bandOpen} onOpenChange={setBandOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-between font-normal">
-                  <span className="truncate">
-                    {bandFilter.length === 0
-                      ? "All bands"
-                      : bandFilter.length === 1
-                      ? bandFilter[0]
-                      : bandFilter.length + " bands"}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 flex-shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[280px] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search bands..." />
-                  <CommandList>
-                    <CommandEmpty>No band found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem onSelect={() => setBandFilter([])}>
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            bandFilter.length === 0 ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        All bands
-                      </CommandItem>
-                      {bandChoices.map((b) => (
-                        <CommandItem
-                          key={b}
-                          value={b}
-                          onSelect={() =>
-                            setBandFilter((prev) =>
-                              prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]
-                            )
-                          }
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              bandFilter.includes(b) ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                          <span className="truncate">{b}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-          <Button onClick={run} disabled={loading} className={cn(dirty && "ring-2 ring-primary/60")}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Run report
-          </Button>
-        </div>
-        {dirty && (
-          <p className="mt-3 text-xs text-amber-200">
-            Filters changed — the figures below are still from the previous run. Click Run report to
-            apply.
-          </p>
-        )}
-        <div className="mt-3 flex flex-wrap items-center gap-4">
-          {[90, 180, 365].map((d) => (
-            <button
-              key={d}
-              type="button"
-              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              onClick={() => {
-                setStartDate(isoDaysAgo(d))
-                setEndDate(isoDaysAgo(0))
-              }}
-            >
-              Last {d === 365 ? "12 months" : `${Math.round(d / 30)} months`}
-            </button>
-          ))}
+      {/* Shared with the VAS/telco split report — see
+          components/reporting/quality-filters.tsx for why they are one
+          component rather than two copies. */}
+      <QualityFilterBar
+        value={{ startDate, endDate, products, brand, bands: bandFilter }}
+        onChange={(v) => {
+          setStartDate(v.startDate)
+          setEndDate(v.endDate)
+          setProducts(v.products)
+          setBrand(v.brand)
+          setBandFilter(v.bands)
+        }}
+        productOptions={productOptions}
+        brandOptions={data?.brands ?? []}
+        bandOptions={bandChoices}
+        onRun={run}
+        loading={loading}
+        dirty={dirty}
+        note={
           <span className="text-xs text-muted-foreground">
-            Banded on SCOREGROUP. Its labels cross round boundaries, so a range like 650&ndash;699 spans
-            several rows.
+            Banded on SCOREGROUP. Its labels cross round boundaries, so a range like
+            650&ndash;699 spans several rows.
           </span>
-        </div>
-      </Card>
+        }
+      />
 
       {data?.dataThrough && (
         <FreshnessNote dataThrough={data.dataThrough} endDate={data.endDate} />
@@ -2951,6 +2781,296 @@ function PoolAllocationReport() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+
+/**
+ * VAS paid, telco declined.
+ *
+ * First collections where the two sides of one customer's bill disagree in the
+ * same period: the add-on collected, the service it attaches to did not. A
+ * refund and complaint exposure, and it inflates VAS attach revenue.
+ *
+ * Same source, filters and definitions as Quality mix — see
+ * lib/quality-mix-sql.ts — so the two reconcile rather than offering two
+ * answers to what a reader takes to be one question.
+ */
+type VasTelcoGroup = {
+  key: string
+  pairs: number
+  bothPaid: number
+  vasOnlyPaid: number
+  telcoOnlyPaid: number
+  neitherPaid: number
+  vasRevenueAtRisk: number
+  rate: number | null
+}
+
+type VasTelcoPayload = {
+  table: string
+  totals: {
+    pairs: number
+    bothPaid: number
+    vasOnlyPaid: number
+    telcoOnlyPaid: number
+    neitherPaid: number
+    vasRevenueAtRisk: number
+    telcoAttempted: number
+    rate: number | null
+    mirrorRate: number | null
+  }
+  unpaired: { rows: number; vasWithoutTelco: number; telcoWithoutVas: number }
+  byBand: VasTelcoGroup[]
+  byReason: VasTelcoGroup[]
+  byBrand: VasTelcoGroup[]
+  byPeriod: VasTelcoGroup[]
+  accounts: {
+    accountNo: string
+    policyNo: string
+    period: string
+    saleDate: string
+    band: string
+    vasAmount: number
+    telcoAmount: number
+    reason: string
+  }[]
+}
+
+const fmtMoney = (n: number) => `R ${Math.round(n).toLocaleString()}`
+
+function VasTelcoSplitReport() {
+  const [filters, setFilters] = useState<QualityFilterState>({
+    startDate: isoDaysAgo(180),
+    endDate: isoDaysAgo(0),
+    products: [],
+    brand: "",
+    bands: [],
+  })
+  const [applied, setApplied] = useState<QualityFilterState | null>(null)
+  const [data, setData] = useState<VasTelcoPayload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      })
+      if (filters.products.length > 0) params.set("products", filters.products.join(","))
+      if (filters.bands.length > 0) params.set("bands", filters.bands.join(","))
+      if (filters.brand) params.set("brand", filters.brand)
+      params.set("bandMode", "scoregroup")
+      const r = await fetchJson<VasTelcoPayload>(
+        `/api/reporting/vas-telco-split?${params.toString()}`
+      )
+      if (!r.ok || !r.data) throw new Error(r.error ?? "Request failed")
+      setData(r.data)
+      setApplied(filters)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [filters])
+
+  useEffect(() => {
+    const t = setTimeout(() => run(), 0)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const dirty = applied !== null && JSON.stringify(applied) !== JSON.stringify(filters)
+  const t = data?.totals
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <PageHeading>VAS paid, telco declined</PageHeading>
+        <p className="mt-1 max-w-4xl text-sm text-muted-foreground">
+          First collections where the same customer&rsquo;s VAS collected in a period but the
+          telco line did not. They were charged for the add-on while the service it attaches to
+          never billed.
+        </p>
+      </div>
+
+      <QualityFilterBar
+        value={filters}
+        onChange={setFilters}
+        productOptions={[]}
+        brandOptions={[]}
+        bandOptions={data?.byBand.map((b) => b.key) ?? []}
+        onRun={run}
+        loading={loading}
+        dirty={dirty}
+        note={
+          <span className="text-xs text-muted-foreground">
+            Same source and filters as Quality mix. A product filter selects the customer, not
+            the row, so it cannot remove one side of a pair.
+          </span>
+        }
+      />
+
+      {error && <Banner tone="error">{error}</Banner>}
+
+      {loading && !data && <SkeletonReport header={false} tiles={4} charts={0} />}
+
+      {data && t && t.pairs === 0 && (
+        <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+          No customer has both a VAS and a telco first collection in the same period for this
+          window. Widen the dates, or check that VAS_BUTTON_FLAG varies within an account —
+          <span className="font-mono"> scripts/vas-telco-split.sql</span> section 1 answers that.
+        </div>
+      )}
+
+      {data && t && t.pairs > 0 && (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <StatTile size="sm" label="Paired first collections" value={fmtInt(t.pairs)} />
+            <StatTile
+              size="sm"
+              label="VAS paid, telco declined"
+              value={fmtInt(t.vasOnlyPaid)}
+              tone="danger"
+            />
+            <StatTile size="sm" label="Share of pairs" value={fmtPct(t.rate)} tone="danger" />
+            <StatTile
+              size="sm"
+              label="VAS collected on a failed telco"
+              value={fmtMoney(t.vasRevenueAtRisk)}
+              tone="danger"
+            />
+            <StatTile size="sm" label="Both paid" value={fmtInt(t.bothPaid)} tone="success" />
+          </div>
+
+          {/* The control. If the mirror case is a similar size, this is billing
+              noise rather than anything specific to VAS, and saying so is worth
+              more than the headline number. */}
+          <Banner tone={t.mirrorRate !== null && t.rate !== null && t.mirrorRate > t.rate * 0.7 ? "warning" : "info"}>
+            <p>
+              The mirror case — telco paid while the VAS declined — is{" "}
+              <span className="font-mono">{fmtInt(t.telcoOnlyPaid)}</span> ({fmtPct(t.mirrorRate)}).
+              {t.mirrorRate !== null && t.rate !== null && t.mirrorRate > t.rate * 0.7
+                ? " Close to the headline, so read this as general billing failure rather than something specific to VAS."
+                : " Well below the headline, so the disagreement does look one-directional."}
+            </p>
+            {data.unpaired.rows > 0 && (
+              <p className="mt-1">
+                <span className="font-mono">{fmtInt(data.unpaired.rows)}</span> first collections
+                had no counterpart in their own period (
+                {fmtInt(data.unpaired.vasWithoutTelco)} VAS without a telco,{" "}
+                {fmtInt(data.unpaired.telcoWithoutVas)} the other way). They cannot agree or
+                disagree, so they are excluded from every rate above.
+              </p>
+            )}
+          </Banner>
+
+          <VasTelcoBreakdown title="By score band" rows={data.byBand} />
+          <VasTelcoBreakdown title="Why the telco declined" rows={data.byReason} reasonOnly />
+          <VasTelcoBreakdown title="By brand" rows={data.byBrand} />
+          <VasTelcoBreakdown title="By billing period" rows={data.byPeriod} />
+
+          {data.accounts.length > 0 && (
+            <div>
+              <div className="mb-2">
+                <SectionHeading>Affected customers</SectionHeading>
+                <p className="text-sm text-muted-foreground">
+                  Largest VAS amounts first. Top {data.accounts.length}.
+                </p>
+              </div>
+              <div className="overflow-hidden rounded-lg border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead>Period</TableHead>
+                      <TableHead>Sale date</TableHead>
+                      <TableHead>Band</TableHead>
+                      <TableHead className="text-right">VAS collected</TableHead>
+                      <TableHead className="text-right">Telco attempted</TableHead>
+                      <TableHead>Decline reason</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.accounts.map((a, i) => (
+                      <TableRow key={`${a.accountNo}-${a.period}-${i}`}>
+                        <TableCell className="font-mono text-sm">{a.accountNo}</TableCell>
+                        <TableCell className="text-sm">{a.period}</TableCell>
+                        <TableCell className="text-sm">{a.saleDate}</TableCell>
+                        <TableCell className="text-sm">{a.band}</TableCell>
+                        <TableCell className="text-right font-mono">
+                          {fmtMoney(a.vasAmount)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {fmtMoney(a.telcoAmount)}
+                        </TableCell>
+                        <TableCell className="text-sm">{a.reason}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function VasTelcoBreakdown({
+  title,
+  rows,
+  reasonOnly,
+}: {
+  title: string
+  rows: VasTelcoGroup[]
+  /** Reason rows only describe the affected cohort, so the quadrants are noise. */
+  reasonOnly?: boolean
+}) {
+  if (rows.length === 0) return null
+  return (
+    <div>
+      <div className="mb-2">
+        <SectionHeading>{title}</SectionHeading>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{reasonOnly ? "Reason" : "Group"}</TableHead>
+              <TableHead className="text-right">
+                {reasonOnly ? "Customers" : "Pairs"}
+              </TableHead>
+              <TableHead className="text-right">VAS paid, telco declined</TableHead>
+              {!reasonOnly && <TableHead className="text-right">Share</TableHead>}
+              <TableHead className="text-right">VAS collected</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.key}>
+                <TableCell className="text-sm">{r.key}</TableCell>
+                <TableCell className="text-right font-mono">{fmtInt(r.pairs)}</TableCell>
+                <TableCell className="text-right font-mono">{fmtInt(r.vasOnlyPaid)}</TableCell>
+                {!reasonOnly && (
+                  <TableCell className="text-right font-mono text-muted-foreground">
+                    {fmtPct(r.rate)}
+                  </TableCell>
+                )}
+                <TableCell className="text-right font-mono">
+                  {fmtMoney(r.vasRevenueAtRisk)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
