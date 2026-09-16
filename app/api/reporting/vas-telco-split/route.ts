@@ -111,6 +111,18 @@ export async function GET(request: NextRequest) {
 
   const band = bandExprs(f.bandMode)
 
+  // Paging for the affected-customers table. Defaulted rather than rejected, so
+  // a hand-edited URL renders a sane page instead of an error.
+  const limitRaw = Number(searchParams.get("limit") ?? 50)
+  const offsetRaw = Number(searchParams.get("offset") ?? 0)
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 && limitRaw <= 200 ? limitRaw : 50
+  const offset = Number.isInteger(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0
+
+  // A page change redraws ONE table. Re-running the five grouped scans behind
+  // the tiles to do it would be wasted work, and they cannot change when only
+  // the offset does.
+  const accountsOnly = searchParams.get("part") === "accounts"
+
   // The billing period. BILLINGDATE is when it actually billed; SCHEDULEDATE is
   // the fallback for a row that never reached a billing date, so an attempt is
   // never dropped from its own period for having failed early.
@@ -275,15 +287,40 @@ export async function GET(request: NextRequest) {
            COALESCE(NULLIF(TRIM(TELCO_REASON), ''), '(none)') AS TELCO_REASON
       FROM paired
      WHERE VAS_PAID = 1 AND TELCO_PAID = 0
-     ORDER BY VAS_AMOUNT DESC NULLS LAST
-     LIMIT 500`
+     -- THE TIEBREAKER IS NOT TIDYING. VAS is typically one price — every row in
+     -- the first screenshot of this table was R 195 — so VAS_AMOUNT alone
+     -- leaves the whole sort key tied, and Snowflake gives no stable order
+     -- among tied rows. LIMIT/OFFSET over that returns the same customer on two
+     -- pages and silently drops another. ACCOUNTNO + PERIOD is the pivot key and
+     -- therefore unique per row, which is what makes the order total.
+     ORDER BY VAS_AMOUNT DESC NULLS LAST, ACCOUNTNO, PERIOD
+     LIMIT ${limit} OFFSET ${offset}`
 
   // A validator should never be handed a paraphrase of the query.
   if (searchParams.get("sql") === "1") {
     return NextResponse.json({ table, aggSql, drillSql })
   }
 
+  const mapDrill = (rows: DrillRow[]) =>
+    rows.map((r) => ({
+      accountNo: r.ACCOUNTNO ?? "",
+      policyNo: r.POLICYNO ?? "",
+      period: r.PERIOD ?? "",
+      saleDate: r.SALE_DATE ?? "",
+      band: r.BAND ?? "unknown",
+      vasAmount: num(r.VAS_AMOUNT),
+      telcoAmount: num(r.TELCO_AMOUNT),
+      reason: r.TELCO_REASON ?? "(none)",
+    }))
+
   try {
+    if (accountsOnly) {
+      const rows = await executeSnowflakeQuery<DrillRow>(drillSql, SF)
+      // No total here on purpose: it is `totals.vasOnlyPaid` from the last full
+      // run, and turning a page cannot change it.
+      return NextResponse.json({ accounts: mapDrill(rows), limit, offset })
+    }
+
     const [agg, drill] = await Promise.all([
       executeSnowflakeQuery<AggRow>(aggSql, SF),
       executeSnowflakeQuery<DrillRow>(drillSql, SF),
@@ -341,16 +378,9 @@ export async function GET(request: NextRequest) {
       byReason: group("reason"),
       byBrand: group("brand"),
       byPeriod: group("period"),
-      accounts: drill.map((r) => ({
-        accountNo: r.ACCOUNTNO ?? "",
-        policyNo: r.POLICYNO ?? "",
-        period: r.PERIOD ?? "",
-        saleDate: r.SALE_DATE ?? "",
-        band: r.BAND ?? "unknown",
-        vasAmount: num(r.VAS_AMOUNT),
-        telcoAmount: num(r.TELCO_AMOUNT),
-        reason: r.TELCO_REASON ?? "(none)",
-      })),
+      accounts: mapDrill(drill),
+      limit,
+      offset,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/table"
 import { DepartmentShell } from "@/components/department-shell"
 import { StatTile } from "@/components/kit/stat-tile"
+import { Pager, DEFAULT_PAGE_SIZE } from "@/components/kit/pager"
+import { pageInfo } from "@/lib/pagination"
 import { Banner } from "@/components/kit/banner"
 import {
   AlertCircle,
@@ -2852,21 +2854,33 @@ function VasTelcoSplitReport() {
   const [data, setData] = useState<VasTelcoPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  const [offset, setOffset] = useState(0)
+
+  const queryFor = useCallback(
+    (f: QualityFilterState, lim: number, off: number) => {
+      const params = new URLSearchParams({ startDate: f.startDate, endDate: f.endDate })
+      if (f.products.length > 0) params.set("products", f.products.join(","))
+      if (f.bands.length > 0) params.set("bands", f.bands.join(","))
+      if (f.brand) params.set("brand", f.brand)
+      params.set("bandMode", "scoregroup")
+      params.set("limit", String(lim))
+      params.set("offset", String(off))
+      return params
+    },
+    []
+  )
 
   const run = useCallback(async () => {
     setLoading(true)
     setError(null)
+    // BACK TO PAGE 1 ON EVERY RUN. Change a filter while on page 8 and the
+    // result set shrinks under you; asking for that offset again returns an
+    // empty table, which reads like a clean result rather than a stale offset.
+    setOffset(0)
     try {
-      const params = new URLSearchParams({
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      })
-      if (filters.products.length > 0) params.set("products", filters.products.join(","))
-      if (filters.bands.length > 0) params.set("bands", filters.bands.join(","))
-      if (filters.brand) params.set("brand", filters.brand)
-      params.set("bandMode", "scoregroup")
       const r = await fetchJson<VasTelcoPayload>(
-        `/api/reporting/vas-telco-split?${params.toString()}`
+        `/api/reporting/vas-telco-split?${queryFor(filters, pageSize, 0).toString()}`
       )
       if (!r.ok || !r.data) throw new Error(r.error ?? "Request failed")
       setData(r.data)
@@ -2877,7 +2891,32 @@ function VasTelcoSplitReport() {
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [filters, pageSize, queryFor])
+
+  /**
+   * Turn a page: fetch ONLY the table.
+   *
+   * The tiles and breakdowns cannot change when the offset does, and re-running
+   * the five grouped scans behind them to redraw one table would be wasted work
+   * on every click.
+   */
+  const goTo = useCallback(
+    async (nextOffset: number, nextSize = pageSize) => {
+      if (!applied) return
+      setOffset(nextOffset)
+      setPageSize(nextSize)
+      try {
+        const r = await fetchJson<{ accounts: VasTelcoPayload["accounts"] }>(
+          `/api/reporting/vas-telco-split?${queryFor(applied, nextSize, nextOffset).toString()}&part=accounts`
+        )
+        if (!r.ok || !r.data) throw new Error(r.error ?? "Request failed")
+        setData((prev) => (prev ? { ...prev, accounts: r.data!.accounts } : prev))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [applied, pageSize, queryFor]
+  )
 
   useEffect(() => {
     const t = setTimeout(() => run(), 0)
@@ -2887,6 +2926,9 @@ function VasTelcoSplitReport() {
 
   const dirty = applied !== null && JSON.stringify(applied) !== JSON.stringify(filters)
   const t = data?.totals
+  // Arithmetic in lib/pagination.ts, where the boundary cases are tested rather
+  // than eyeballed.
+  const accountsPage = pageInfo(t?.vasOnlyPaid ?? 0, pageSize, offset)
 
   return (
     <div className="flex flex-col gap-4">
@@ -2975,15 +3017,27 @@ function VasTelcoSplitReport() {
           <VasTelcoBreakdown title="By brand" rows={data.byBrand} />
           <VasTelcoBreakdown title="By billing period" rows={data.byPeriod} />
 
-          {data.accounts.length > 0 && (
+          {t.vasOnlyPaid > 0 && (
             <div>
               <div className="mb-2">
                 <SectionHeading>Affected customers</SectionHeading>
                 <p className="text-sm text-muted-foreground">
-                  Largest VAS amounts first. Top {data.accounts.length}.
+                  Largest VAS amounts first, then by account. Every one of these was charged
+                  for a VAS while their telco line declined.
                 </p>
               </div>
-              <div className="overflow-hidden rounded-lg border border-border">
+              {/* The total is the tile's count — turning a page cannot change
+                  it, so it is not re-queried. */}
+              <Pager
+                info={accountsPage}
+                total={t.vasOnlyPaid}
+                pageSize={pageSize}
+                onOffset={(o) => goTo(o)}
+                onPageSize={(sz) => goTo(0, sz)}
+                showSize
+                noun="affected customers"
+              />
+              <div className="mt-2 overflow-hidden rounded-lg border border-border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -3014,6 +3068,16 @@ function VasTelcoSplitReport() {
                     ))}
                   </TableBody>
                 </Table>
+              </div>
+              <div className="mt-2">
+                <Pager
+                  info={accountsPage}
+                  total={t.vasOnlyPaid}
+                  pageSize={pageSize}
+                  onOffset={(o) => goTo(o)}
+                  onPageSize={(sz) => goTo(0, sz)}
+                  noun="affected customers"
+                />
               </div>
             </div>
           )}
