@@ -205,10 +205,24 @@ export async function POST(request: NextRequest) {
 
   try {
     await ensureTicketTables()
-    const config = await getFormConfig()
-    const activeFields = config.fields.filter((f) => f.active)
     const managedDepartments = await getActiveDepartments()
     const managedNames = new Set(managedDepartments.map((d) => d.name))
+
+    // THE DEPARTMENT DECIDES WHICH FORM VALIDATES THIS SUBMISSION, so it has to
+    // be resolved before the config is loaded rather than inside the loop over
+    // the config's own fields. Validating a department's submission against the
+    // global form would reject its own select options and skip its own required
+    // fields — the two failures pull in opposite directions and neither is
+    // visible from the response.
+    //
+    // The name is caller-supplied, so it is matched against the MANAGED list
+    // before it is used to pick a config. An unknown or missing department
+    // falls back to the global form and is rejected by the loop below, which
+    // already checks membership.
+    const submittedDept = String(rawAnswers.department ?? "").trim()
+    const deptSlug = managedDepartments.find((d) => d.name === submittedDept)?.slug ?? null
+    const { config } = await getFormConfig(deptSlug)
+    const activeFields = config.fields.filter((f) => f.active)
 
     // Validate against the live form config; drop unknown keys.
     const answers: Record<string, string> = {}

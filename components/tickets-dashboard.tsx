@@ -247,11 +247,14 @@ function DepartmentsContent() {
 function TicketDetailDialog({
   ticket,
   formConfig,
+  fieldLabels,
   onClose,
   onSaved,
 }: {
   ticket: TicketRow
   formConfig: TicketFormConfig | null
+  /** Every label ever saved, across all departments' forms. */
+  fieldLabels: Record<string, string>
   onClose: () => void
   onSaved: () => void
 }) {
@@ -260,8 +263,11 @@ function TicketDetailDialog({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Forms differ per department, so one config cannot label every ticket. The
+  // merged map covers fields that belong to another department's form; without
+  // it those rows show a raw key next to a perfectly good answer.
   const labelFor = (key: string): string =>
-    formConfig?.fields.find((f) => f.key === key)?.label ?? key
+    formConfig?.fields.find((f) => f.key === key)?.label ?? fieldLabels[key] ?? key
 
   const save = async () => {
     setSaving(true)
@@ -389,6 +395,7 @@ function TicketsListContent() {
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<TicketRow | null>(null)
   const [formConfig, setFormConfig] = useState<TicketFormConfig | null>(null)
+  const [fieldLabels, setFieldLabels] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -410,10 +417,12 @@ function TicketsListContent() {
   }, [load])
 
   useEffect(() => {
-    fetch("/api/tickets/form-config")
+    fetch("/api/tickets/form-config?labels=1")
       .then(async (res) => {
         const data = await res.json()
-        if (res.ok) setFormConfig(data.config)
+        if (!res.ok) return
+        setFormConfig(data.config)
+        setFieldLabels((data.labels ?? {}) as Record<string, string>)
       })
       .catch(() => {
         // Labels fall back to raw keys.
@@ -523,6 +532,7 @@ function TicketsListContent() {
         <TicketDetailDialog
           ticket={selected}
           formConfig={formConfig}
+          fieldLabels={fieldLabels}
           onClose={() => setSelected(null)}
           onSaved={load}
         />
@@ -784,20 +794,58 @@ function CustomizeFormContent() {
   const [config, setConfig] = useState<TicketFormConfig | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+
+  // "" is the default form every department falls back to; anything else is one
+  // department's own.
+  const [dept, setDept] = useState("")
+  const [departments, setDepartments] = useState<TicketDepartment[]>([])
+  const [customised, setCustomised] = useState<string[]>([])
+  const [source, setSource] = useState<"department" | "global" | "default" | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch("/api/tickets/form-config")
+    fetch("/api/tickets/departments")
+      .then(async (res) => {
+        const data = await res.json()
+        if (res.ok) setDepartments((data.departments ?? []) as TicketDepartment[])
+      })
+      .catch(() => {
+        // The picker degrades to the default form only.
+      })
+  }, [])
+
+  const loadConfig = useCallback((slug: string) => {
+    setLoading(true)
+    setSaved(null)
+    setError(null)
+    fetch(`/api/tickets/form-config?labels=1${slug ? `&dept=${encodeURIComponent(slug)}` : ""}`)
       .then(async (res) => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Could not load config")
         setConfig(data.config)
+        setSource(data.source ?? null)
+        setCustomised((data.customisedDepartments ?? []) as string[])
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false))
   }, [])
 
+  // Deferred a tick so the first paint is not a synchronous setState from an
+  // effect — the same treatment the other loaders in this file still want.
+  useEffect(() => {
+    const t = setTimeout(() => loadConfig(dept), 0)
+    return () => clearTimeout(t)
+  }, [dept, loadConfig])
+
+  // A department showing the global form is INHERITING, not customised — saving
+  // here is what gives it a form of its own, and the wording has to make that
+  // the deliberate act it is.
+  const inheriting = Boolean(dept) && source !== "department"
+  const deptName = departments.find((d) => d.slug === dept)?.name ?? ""
+
   const update = (fn: (c: TicketFormConfig) => TicketFormConfig) => {
-    setSaved(false)
+    setSaved(null)
     setConfig((prev) => (prev ? fn(structuredClone(prev)) : prev))
   }
 
@@ -850,11 +898,16 @@ function CustomizeFormContent() {
       const res = await fetch("/api/tickets/form-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ config, dept: dept || undefined }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`)
-      setSaved(true)
+      setSaved(
+        dept
+          ? `Saved. ${deptName} now has its own form.`
+          : "Saved. This is the form every department without its own one uses."
+      )
+      loadConfig(dept)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -862,10 +915,31 @@ function CustomizeFormContent() {
     }
   }
 
-  if (!config && !error) {
-    return (
-      <SkeletonForm fields={6} />
-    )
+  // Writes a tombstone rather than deleting: the department stops having its
+  // own form, and the history of the one it had is kept.
+  const resetToDefault = async () => {
+    if (!dept) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/tickets/form-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dept, inherit: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Reset failed (${res.status})`)
+      setSaved(`${deptName} is back on the default form.`)
+      loadConfig(dept)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading && !config && !error) {
+    return <SkeletonForm fields={6} />
   }
 
   const urgencyField = config?.fields.find((f) => f.key === "urgency")
@@ -880,10 +954,58 @@ function CustomizeFormContent() {
         </p>
       </div>
 
+      <div className="rounded-lg border border-border bg-card p-4">
+        <label className="mb-1 block text-xs text-muted-foreground">Editing the form for</label>
+        <select
+          className={`${inputCls} max-w-md`}
+          value={dept}
+          onChange={(e) => setDept(e.target.value)}
+        >
+          <option value="">Default — every department without its own form</option>
+          {departments.map((d) => (
+            <option key={d.slug} value={d.slug}>
+              {d.name}
+              {customised.includes(d.slug) ? " — has its own form" : " — uses the default"}
+            </option>
+          ))}
+        </select>
+
+        {/* "Looks like the default" and "IS the default" are the same picture.
+            Saying which one is on screen is what stops an edit meant for one
+            department from being applied to all of them. */}
+        {dept === "" ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Editing the default. Changes here reach every department that has not been given
+            its own form
+            {departments.length > 0 && customised.length < departments.length
+              ? ` — ${departments.length - customised.length} of ${departments.length} right now.`
+              : "."}
+          </p>
+        ) : inheriting ? (
+          <p className="mt-2 text-xs text-amber-300">
+            {deptName} is on the default form. What you see below is a copy of it — saving
+            gives {deptName} a form of its own, and later changes to the default will stop
+            reaching it.
+          </p>
+        ) : (
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <p className="text-xs text-emerald-300">
+              {deptName} has its own form. Changes to the default do not reach it.
+            </p>
+            <button
+              type="button"
+              onClick={resetToDefault}
+              disabled={saving}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60"
+            >
+              Put it back on the default form
+            </button>
+          </div>
+        )}
+      </div>
+
       {error && <Banner tone="error">{error}</Banner>}
-      {saved && (
-        <Banner tone="success">Form saved.</Banner>
-      )}
+      {saved && <Banner tone="success">{saved}</Banner>}
 
       {config && (
         <>
@@ -1038,7 +1160,14 @@ function CustomizeFormContent() {
           <div>
             <Button onClick={save} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Save form
+              {/* The button says what the click actually does. On an inheriting
+                  department "Save form" reads as saving what is already there,
+                  when it in fact detaches it from the default for good. */}
+              {!dept
+                ? "Save the default form"
+                : inheriting
+                ? `Give ${deptName} its own form`
+                : `Save ${deptName}'s form`}
             </Button>
           </div>
         </>

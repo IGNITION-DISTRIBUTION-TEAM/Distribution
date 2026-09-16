@@ -26,9 +26,12 @@ const textareaCls =
 // (not-signed-in) visitors — the capture links are public.
 export function TicketForm({
   lockedDepartment,
+  lockedSlug,
   collectIdentity,
 }: {
   lockedDepartment?: string
+  /** The capture link's department, so its own form loads on first paint. */
+  lockedSlug?: string
   collectIdentity?: boolean
 }) {
   const [config, setConfig] = useState<TicketFormConfig | null>(null)
@@ -46,7 +49,12 @@ export function TicketForm({
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/tickets/form-config").then(async (res) => {
+      // Departments can have a form of their own. On a capture link the slug is
+      // known up front; on the internal page the department is a dropdown and
+      // the form is re-fetched when it changes (the effect below).
+      fetch(
+        `/api/tickets/form-config${lockedSlug ? `?dept=${encodeURIComponent(lockedSlug)}` : ""}`
+      ).then(async (res) => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Could not load the ticket form")
         return data.config as TicketFormConfig
@@ -63,7 +71,43 @@ export function TicketForm({
         setDepartments(depts)
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
-  }, [])
+  }, [lockedSlug])
+
+  /**
+   * Swap the form when the department changes.
+   *
+   * ANSWERS ARE KEPT WHERE THE KEY SURVIVES, dropped where it does not. Wiping
+   * everything would punish somebody who picked the wrong department after
+   * typing a long description; carrying a value into a field that no longer
+   * exists would submit an answer to a question the new form never asked.
+   *
+   * Only for the internal page — a capture link's department cannot change.
+   */
+  const selectedDept = answers.department ?? ""
+  useEffect(() => {
+    if (lockedSlug || lockedDepartment) return
+    const slug = departments.find((d) => d.name === selectedDept)?.slug
+    if (!slug) return
+    let cancelled = false
+    fetch(`/api/tickets/form-config?dept=${encodeURIComponent(slug)}`)
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok || cancelled) return
+        const next = data.config as TicketFormConfig
+        setConfig(next)
+        const keys = new Set(next.fields.filter((f) => f.active).map((f) => f.key))
+        setAnswers((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([k]) => keys.has(k)))
+        )
+      })
+      .catch(() => {
+        // Keep the form already on screen. A failed lookup must not blank a
+        // half-filled request.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedDept, departments, lockedSlug, lockedDepartment])
 
   // Date needed is derived from the chosen urgency (same hours that drive the
   // SLA due time), so users don't type it by hand.

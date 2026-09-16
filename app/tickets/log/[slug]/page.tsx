@@ -68,7 +68,11 @@ export default function TicketCapturePage({ params }: { params: Promise<{ slug: 
                   : " Fill in your name and email so the team can follow up."}
               </p>
             </div>
-            <TicketForm lockedDepartment={department.name} collectIdentity={!isAuthenticated} />
+            <TicketForm
+              lockedDepartment={department.name}
+              lockedSlug={department.slug}
+              collectIdentity={!isAuthenticated}
+            />
           </>
         )}
       </main>
