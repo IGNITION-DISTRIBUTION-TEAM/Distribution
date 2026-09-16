@@ -4,6 +4,7 @@ import { requireSuperAdmin } from "@/lib/admin-guard"
 import {
   DEPT_SLUG_RE,
   TICKETS_CONFIG_TABLE,
+  TICKETS_DEPT_CONFIG_TABLE,
   validateFormConfig,
   type TicketFormConfig,
 } from "@/lib/tickets-shared"
@@ -13,6 +14,7 @@ import {
   getCustomisedDeptSlugs,
   getFieldLabels,
   getFormConfig,
+  isDeptConfigAvailable,
   sqlString,
 } from "@/lib/tickets-server"
 
@@ -98,10 +100,30 @@ export async function PUT(request: NextRequest) {
 
   try {
     await ensureTicketTables()
+
+    // Per-department forms live in their own table. If it could not be created
+    // the feature is off, and saying so beats a raw privileges error from the
+    // INSERT — the default form keeps working either way.
+    if (dept && !isDeptConfigAvailable()) {
+      return NextResponse.json(
+        {
+          error:
+            "Per-department forms are unavailable: " +
+            `${TICKETS_DEPT_CONFIG_TABLE} could not be created. ` +
+            "The app's role needs CREATE TABLE on DATAWAREHOUSE.LEADS_DISTRIBUTION. " +
+            "The default form is unaffected.",
+        },
+        { status: 503 }
+      )
+    }
+
     const json = inherit ? "NULL" : sqlString(JSON.stringify(body.config))
     await executeSnowflakeQueryWithMeta(
-      `INSERT INTO ${TICKETS_CONFIG_TABLE} (CONFIG_JSON, DEPT_SLUG, UPDATED_BY) ` +
-        `SELECT ${json}, ${dept ? sqlString(dept) : "NULL"}, ${sqlString(guard.email)}`,
+      dept
+        ? `INSERT INTO ${TICKETS_DEPT_CONFIG_TABLE} (CONFIG_JSON, DEPT_SLUG, UPDATED_BY) ` +
+            `SELECT ${json}, ${sqlString(dept)}, ${sqlString(guard.email)}`
+        : `INSERT INTO ${TICKETS_CONFIG_TABLE} (CONFIG_JSON, UPDATED_BY) ` +
+            `SELECT ${json}, ${sqlString(guard.email)}`,
       SF_OPTS
     )
     return NextResponse.json({ success: true, inherit, dept: dept || null })

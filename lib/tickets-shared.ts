@@ -6,6 +6,12 @@ export const TICKETS_DB = "DATAWAREHOUSE"
 export const TICKETS_SCHEMA = "LEADS_DISTRIBUTION"
 export const TICKETS_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS`
 export const TICKETS_CONFIG_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS_FORM_CONFIG`
+// Per-department overrides live in their OWN table rather than as a column on
+// the one above. Adding a column needs MODIFY on an existing table, which the
+// app role does not have and should not be given — it permits ALTER on that
+// table generally. The role already creates its own tables, so a new one needs
+// no grant at all and the feature deploys without an ACCOUNTADMIN step.
+export const TICKETS_DEPT_CONFIG_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS_FORM_CONFIG_DEPT`
 export const TICKETS_DEPARTMENTS_TABLE = `${TICKETS_DB}.${TICKETS_SCHEMA}.TICKETS_DEPARTMENTS`
 
 // A requesting business department (managed in the Tickets dashboard). Each

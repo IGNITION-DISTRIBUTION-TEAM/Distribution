@@ -4,6 +4,7 @@ import {
   TICKETS_SCHEMA,
   TICKETS_TABLE,
   TICKETS_CONFIG_TABLE,
+  TICKETS_DEPT_CONFIG_TABLE,
   TICKETS_DEPARTMENTS_TABLE,
   DEFAULT_FORM_CONFIG,
   validateFormConfig,
@@ -41,24 +42,42 @@ export async function ensureTicketTables(): Promise<void> {
     SF_OPTS
   )
 
-  // DEPT_SLUG arrived after the config table did, so CREATE TABLE IF NOT EXISTS
-  // above will not add it to an existing install — that statement is a no-op
-  // once the table is there, whatever its shape. Checked against
-  // INFORMATION_SCHEMA rather than relying on ADD COLUMN IF NOT EXISTS, which
-  // is not available on every Snowflake edition and would fail the whole call.
-  const { rows } = await executeSnowflakeQueryWithMeta(
-    `SELECT COUNT(*) FROM ${TICKETS_DB}.INFORMATION_SCHEMA.COLUMNS` +
-      ` WHERE TABLE_SCHEMA = ${sqlString(TICKETS_SCHEMA)}` +
-      `   AND TABLE_NAME = 'TICKETS_FORM_CONFIG'` +
-      `   AND COLUMN_NAME = 'DEPT_SLUG'`,
-    SF_OPTS
-  )
-  if (Number(rows[0]?.[0] ?? 0) === 0) {
+  // A SEPARATE TABLE, NOT A COLUMN ON THE ONE ABOVE. The first attempt added
+  // DEPT_SLUG to TICKETS_FORM_CONFIG with ALTER TABLE, which needs MODIFY on an
+  // existing table — a privilege the app role does not have and should not be
+  // given, since it permits ALTER on that table generally. Creating a table is
+  // something the role already does three times above, so this needs no grant
+  // and no ACCOUNTADMIN step.
+  //
+  // NOT FATAL IF IT FAILS. ensureTicketTables runs at the top of every tickets
+  // route including the PUBLIC capture links, so a schema step that cannot
+  // complete would take ticket submission down for the whole company rather
+  // than just disabling per-department forms. It degrades instead: every
+  // department gets the default form, and saving one says why.
+  try {
     await executeSnowflakeQueryWithMeta(
-      `ALTER TABLE ${TICKETS_CONFIG_TABLE} ADD COLUMN DEPT_SLUG VARCHAR`,
+      `CREATE TABLE IF NOT EXISTS ${TICKETS_DEPT_CONFIG_TABLE} (` +
+        `DEPT_SLUG VARCHAR, CONFIG_JSON VARCHAR, UPDATED_BY VARCHAR, ` +
+        `UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP())`,
       SF_OPTS
     )
+    deptConfigAvailable = true
+  } catch (error) {
+    deptConfigAvailable = false
+    console.error("[tickets] per-department form config unavailable:", error)
   }
+}
+
+/**
+ * Whether per-department forms can be read or written at all.
+ *
+ * Set by ensureTicketTables, which every route calls before touching anything.
+ * False means the override table could not be created — the rest of the ticket
+ * system carries on unaffected.
+ */
+let deptConfigAvailable = false
+export function isDeptConfigAvailable(): boolean {
+  return deptConfigAvailable
 }
 
 // Active requesting departments, alphabetically.
@@ -107,15 +126,21 @@ export async function getFormConfig(
   deptSlug?: string | null
 ): Promise<{ config: TicketFormConfig; source: FormConfigSource }> {
   const slug = (deptSlug ?? "").trim()
-  const wanted = slug ? `('', ${sqlString(slug)})` : `('')`
-  const { rows } = await executeSnowflakeQueryWithMeta(
-    `SELECT COALESCE(DEPT_SLUG, '') AS SLUG, CONFIG_JSON FROM (` +
-      `  SELECT DEPT_SLUG, CONFIG_JSON, UPDATED_AT FROM ${TICKETS_CONFIG_TABLE}` +
-      `   WHERE COALESCE(DEPT_SLUG, '') IN ${wanted}` +
-      `  QUALIFY ROW_NUMBER() OVER (` +
-      `    PARTITION BY COALESCE(DEPT_SLUG, '') ORDER BY UPDATED_AT DESC) = 1)`,
-    SF_OPTS
-  )
+  const useDept = Boolean(slug) && deptConfigAvailable
+  // One statement for both candidates. Two round trips would also let the
+  // default config change between them, and the public capture page pays this
+  // cost on every load.
+  const sql = useDept
+    ? `SELECT '' AS SLUG, CONFIG_JSON FROM (` +
+      `  SELECT CONFIG_JSON, UPDATED_AT FROM ${TICKETS_CONFIG_TABLE}` +
+      `   ORDER BY UPDATED_AT DESC LIMIT 1)` +
+      ` UNION ALL ` +
+      `SELECT DEPT_SLUG, CONFIG_JSON FROM (` +
+      `  SELECT DEPT_SLUG, CONFIG_JSON, UPDATED_AT FROM ${TICKETS_DEPT_CONFIG_TABLE}` +
+      `   WHERE DEPT_SLUG = ${sqlString(slug)} ORDER BY UPDATED_AT DESC LIMIT 1)`
+    : `SELECT '' AS SLUG, CONFIG_JSON FROM ${TICKETS_CONFIG_TABLE}` +
+      ` ORDER BY UPDATED_AT DESC LIMIT 1`
+  const { rows } = await executeSnowflakeQueryWithMeta(sql, SF_OPTS)
 
   let deptRaw: unknown = null
   let globalRaw: unknown = null
@@ -140,11 +165,11 @@ export async function getFormConfig(
 
 /** Which departments have a form of their own right now (tombstones excluded). */
 export async function getCustomisedDeptSlugs(): Promise<string[]> {
+  if (!deptConfigAvailable) return []
   const { rows } = await executeSnowflakeQueryWithMeta(
-    `SELECT SLUG FROM (` +
-      `  SELECT COALESCE(DEPT_SLUG, '') AS SLUG, CONFIG_JSON, UPDATED_AT` +
-      `    FROM ${TICKETS_CONFIG_TABLE} WHERE COALESCE(DEPT_SLUG, '') <> ''` +
-      `  QUALIFY ROW_NUMBER() OVER (PARTITION BY SLUG ORDER BY UPDATED_AT DESC) = 1)` +
+    `SELECT DEPT_SLUG FROM (` +
+      `  SELECT DEPT_SLUG, CONFIG_JSON, UPDATED_AT FROM ${TICKETS_DEPT_CONFIG_TABLE}` +
+      `  QUALIFY ROW_NUMBER() OVER (PARTITION BY DEPT_SLUG ORDER BY UPDATED_AT DESC) = 1)` +
       ` WHERE CONFIG_JSON IS NOT NULL`,
     SF_OPTS
   )
@@ -161,11 +186,16 @@ export async function getCustomisedDeptSlugs(): Promise<string[]> {
  * whichever form the ticket came from.
  */
 export async function getFieldLabels(): Promise<Record<string, string>> {
-  const { rows } = await executeSnowflakeQueryWithMeta(
-    `SELECT CONFIG_JSON FROM ${TICKETS_CONFIG_TABLE}` +
-      ` WHERE CONFIG_JSON IS NOT NULL ORDER BY UPDATED_AT ASC`,
-    SF_OPTS
-  )
+  // BOTH tables — a ticket can carry a field that only ever existed on one
+  // department's form, and the label has to come from wherever it was defined.
+  const sql = deptConfigAvailable
+    ? `SELECT CONFIG_JSON, UPDATED_AT FROM ${TICKETS_CONFIG_TABLE} WHERE CONFIG_JSON IS NOT NULL` +
+      ` UNION ALL ` +
+      `SELECT CONFIG_JSON, UPDATED_AT FROM ${TICKETS_DEPT_CONFIG_TABLE} WHERE CONFIG_JSON IS NOT NULL` +
+      ` ORDER BY UPDATED_AT ASC`
+    : `SELECT CONFIG_JSON, UPDATED_AT FROM ${TICKETS_CONFIG_TABLE}` +
+      ` WHERE CONFIG_JSON IS NOT NULL ORDER BY UPDATED_AT ASC`
+  const { rows } = await executeSnowflakeQueryWithMeta(sql, SF_OPTS)
   const labels: Record<string, string> = {}
   for (const f of DEFAULT_FORM_CONFIG.fields) labels[f.key] = f.label
   // Ascending, so a newer definition of the same key overwrites an older one.
