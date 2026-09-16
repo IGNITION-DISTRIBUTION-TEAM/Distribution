@@ -321,9 +321,38 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ accounts: mapDrill(rows), limit, offset })
     }
 
-    const [agg, drill] = await Promise.all([
+    const [agg, drill, options, bandOptions] = await Promise.all([
       executeSnowflakeQuery<AggRow>(aggSql, SF),
       executeSnowflakeQuery<DrillRow>(drillSql, SF),
+      // WHAT THE PICKERS LIST. Scoped by DATE ONLY, deliberately: filtered by
+      // the current selection they would collapse to it, and a dropdown that
+      // only offers what you already chose cannot be changed. Same query and
+      // same reasoning as the quality-mix route.
+      //
+      // PAIRS rather than two independent lists, so the product list can
+      // cascade off the chosen brand client-side with no extra round trip.
+      executeSnowflakeQuery<{ BRAND: string | null; PRODUCT: string | null }>(
+        `SELECT DISTINCT
+           UPPER(REPLACE(BRAND, ' ', '')) AS BRAND,
+           PRODUCT_GROUPS AS PRODUCT
+         FROM ${table}
+         WHERE TRY_TO_DATE(TO_VARCHAR(SALESDATE)) BETWEEN '${f.startDate}' AND '${f.endDate}'
+           AND BRAND IS NOT NULL AND TRIM(BRAND) <> ''
+           AND PRODUCT_GROUPS IS NOT NULL AND TRIM(PRODUCT_GROUPS) <> ''
+         ORDER BY 1, 2`,
+        SF
+      ),
+      // Bands under the current brand/product, ignoring the BAND filter itself
+      // for the same reason.
+      executeSnowflakeQuery<{ BAND: string | null; BAND_SORT: number | string }>(
+        `SELECT
+           COALESCE(NULLIF(TRIM(SCOREGROUP), ''), 'unknown') AS BAND,
+           MIN(COALESCE(TRY_TO_NUMBER(REGEXP_SUBSTR(TRIM(SCOREGROUP), '^[0-9]+')), 99999)) AS BAND_SORT
+         FROM ${table} ${where}
+         GROUP BY 1
+         ORDER BY 2, 1`,
+        SF
+      ),
     ])
 
     const of = (kind: string) => agg.filter((r) => r.KIND === kind)
@@ -381,6 +410,20 @@ export async function GET(request: NextRequest) {
       accounts: mapDrill(drill),
       limit,
       offset,
+      // Flat lists for the "all brands" case, plus the pairs the UI cascades on.
+      productGroups: [
+        ...new Set(options.map((r) => String(r.PRODUCT ?? "").trim()).filter(Boolean)),
+      ].sort(),
+      brands: [
+        ...new Set(options.map((r) => String(r.BRAND ?? "").trim()).filter(Boolean)),
+      ].sort(),
+      brandProducts: options
+        .map((r) => ({
+          brand: String(r.BRAND ?? "").trim(),
+          product: String(r.PRODUCT ?? "").trim(),
+        }))
+        .filter((r) => r.brand && r.product),
+      bandOptions: bandOptions.map((r) => String(r.BAND ?? "unknown")).filter(Boolean),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

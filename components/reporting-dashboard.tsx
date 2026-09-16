@@ -2828,6 +2828,11 @@ type VasTelcoPayload = {
   byReason: VasTelcoGroup[]
   byBrand: VasTelcoGroup[]
   byPeriod: VasTelcoGroup[]
+  /** What the pickers list — scoped by date only, so they never collapse. */
+  productGroups: string[]
+  brands: string[]
+  brandProducts: { brand: string; product: string }[]
+  bandOptions: string[]
   accounts: {
     accountNo: string
     policyNo: string
@@ -2930,6 +2935,28 @@ function VasTelcoSplitReport() {
   // than eyeballed.
   const accountsPage = pageInfo(t?.vasOnlyPaid ?? 0, pageSize, offset)
 
+  // Products available for the chosen brand, falling back to every product when
+  // no brand is picked. Same cascade as the Quality mix report.
+  const productOptions = useMemo(() => {
+    const pairs = data?.brandProducts ?? []
+    if (!filters.brand || pairs.length === 0) return data?.productGroups ?? []
+    return [...new Set(pairs.filter((p) => p.brand === filters.brand).map((p) => p.product))].sort()
+  }, [data, filters.brand])
+
+  // Changing brand can strip chosen products out of the list. Drop those, so
+  // the filters can never describe a combination that returns nothing and reads
+  // as "no exposure" rather than "impossible selection".
+  useEffect(() => {
+    if (filters.products.length === 0 || productOptions.length === 0) return
+    const kept = filters.products.filter((p) => productOptions.includes(p))
+    if (kept.length === filters.products.length) return
+    // Deferred a tick so the prune is not a synchronous setState from an effect.
+    const timer = setTimeout(() => setFilters((f) => ({ ...f, products: kept })), 0)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productOptions])
+
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -2944,9 +2971,9 @@ function VasTelcoSplitReport() {
       <QualityFilterBar
         value={filters}
         onChange={setFilters}
-        productOptions={[]}
-        brandOptions={[]}
-        bandOptions={data?.byBand.map((b) => b.key) ?? []}
+        productOptions={productOptions}
+        brandOptions={data?.brands ?? []}
+        bandOptions={data?.bandOptions ?? []}
         onRun={run}
         loading={loading}
         dirty={dirty}
