@@ -99,7 +99,25 @@ export const TIME_TO_HANGUP = `DATEDIFF(second, CALL_START_TIME, CALL_HANGUP_TIM
  */
 export const AGENT_ID = `IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'), NULL, TRIM(AGENT_AD))`
 
-export const CONNECTED = `(SECS_TO_ANSWER IS NOT NULL AND SECS_TO_ANSWER > 0)`
+/**
+ * Answered, per the business: CALL_STATUS = 'ANSWERED'.
+ *
+ * NOT DERIVED FROM THE TIMINGS. An earlier version read a non-null customer
+ * answer time as the connect, on the reasoning that the status values were
+ * undocumented and a timestamp is not open to interpretation. The business has
+ * since said which value means answered, and their definition wins — a
+ * reported rate has to match the one the floor is measured on, whatever a
+ * timestamp would independently suggest.
+ *
+ * Trimmed and upper-cased because nothing guarantees the feed's spacing or
+ * case. Everything that is not this value counts as not answered, which is
+ * safe without knowing the full value list and wrong only if some other value
+ * also means answered — scripts/dialler/04-fact-source.sql section 7 lists
+ * them.
+ */
+export const ANSWERED = `(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')`
+
+/** Kept for talk time and the abandon split, which have no status equivalent. */
 export const AGENT_CONNECTED = `(SECS_TO_AGENT IS NOT NULL AND SECS_TO_AGENT > 0)`
 
 /** Score, with 0 and non-numeric treated as unscored — the CREDITRISK sentinel. */

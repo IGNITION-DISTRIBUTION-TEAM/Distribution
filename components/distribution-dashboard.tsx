@@ -6738,8 +6738,8 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           value={data.totals.customers.toLocaleString()}
           tone="primary"
         />
-        {/* Connect is measured from the ANSWER TIMESTAMP, not from parsing a
-            status string — see lib/dialler-fact.ts. */}
+        {/* Connect rate is CALL_STATUS = 'ANSWERED' over all calls, the
+            definition the floor is measured on — see lib/dialler-fact.ts. */}
         <StatTile size="sm"
           label="Connect rate"
           value={pctOrDash(data.totals.connectRate)}
@@ -6803,7 +6803,9 @@ function DiallerSummary({ data }: { data: DiallerData }) {
             not an agent&rsquo;s work.{" "}
           </>
         )}
-        Abandoned is the share of answered calls where no agent ever picked up (
+        Connect rate is <span className="font-mono">CALL_STATUS = &apos;ANSWERED&apos;</span>{" "}
+        over all calls. Abandoned is the share of those answered calls where no agent ever
+        picked up (
         {data.totals.abandoned.toLocaleString()} of {data.totals.connected.toLocaleString()}).
         {data.totals.avgScore !== null && (
           <>

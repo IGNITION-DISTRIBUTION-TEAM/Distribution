@@ -5,7 +5,7 @@ import {
   AGENT_CONNECTED,
   AGENT_ID,
   CALL_DAY,
-  CONNECTED,
+  ANSWERED,
   FACT_SF_OPTS,
   HALF_HOUR_BUCKET,
   SCORE_BAND,
@@ -196,13 +196,16 @@ export async function GET(request: NextRequest) {
                   COUNT(DISTINCT ${AGENT_ID}) AS AGENTS,
                   COUNT(DISTINCT CAMP_ID) AS CAMPAIGNS,
                   COUNT(DISTINCT CAST(CALL_DATE AS DATE)) AS DAYS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED,
+                  COUNT_IF(${ANSWERED}) AS CONNECTED,
                   COUNT_IF(${AGENT_CONNECTED}) AS AGENT_CONNECTED,
-                  -- The customer picked up and no agent ever did. THE ONLY
-                  -- ABANDON DEFINITION THIS DATA SUPPORTS, and the one that
-                  -- matters commercially.
-                  COUNT_IF(${CONNECTED} AND NOT ${AGENT_CONNECTED}) AS ABANDONED,
-                  AVG(IFF(${CONNECTED}, SECS_TO_ANSWER, NULL)) AS AVG_SECONDS_TO_ANSWER,
+                  -- Answered and no agent ever picked up. The only abandon
+                  -- definition this data supports, and the one that matters
+                  -- commercially.
+                  COUNT_IF(${ANSWERED} AND NOT ${AGENT_CONNECTED}) AS ABANDONED,
+                  -- Time-to-answer still comes from the timestamp: an answered
+                  -- call with no answer time cannot contribute a duration, and
+                  -- treating a missing one as zero would drag the average down.
+                  AVG(IFF(SECS_TO_ANSWER > 0, SECS_TO_ANSWER, NULL)) AS AVG_SECONDS_TO_ANSWER,
                   -- Talk time is hangup minus agent pickup. Negative values are
                   -- clock skew between the two stamps, not short calls, so they
                   -- are dropped rather than averaged in.
@@ -217,7 +220,7 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT ${bucketExpr} AS BUCKET,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED,
+                  COUNT_IF(${ANSWERED}) AS CONNECTED,
                   -- Distinct agents IN THAT BUCKET, not a share of the day's
                   -- total: the question is how many people were on the phones
                   -- at the time, which only a per-bucket distinct answers.
@@ -229,7 +232,7 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT COALESCE(NULLIF(TRIM(CALL_STATUS), ''), '(none)') AS CALL_STATUS,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED
+                  COUNT_IF(${ANSWERED}) AS CONNECTED
              FROM calls GROUP BY 1 ORDER BY CALLS DESC NULLS LAST`,
           SF_OPTS
         ),
@@ -244,7 +247,7 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT COALESCE(NULLIF(TRIM(CAMPAIGN), ''), '(unnamed)') AS CAMPAIGN_NAME,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED
+                  COUNT_IF(${ANSWERED}) AS CONNECTED
              FROM calls GROUP BY 1 ORDER BY CALLS DESC NULLS LAST`,
           SF_OPTS
         ),
@@ -263,7 +266,7 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT ${SCORE_BAND} AS BAND,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED,
+                  COUNT_IF(${ANSWERED}) AS CONNECTED,
                   AVG(${SCORE_NUM}) AS AVG_SCORE
              FROM calls GROUP BY 1 ORDER BY 1`,
           SF_OPTS

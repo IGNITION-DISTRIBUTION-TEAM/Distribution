@@ -127,12 +127,13 @@ SELECT m.SS_CAMPAIGNID,
 
    Run this and the numbers should equal the screen for the same window.
 
-   CONNECT AND ABANDON COME FROM THE TIMINGS, NOT FROM CALL_STATUS. Nobody has
-   recorded what each status value means, and the spelling does not settle it —
-   "ANSWERED" could be the switch or the person, and those answer the same
-   question differently. A non-null answer time is not open to interpretation.
-   `> 0` as well as non-null, because a zero-second answer is the switch rather
-   than a human and counting those inflates connect rate.
+   CONNECT RATE IS CALL_STATUS = 'ANSWERED' OVER ALL CALLS, as the business
+   defines it. Matched trimmed and upper-cased, since nothing guarantees the
+   feed's spacing or case; everything else counts as not answered.
+
+   Time-to-answer still comes from the timestamp rather than the status: an
+   answered call with no answer time cannot contribute a duration, and treating
+   a missing one as zero would drag the average down.
 -------------------------------------------------------------------------------- */
 
 WITH calls AS (
@@ -154,17 +155,17 @@ SELECT COUNT(*)                                        AS CALLS,
                                                        AS AGENTS,
        COUNT(DISTINCT CAMP_ID)                         AS CAMPAIGNS,
        COUNT(DISTINCT CAST(CALL_DATE AS DATE))         AS DAYS,
-       COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0)                AS CONNECTED,
+       COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')                AS CONNECTED,
        COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0)                   AS AGENT_CONNECTED,
-       COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0
+       COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED'
                 AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0))         AS ABANDONED,
-       ROUND(100 * COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0) / NULLIF(COUNT(*), 0), 1) AS CONNECT_RATE,
+       ROUND(100 * COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED') / NULLIF(COUNT(*), 0), 1) AS CONNECT_RATE,
        -- Of those who PICKED UP. An abandon rate over every dial is dominated
        -- by no-answers, which are not abandons and are not the dialler's fault.
-       ROUND(100 * COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0 AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0))
-             / NULLIF(COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0), 0), 1)                AS ABANDON_RATE,
-       AVG(IFF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0,
-               DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME), NULL))             AS AVG_SECS_TO_ANSWER,
+       ROUND(100 * COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED' AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0))
+             / NULLIF(COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED'), 0), 1)                AS ABANDON_RATE,
+       AVG(NULLIF(GREATEST(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME), 0), 0))
+                                                                              AS AVG_SECS_TO_ANSWER,
        -- Negative talk time is clock skew between two stamps, not a short call.
        AVG(IFF(DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0
                AND CALL_HANGUP_TIME > CALL_AGENT_TIME,
@@ -229,18 +230,18 @@ WITH calls AS (
     QUALIFY ROW_NUMBER() OVER (PARTITION BY CALL_ID ORDER BY LOAD_DATE DESC) = 1
 )
 SELECT 'CALL_STATUS'   AS COLUMN_NAME, COALESCE(NULLIF(TRIM(CALL_STATUS), ''), '(blank)')   AS VALUE,
-       COUNT(*) AS CALLS, COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0) AS ANSWERED
+       COUNT(*) AS CALLS, COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED') AS ANSWERED
   FROM calls GROUP BY 1, 2
 UNION ALL
 SELECT 'HANGUP_REASON', COALESCE(NULLIF(TRIM(HANGUP_REASON), ''), '(blank)'),
-       COUNT(*), COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0)
+       COUNT(*), COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')
   FROM calls GROUP BY 1, 2
 UNION ALL
 SELECT 'ACTION', COALESCE(NULLIF(TRIM(ACTION), ''), '(blank)'),
-       COUNT(*), COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0)
+       COUNT(*), COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')
   FROM calls GROUP BY 1, 2
 UNION ALL
 SELECT 'LEAD_STATUS', COALESCE(NULLIF(TRIM(LEAD_STATUS), ''), '(blank)'),
-       COUNT(*), COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0)
+       COUNT(*), COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')
   FROM calls GROUP BY 1, 2
  ORDER BY COLUMN_NAME, CALLS DESC;
