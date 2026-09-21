@@ -1,5 +1,17 @@
 /* =============================================================================
-   Credit scores on the Dialler report — CREDITRISK, SCORE3 / SCOREGROUP3
+   Credit scores at LEAD grain — CREDITRISK, SCORE3 / SCOREGROUP3
+   -----------------------------------------------------------------------------
+   NOTHING IN THE APP READS THIS ANY MORE. The Dialler report was built on
+   VW_DIALLER_STATS, which carried no usable score, so this view existed to
+   attach CREDITRISK through the lead history. The report now reads
+   DATAWAREHOUSE.CX_PRODUCTION.FACT_YAXXA_DIALLER, which carries SCORE and
+   SCOREGROUP on the call itself — so the score needs no join, no second view,
+   and no second population to reconcile.
+
+   Kept because it is still the only place that attaches SALARY, AVAILABLESPEND,
+   CREDITRATIO and the risk flags (debt review, sequestration, judgements) to a
+   campaign and date, none of which the call fact carries. Deploy it if a report
+   needs those; the Dialler report does not.
    -----------------------------------------------------------------------------
    Sections A–D are READ-ONLY diagnostics. Section E creates a view. Section F
    is the grants, which need ACCOUNTADMIN.

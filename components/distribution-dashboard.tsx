@@ -6142,37 +6142,6 @@ type FilterKey = "providerTypes" | "isInsurable"
  * Null when no campaign was picked — "all campaigns" sends no predicate and
  * has nothing to resolve.
  */
-/**
- * Credit scores behind the selected campaigns.
- *
- * A DIFFERENT POPULATION from everything else on the page: these are leads
- * DISTRIBUTED, from the HLL, because VW_DIALLER_STATS is pre-aggregated and
- * carries no id to attach credit data to. The panel says so rather than letting
- * two lead counts sit side by side as if they measured the same thing.
- */
-type DiallerScores = {
-  bands: { band: string; leads: number; scored: number; avgScore: number | null }[]
-  totals: {
-    leads: number
-    scored: number
-    unscored: number
-    noCreditSnapshot: number
-    avgScore: number | null
-    avgSalary: number | null
-    avgAvailableSpend: number | null
-    avgCreditRatio: number | null
-  }
-  flags: {
-    debtReview: number
-    sequestration: number
-    adminOrder: number
-    deceased: number
-    judgement12m: number
-    defaults12m: number
-    noCreditInfo: number
-  }
-}
-
 type DiallerResolution = {
   requestedSsIds: string[]
   unmappedSsIds: string[]
@@ -6201,9 +6170,8 @@ type DiallerData = {
     avgScore: number | null
     unscoredCalls: number
   }
-  /** Credit scores for the same campaigns. Null when the view is unreachable. */
-  scores?: DiallerScores | null
-  scoresError?: string | null
+  /** Score bands from the calls themselves — the fact carries SCORE/SCOREGROUP. */
+  byScoreBand: { band: string; calls: number; connected: number; avgScore: number | null }[]
   byBucket: { bucket: string; calls: number; connected: number }[]
   /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
   bucketProfile?: {
@@ -7052,12 +7020,53 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         />
       )}
 
-      {(data.scores || data.scoresError) && (
-        <DiallerCreditScores
-          scores={data.scores ?? null}
-          error={data.scoresError ?? null}
-          dateLabel={dateLabel}
-        />
+      {/* Score comes off the CALL — the fact carries SCORE and SCOREGROUP — so
+          there is no second view to deploy, no grant to chase, and no second
+          population to reconcile. Connect rate beside each band is the reading
+          the score is there for: do better-scoring leads actually pick up? */}
+      {data.byScoreBand.length > 1 && (
+        <div>
+          <div className="mb-2">
+            <SectionHeading>Calls by score band</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-mono">SCOREGROUP</span> on the call · {dateLabel}
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Score band</TableHead>
+                  <TableHead className="text-right">Calls</TableHead>
+                  <TableHead className="text-right">Answered</TableHead>
+                  <TableHead className="text-right">Connect rate</TableHead>
+                  <TableHead className="text-right">Avg score</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {[...data.byScoreBand]
+                  .sort((a, b) => scoreGroupSortKey(a.band) - scoreGroupSortKey(b.band))
+                  .map((r) => (
+                    <TableRow key={r.band}>
+                      <TableCell className="text-sm">{r.band}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {r.calls.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {r.connected.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {r.calls > 0 ? `${((r.connected / r.calls) * 100).toFixed(1)}%` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {r.avgScore === null ? "—" : r.avgScore.toFixed(0)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       )}
 
       {data.totals.calls === 0 && (
@@ -7066,194 +7075,6 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         </div>
       )}
     </>
-  )
-}
-
-/**
- * Credit profile of the leads behind the selected campaigns.
- *
- * THE HEADING SAYS "DISTRIBUTED", AND THAT IS THE POINT. Every other lead count
- * on this page is leads CALLED, from the dialler. These are leads LOADED, from
- * the HLL — the only place credit data can be attached, since the dialler view
- * is pre-aggregated and has no id on it. The two numbers will not agree, and a
- * reader who assumes they should has been misled by the layout rather than the
- * data.
- */
-function DiallerCreditScores({
-  scores,
-  error,
-  dateLabel,
-}: {
-  scores: DiallerScores | null
-  error: string | null
-  dateLabel: string
-}) {
-  // Same ordering the rest of the portal uses for these bands, so "(none)"
-  // lands last instead of sorting under the brackets.
-  const bands = useMemo(
-    () =>
-      [...(scores?.bands ?? [])].sort(
-        (a, b) => scoreGroupSortKey(a.band) - scoreGroupSortKey(b.band)
-      ),
-    [scores]
-  )
-
-  if (error) {
-    return (
-      <Banner tone="warning">
-        <p className="font-medium">Credit scores unavailable.</p>
-        <p className="mt-1 break-words">{error}</p>
-        <p className="mt-1">
-          The view is deployed separately — run{" "}
-          <span className="font-mono">scripts/dialler/02-credit-scores.sql</span>, including the
-          grants in section F. Nothing else on this page is affected.
-        </p>
-      </Banner>
-    )
-  }
-  if (!scores || scores.totals.leads === 0) return null
-
-  const t = scores.totals
-  const pct = (n: number) => (t.leads > 0 ? (100 * n) / t.leads : 0)
-  const money = (v: number | null) =>
-    v === null ? "—" : `R ${Math.round(v).toLocaleString()}`
-
-  const FLAGS: { label: string; value: number }[] = [
-    { label: "Debt review", value: scores.flags.debtReview },
-    { label: "Sequestration", value: scores.flags.sequestration },
-    { label: "Admin order", value: scores.flags.adminOrder },
-    { label: "Judgement (12m)", value: scores.flags.judgement12m },
-    { label: "Defaults (12m)", value: scores.flags.defaults12m },
-    { label: "Deceased", value: scores.flags.deceased },
-    { label: "No credit info", value: scores.flags.noCreditInfo },
-  ]
-
-  return (
-    <Card>
-      <div className="mb-3">
-        <SectionHeading>Credit profile of leads distributed</SectionHeading>
-        <p className="text-sm text-muted-foreground">
-          <span className="font-mono">SCORE3</span> /{" "}
-          <span className="font-mono">SCOREGROUP3</span> as at the load date · {dateLabel}.
-          These are leads <strong>loaded</strong> to these campaigns, not leads called — a
-          different measure from every other figure on this page, so the two totals will not
-          agree.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-        <StatTile size="sm" label="Leads loaded" value={t.leads.toLocaleString()} tone="primary" />
-        <StatTile
-          size="sm"
-          label="Avg score"
-          value={t.avgScore === null ? "—" : t.avgScore.toFixed(1)}
-          tone="success"
-        />
-        <StatTile size="sm" label="Avg salary" value={money(t.avgSalary)} tone="muted" />
-        <StatTile
-          size="sm"
-          label="Avg available spend"
-          value={money(t.avgAvailableSpend)}
-          tone="muted"
-        />
-        <StatTile
-          size="sm"
-          label="Avg credit ratio"
-          value={t.avgCreditRatio === null ? "—" : t.avgCreditRatio.toFixed(2)}
-          tone="muted"
-        />
-      </div>
-
-      {(t.unscored > 0 || t.noCreditSnapshot > 0) && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {t.unscored > 0 && (
-            <>
-              <span className="font-mono">{t.unscored.toLocaleString()}</span> unscored (
-              {pct(t.unscored).toFixed(1)}%) — excluded from the averages above, counted in the
-              bands below.
-            </>
-          )}
-          {t.noCreditSnapshot > 0 && (
-            <>
-              {" "}
-              <span className="font-mono">{t.noCreditSnapshot.toLocaleString()}</span> had no
-              credit snapshot at their load date, so they carry no flags.
-            </>
-          )}
-        </p>
-      )}
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div>
-          <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
-            Leads by score band
-          </p>
-          <div className="overflow-hidden rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Band</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                  <TableHead className="text-right">Share</TableHead>
-                  <TableHead className="text-right">Avg score</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {bands.map((b) => (
-                  <TableRow key={b.band}>
-                    <TableCell className="text-sm">{b.band}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {b.leads.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
-                      {pct(b.leads).toFixed(1)}%
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {b.avgScore === null ? "—" : b.avgScore.toFixed(1)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
-            Credit flags
-          </p>
-          <div className="overflow-hidden rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Flag</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                  <TableHead className="text-right">Share</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {FLAGS.map((f) => (
-                  <TableRow key={f.label}>
-                    <TableCell className="text-sm">{f.label}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {f.value.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
-                      {pct(f.value).toFixed(1)}%
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          {/* Flags are independent, not a partition: one person can be under
-              debt review AND carry a judgement, so these do not sum to 100%. */}
-          <p className="mt-1 text-xs text-muted-foreground">
-            Flags overlap — one lead can carry several, so these do not add up to the total.
-          </p>
-        </div>
-      </div>
-    </Card>
   )
 }
 

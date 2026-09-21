@@ -20,10 +20,6 @@ export const maxDuration = 60
 
 const SF_OPTS = FACT_SF_OPTS
 
-function escSql(s: string): string {
-  return s.replace(/'/g, "''")
-}
-
 /**
  * The Dialler report, on DATAWAREHOUSE.CX_PRODUCTION.FACT_YAXXA_DIALLER.
  *
@@ -72,8 +68,12 @@ const EMPTY_FIGURES = {
   byHangup: [] as { reason: string; calls: number }[],
   byCampaign: [] as { campaignName: string; calls: number; connected: number }[],
   byScoreDate: [] as { scoreGroup: string; date: string; count: number }[],
-  scores: null as unknown,
-  scoresError: null as string | null,
+  byScoreBand: [] as {
+    band: string
+    calls: number
+    connected: number
+    avgScore: number | null
+  }[],
 }
 
 /** Shift an ISO date by whole days, in UTC so it cannot land a day out. */
@@ -82,132 +82,6 @@ function dayShift(iso: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
 }
-const SCORE_VIEW = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_DIALLER_CREDIT_SCORES"
-const MAP_VIEW_FOR_SCORES = "DATAWAREHOUSE.LEADS_DISTRIBUTION.VW_CAMPAIGN_DIALLER_MAP"
-
-type ScoreRow = {
-  SCOREGROUP3: string | null
-  LEADS: number | string
-  SCORED_LEADS: number | string
-  UNSCORED_LEADS: number | string
-  NO_CREDIT_SNAPSHOT: number | string
-  SUM_SCORE3: number | string | null
-  SUM_SALARY: number | string | null
-  SALARY_LEADS: number | string
-  SUM_AVAILABLE_SPEND: number | string | null
-  AVAILABLE_SPEND_LEADS: number | string
-  SUM_CREDIT_RATIO: number | string | null
-  CREDIT_RATIO_LEADS: number | string
-  DEBT_REVIEW: number | string
-  SEQUESTRATION: number | string
-  ADMIN_ORDER: number | string
-  DECEASED: number | string
-  JUDGEMENT_12M: number | string
-  DEFAULTS_12M: number | string
-  NO_CREDIT_INFO: number | string
-}
-
-/**
- * Credit scores for the selected campaigns.
- *
- * READS A DIFFERENT POPULATION FROM THE REST OF THE PAGE, and the screen says
- * so. Every other figure here counts leads CALLED, from VW_DIALLER_STATS.
- * These count leads DISTRIBUTED, from the HLL — the dialler view is
- * pre-aggregated and carries no id, so there is nothing to join credit data
- * onto. The two are not the same number and must never be added.
- *
- * FILTERED ON THE SILVERSURFER CAMPAIGN, which is what the picker sends anyway.
- * Aggregating the scores up to Yaxxa campaign names would fan out: one
- * SilverSurfer campaign feeds many Yaxxa campaigns, so a campaign running on
- * three dialler campaigns would have each of its distributed leads counted
- * three times. Nothing in the HLL says which Yaxxa campaign a lead ended up on
- * — that is exactly what the dialler knows and the HLL does not.
- *
- * With NOTHING selected the report covers the whole dialler book, so the scores
- * are narrowed to campaigns that HAVE a dialler mapping. Otherwise this panel
- * would quietly include every campaign in the business, dialler or not.
- */
-function buildScoreQuery(ssIds: string[], startDate: string, endDate: string): string {
-  const scope =
-    ssIds.length > 0
-      ? `SS_CAMPAIGNID IN (${ssIds.map((id) => `'${escSql(id)}'`).join(",")})`
-      : `EXISTS (SELECT 1 FROM ${MAP_VIEW_FOR_SCORES} m WHERE m.SS_CAMPAIGNID = s.SS_CAMPAIGNID)`
-  return `SELECT SCOREGROUP3,
-                 SUM(LEADS) AS LEADS,
-                 SUM(SCORED_LEADS) AS SCORED_LEADS,
-                 SUM(UNSCORED_LEADS) AS UNSCORED_LEADS,
-                 SUM(NO_CREDIT_SNAPSHOT) AS NO_CREDIT_SNAPSHOT,
-                 SUM(SUM_SCORE3) AS SUM_SCORE3,
-                 SUM(SUM_SALARY) AS SUM_SALARY,
-                 SUM(SALARY_LEADS) AS SALARY_LEADS,
-                 SUM(SUM_AVAILABLE_SPEND) AS SUM_AVAILABLE_SPEND,
-                 SUM(AVAILABLE_SPEND_LEADS) AS AVAILABLE_SPEND_LEADS,
-                 SUM(SUM_CREDIT_RATIO) AS SUM_CREDIT_RATIO,
-                 SUM(CREDIT_RATIO_LEADS) AS CREDIT_RATIO_LEADS,
-                 SUM(DEBT_REVIEW) AS DEBT_REVIEW,
-                 SUM(SEQUESTRATION) AS SEQUESTRATION,
-                 SUM(ADMIN_ORDER) AS ADMIN_ORDER,
-                 SUM(DECEASED) AS DECEASED,
-                 SUM(JUDGEMENT_12M) AS JUDGEMENT_12M,
-                 SUM(DEFAULTS_12M) AS DEFAULTS_12M,
-                 SUM(NO_CREDIT_INFO) AS NO_CREDIT_INFO
-            FROM ${SCORE_VIEW} s
-           WHERE ${scope}
-             AND LOAD_DATE BETWEEN '${startDate}' AND '${endDate}'
-           GROUP BY 1
-           ORDER BY 1`
-}
-
-/**
- * Roll the bands up into one set of figures.
- *
- * SUMS DIVIDED BY THEIR OWN COUNTS, never an average of the view's averages —
- * that would weight a band of 9 leads the same as one of 9,000. And each
- * measure uses its OWN denominator: salary is populated on a different set of
- * leads from score, so one shared count would be wrong for at least one of
- * them.
- */
-function summariseScores(rows: ScoreRow[]) {
-  const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0)
-  const sum = (pick: (r: ScoreRow) => unknown) => rows.reduce((a, r) => a + n(pick(r)), 0)
-  const ratio = (total: number, count: number) => (count > 0 ? total / count : null)
-
-  const leads = sum((r) => r.LEADS)
-  const scored = sum((r) => r.SCORED_LEADS)
-  const salaryLeads = sum((r) => r.SALARY_LEADS)
-  const spendLeads = sum((r) => r.AVAILABLE_SPEND_LEADS)
-  const ratioLeads = sum((r) => r.CREDIT_RATIO_LEADS)
-
-  return {
-    bands: rows.map((r) => ({
-      band: (r.SCOREGROUP3 ?? "(none)").trim() || "(none)",
-      leads: n(r.LEADS),
-      scored: n(r.SCORED_LEADS),
-      avgScore: ratio(n(r.SUM_SCORE3), n(r.SCORED_LEADS)),
-    })),
-    totals: {
-      leads,
-      scored,
-      unscored: sum((r) => r.UNSCORED_LEADS),
-      noCreditSnapshot: sum((r) => r.NO_CREDIT_SNAPSHOT),
-      avgScore: ratio(sum((r) => r.SUM_SCORE3), scored),
-      avgSalary: ratio(sum((r) => r.SUM_SALARY), salaryLeads),
-      avgAvailableSpend: ratio(sum((r) => r.SUM_AVAILABLE_SPEND), spendLeads),
-      avgCreditRatio: ratio(sum((r) => r.SUM_CREDIT_RATIO), ratioLeads),
-    },
-    flags: {
-      debtReview: sum((r) => r.DEBT_REVIEW),
-      sequestration: sum((r) => r.SEQUESTRATION),
-      adminOrder: sum((r) => r.ADMIN_ORDER),
-      deceased: sum((r) => r.DECEASED),
-      judgement12m: sum((r) => r.JUDGEMENT_12M),
-      defaults12m: sum((r) => r.DEFAULTS_12M),
-      noCreditInfo: sum((r) => r.NO_CREDIT_INFO),
-    },
-  }
-}
-
-
 export async function GET(request: NextRequest) {
   const guard = await requireDepartmentAccess(request, "distribution")
   if (guard instanceof NextResponse) return guard
@@ -299,8 +173,17 @@ export async function GET(request: NextRequest) {
     })
     const historyBase = baseCte(scope, "calls", { startDate: historyStart, endDate: endDate })
 
-    const [totals, byBucket, byStatus, byHangup, byCampaign, byScoreDate, profile, history] =
-      await Promise.all([
+    const [
+      totals,
+      byBucket,
+      byStatus,
+      byHangup,
+      byCampaign,
+      byScoreDate,
+      byScoreBand,
+      profile,
+      history,
+    ] = await Promise.all([
         executeSnowflakeQuery<Record<string, unknown>>(
           `WITH ${base}
            SELECT COUNT(*) AS CALLS,
@@ -361,6 +244,20 @@ export async function GET(request: NextRequest) {
              FROM calls GROUP BY 1, 2 ORDER BY 1, 2`,
           SF_OPTS
         ),
+        // Score comes from the CALL ITSELF, not from a separate credit view.
+        // The fact carries SCORE and SCOREGROUP per call, so there is nothing
+        // to join and no second population to reconcile — and the connect rate
+        // beside each band answers the question the score is there for: do
+        // better-scoring leads actually pick up?
+        executeSnowflakeQuery<Record<string, unknown>>(
+          `WITH ${base}
+           SELECT ${SCORE_BAND} AS BAND,
+                  COUNT(*) AS CALLS,
+                  COUNT_IF(${CONNECTED}) AS CONNECTED,
+                  AVG(${SCORE_NUM}) AS AVG_SCORE
+             FROM calls GROUP BY 1 ORDER BY 1`,
+          SF_OPTS
+        ),
         singleDay
           ? executeSnowflakeQuery<Record<string, unknown>>(
               `WITH ${profileBase}
@@ -394,21 +291,6 @@ export async function GET(request: NextRequest) {
     const connected = num(t.CONNECTED)
     const agentConnected = num(t.AGENT_CONNECTED)
 
-    // Best effort, like the health checks on the campaign-map route. The credit
-    // view deploys separately and reads a different source.
-    let scores: unknown = null
-    let scoresError: string | null = null
-    try {
-      const rows = await executeSnowflakeQuery<ScoreRow>(
-        buildScoreQuery(ssIds, startDate, endDate),
-        { database: "DATAWAREHOUSE", schema: "LEADS_DISTRIBUTION" }
-      )
-      scores = summariseScores(rows)
-    } catch (e) {
-      scoresError = e instanceof Error ? e.message : String(e)
-      console.error("[/api/dashboard/dialler-stats] credit scores failed:", scoresError)
-    }
-
     const profileRows = profile as { BUCKET: string; CALLS: unknown; DAYS: unknown }[]
     const profileTotal = profileRows.reduce((a, r) => a + num(r.CALLS), 0)
 
@@ -417,8 +299,6 @@ export async function GET(request: NextRequest) {
       endDate,
       granularity: singleDay ? "halfHour" : "day",
       resolution,
-      scores,
-      scoresError,
       totals: {
         calls,
         customers: num(t.CUSTOMERS),
@@ -456,6 +336,14 @@ export async function GET(request: NextRequest) {
       byScoreDate: (byScoreDate as { SCOREGROUP: string; DAY: string; CALLS: unknown }[]).map(
         (r) => ({ scoreGroup: r.SCOREGROUP, date: r.DAY, count: num(r.CALLS) })
       ),
+      byScoreBand: (
+        byScoreBand as { BAND: string; CALLS: unknown; CONNECTED: unknown; AVG_SCORE: unknown }[]
+      ).map((r) => ({
+        band: r.BAND,
+        calls: num(r.CALLS),
+        connected: num(r.CONNECTED),
+        avgScore: numFloat(r.AVG_SCORE),
+      })),
       bucketProfile:
         profileTotal > 0
           ? {
