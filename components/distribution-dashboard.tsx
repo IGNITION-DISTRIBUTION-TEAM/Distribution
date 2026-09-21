@@ -6772,16 +6772,23 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         <StatTile size="sm"
           label="Connect rate"
           value={pctOrDash(data.totals.connectRate)}
+          sub={`${data.totals.connected.toLocaleString()} of ${data.totals.calls.toLocaleString()} calls`}
           tone="success"
         />
         <StatTile size="sm"
           label="Reached an agent"
           value={pctOrDash(data.totals.agentRate)}
+          sub={`${data.totals.agentConnected.toLocaleString()} of ${data.totals.calls.toLocaleString()} calls`}
           tone="success"
         />
+        {/* The fraction sits ON the tile. A bare "Abandoned 5%" does not say
+            5% OF WHAT, and the two candidates — of answered, or of every dial
+            — differ by roughly the connect rate. Showing the division removes
+            the question instead of answering it in a caption nobody reads. */}
         <StatTile size="sm"
-          label="Abandoned"
+          label="Abandon rate"
           value={pctOrDash(data.totals.abandonRate)}
+          sub={`${data.totals.abandoned.toLocaleString()} of ${data.totals.connected.toLocaleString()} answered`}
           tone={(data.totals.abandonRate ?? 0) > 0.05 ? "danger" : "muted"}
         />
       </div>
@@ -6832,10 +6839,9 @@ function DiallerSummary({ data }: { data: DiallerData }) {
             not an agent&rsquo;s work.{" "}
           </>
         )}
-        Connect rate is <span className="font-mono">CALL_STATUS = &apos;ANSWERED&apos;</span>{" "}
-        over all calls. Abandoned is the share of those answered calls where no agent ever
-        picked up (
-        {data.totals.abandoned.toLocaleString()} of {data.totals.connected.toLocaleString()}).
+        Connect rate is <span className="font-mono">CALL_STATUS = &apos;ANSWERED&apos;</span>.
+        Abandon rate is over answered calls, not every dial — over every dial it would be
+        dominated by no-answers, which are not abandons and are not the dialler&rsquo;s failure.
         {data.totals.avgScore !== null && (
           <>
             {" "}
