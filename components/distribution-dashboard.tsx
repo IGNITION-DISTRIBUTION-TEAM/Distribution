@@ -6175,31 +6175,36 @@ type DiallerScores = {
 
 type DiallerResolution = {
   requestedSsIds: string[]
-  mapped: { ssId: string; yaxxaId: string; yaxxaName: string }[]
   unmappedSsIds: string[]
-  namesWithNoRows: string[]
 }
 
 type DiallerData = {
-  /** The YAXXA names the figures below were filtered on. */
-  campaignNames: string[]
   startDate: string
   endDate: string
   granularity: "day" | "halfHour"
   resolution: DiallerResolution | null
   totals: {
-    totalLeads: number
-    rows: number
-    days: number
+    /** One row per call, deduplicated by CALL_ID. */
+    calls: number
+    customers: number
     campaigns: number
+    days: number
+    connected: number
+    agentConnected: number
+    abandoned: number
+    connectRate: number | null
+    agentRate: number | null
+    /** Of those who PICKED UP, not of every dial. */
+    abandonRate: number | null
+    avgSecondsToAnswer: number | null
+    avgTalkSeconds: number | null
     avgScore: number | null
-    /** Rows carrying the unscored sentinel, excluded from avgScore. */
-    unscoredRows?: number
+    unscoredCalls: number
   }
   /** Credit scores for the same campaigns. Null when the view is unreachable. */
   scores?: DiallerScores | null
   scoresError?: string | null
-  byBucket: { bucket: string; leads: number }[]
+  byBucket: { bucket: string; calls: number; connected: number }[]
   /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
   bucketProfile?: {
     buckets: { bucket: string; share: number }[]
@@ -6208,10 +6213,11 @@ type DiallerData = {
     to: string
   }
   /** Trailing daily series the forecast is fitted on. Multi-day view only. */
-  dailyHistory?: { date: string; leads: number }[]
+  dailyHistory?: { date: string; calls: number }[]
   historyFrom?: string | null
-  byStatus: { status: string; leads: number }[]
-  byCampaign: { campaignName: string; leads: number }[]
+  byStatus: { status: string; calls: number; connected: number }[]
+  byHangup: { reason: string; calls: number }[]
+  byCampaign: { campaignName: string; calls: number; connected: number }[]
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
 }
 
@@ -6539,20 +6545,13 @@ export function DiallerDashboardPanel() {
 }
 
 /**
- * What the campaign mapping could not answer.
+ * Selected campaigns with no dialler campaign mapped.
  *
- * The report filters a YAXXA view using a SILVERSURFER selection, so the
- * translation can come up short in two quite different ways, and telling them
- * apart is most of the value of showing anything at all:
- *
- *   unmapped        nobody has linked this campaign to a dialler campaign, so
- *                   its activity is absent from every figure. Fixable, and the
- *                   fix is a screen away.
- *   no rows for it  the link exists and the dialler simply has nothing under
- *                   that name in this window. Nothing to fix, unless the stats
- *                   view spells the name differently.
- *
- * Before this, both produced an empty report with no explanation.
+ * Their calls are absent from every figure, and the fix is a screen away. The
+ * companion case — "mapped, but no rows under that name" — is gone: the report
+ * now joins on CAMP_ID, so a mapping either resolves to a campaign or does not
+ * exist. There is no longer a way for a correct mapping to match nothing
+ * because two systems spell a campaign differently.
  */
 function DiallerResolutionNotes({
   resolution,
@@ -6561,42 +6560,89 @@ function DiallerResolutionNotes({
   resolution: DiallerResolution
   campaigns: Campaign[]
 }) {
-  const { unmappedSsIds, namesWithNoRows } = resolution
-  if (unmappedSsIds.length === 0 && namesWithNoRows.length === 0) return null
+  const { unmappedSsIds } = resolution
+  if (unmappedSsIds.length === 0) return null
 
   // The picker holds the titles; the API deals only in ids, so that a renamed
   // campaign cannot change what the filter means.
   const titleFor = (id: string) => campaigns.find((c) => c.id === id)?.title ?? id
 
   return (
-    <div className="flex flex-col gap-2">
-      {unmappedSsIds.length > 0 && (
-        <Banner tone="warning">
-          <p className="font-medium">
-            {unmappedSsIds.length === 1
-              ? "1 selected campaign has"
-              : `${unmappedSsIds.length} selected campaigns have`}{" "}
-            no dialler campaign mapped.
-          </p>
-          <p className="mt-1">
-            {unmappedSsIds.map(titleFor).join(", ")} — their dialler activity is missing from
-            every figure below. Link them under Dialler → Campaign mapping.
-          </p>
-        </Banner>
-      )}
-      {namesWithNoRows.length > 0 && (
-        <Banner tone="info">
-          <p>
-            Mapped, but no dialler activity in this date range under{" "}
-            {namesWithNoRows.length === 1 ? "the name" : "the names"}{" "}
-            <span className="font-mono">{namesWithNoRows.join(", ")}</span>.
-          </p>
-          <p className="mt-1">
-            The mapping is in place, so either there were no calls, or the stats view spells the
-            campaign differently from the dialler&apos;s own campaign list.
-          </p>
-        </Banner>
-      )}
+    <Banner tone="warning">
+      <p className="font-medium">
+        {unmappedSsIds.length === 1
+          ? "1 selected campaign has"
+          : `${unmappedSsIds.length} selected campaigns have`}{" "}
+        no dialler campaign mapped.
+      </p>
+      <p className="mt-1">
+        {unmappedSsIds.map(titleFor).join(", ")} — their calls are missing from every figure
+        below. Link them under Dialler → Campaign mapping.
+      </p>
+    </Banner>
+  )
+}
+
+/**
+ * A call breakdown table.
+ *
+ * Shows CONNECTED beside the count wherever it is known, because a raw call
+ * count says nothing about whether those calls reached anyone — and nobody has
+ * recorded what the status and hangup values actually mean, so the connect
+ * share is the only reading that does not depend on interpreting a string.
+ */
+function CallBreakdown({
+  title,
+  label,
+  dateLabel,
+  rows,
+  mono,
+}: {
+  title: string
+  label: string
+  dateLabel: string
+  rows: { key: string; calls: number; connected?: number }[]
+  mono?: boolean
+}) {
+  const hasConnected = rows.some((r) => r.connected !== undefined)
+  return (
+    <div>
+      <div className="mb-2">
+        <SectionHeading>{title}</SectionHeading>
+        <p className="text-sm text-muted-foreground">{dateLabel}</p>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{label}</TableHead>
+              <TableHead className="text-right">Calls</TableHead>
+              {hasConnected && <TableHead className="text-right">Answered</TableHead>}
+              {hasConnected && <TableHead className="text-right">Connect rate</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.key}>
+                <TableCell className={mono ? "font-mono text-sm" : "text-sm"}>{r.key}</TableCell>
+                <TableCell className="text-right font-mono">
+                  {r.calls.toLocaleString()}
+                </TableCell>
+                {hasConnected && (
+                  <TableCell className="text-right font-mono">
+                    {(r.connected ?? 0).toLocaleString()}
+                  </TableCell>
+                )}
+                {hasConnected && (
+                  <TableCell className="text-right font-mono text-muted-foreground">
+                    {r.calls > 0 ? `${(((r.connected ?? 0) / r.calls) * 100).toFixed(1)}%` : "—"}
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
@@ -6608,11 +6654,16 @@ type DiallerChartRow = {
   projected?: boolean
 }
 
+/** Null-safe formatters for the dialler tiles. A missing rate is not 0%. */
+const pctOrDash = (v: number | null) => (v === null ? "—" : `${(v * 100).toFixed(1)}%`)
+const secsOrDash = (v: number | null) =>
+  v === null ? "—" : v < 60 ? `${Math.round(v)}s` : `${Math.floor(v / 60)}m ${Math.round(v % 60)}s`
+
 function DiallerSummary({ data }: { data: DiallerData }) {
   const chartMotion = useChartMotion()
   const dateLabel =
     data.startDate === data.endDate ? data.startDate : `${data.startDate} → ${data.endDate}`
-  const avgPerDay = data.totals.days > 0 ? data.totals.totalLeads / data.totals.days : 0
+  const avgPerDay = data.totals.days > 0 ? data.totals.calls / data.totals.days : 0
 
   // A projection of a day that has already finished is not a forecast, so the
   // single-day line is described differently depending on whether the selected
@@ -6627,7 +6678,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
     const profile = data.bucketProfile
     if (data.granularity !== "halfHour" || !profile || profile.buckets.length === 0) return null
     return paceIntradaySales(
-      data.byBucket.map((b) => ({ date: b.bucket, sales: b.leads })),
+      data.byBucket.map((b) => ({ date: b.bucket, sales: b.calls })),
       profile.buckets.map((p) => ({ hour: p.bucket, share: p.share })),
       profile.days
     )
@@ -6636,8 +6687,8 @@ function DiallerSummary({ data }: { data: DiallerData }) {
   const forecast = useMemo(() => {
     if (data.granularity !== "day") return null
     return forecastDailySales(
-      (data.dailyHistory ?? []).map((d) => ({ date: d.date, sales: d.leads })),
-      data.byBucket.map((b) => ({ date: b.bucket, sales: b.leads })),
+      (data.dailyHistory ?? []).map((d) => ({ date: d.date, sales: d.calls })),
+      data.byBucket.map((b) => ({ date: b.bucket, sales: b.calls })),
       14
     )
   }, [data.granularity, data.dailyHistory, data.byBucket])
@@ -6656,7 +6707,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           leads: r.sales,
           predicted: r.predicted,
         }))
-      : data.byBucket.map((b) => ({ bucket: b.bucket, leads: b.leads, predicted: null }))
+      : data.byBucket.map((b) => ({ bucket: b.bucket, leads: b.calls, predicted: null }))
 
     // Under a lead a half-hour is not activity, it is the profile's rounding.
     // Without this the projected line keeps the dead hours alive at 0.3 leads
@@ -6669,8 +6720,9 @@ function DiallerSummary({ data }: { data: DiallerData }) {
 
   const hasPrediction = Boolean(forecast || intraday)
 
-  // Every lead in one "(none)" band: the view's SCORE and SCOREGROUP are both
-  // empty, so even the derived band has nothing to work from.
+  // Every call in one "(none)" band. On the old pre-aggregated view this was
+  // the normal case because SCORE and SCOREGROUP were empty; on the call fact
+  // they are populated, so it now means these particular calls carry no score.
   const scoreBandsUnavailable =
     data.byScoreDate.length > 0 && data.byScoreDate.every((r) => r.scoreGroup === "(none)")
 
@@ -6678,57 +6730,104 @@ function DiallerSummary({ data }: { data: DiallerData }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
         <StatTile size="sm"
-          label="Total leads"
-          value={data.totals.totalLeads.toLocaleString()}
+          label="Calls"
+          value={data.totals.calls.toLocaleString()}
+          tone="primary"
+        />
+        <StatTile size="sm"
+          label="Customers"
+          value={data.totals.customers.toLocaleString()}
+          tone="primary"
+        />
+        {/* Connect is measured from the ANSWER TIMESTAMP, not from parsing a
+            status string — see lib/dialler-fact.ts. */}
+        <StatTile size="sm"
+          label="Connect rate"
+          value={pctOrDash(data.totals.connectRate)}
           tone="success"
         />
-        <StatTile size="sm" label="Days" value={data.totals.days.toLocaleString()} tone="primary" />
         <StatTile size="sm"
-          label="Campaigns"
-          value={data.totals.campaigns.toLocaleString()}
-          tone="primary"
+          label="Reached an agent"
+          value={pctOrDash(data.totals.agentRate)}
+          tone="success"
         />
         <StatTile size="sm"
-          label="Avg / day"
-          value={data.totals.days > 0 ? avgPerDay.toFixed(1) : "—"}
-          tone="muted"
-        />
-        <StatTile size="sm"
-          label="Avg score"
-          value={data.totals.avgScore === null ? "—" : data.totals.avgScore.toFixed(1)}
-          tone="primary"
+          label="Abandoned"
+          value={pctOrDash(data.totals.abandonRate)}
+          tone={(data.totals.abandonRate ?? 0) > 0.05 ? "danger" : "muted"}
         />
       </div>
 
-      {/* Zero is CREDITRISK's unscored sentinel, not a score of nought. It used
-          to be averaged in and drag this tile down; now it is excluded, and the
-          exclusion is stated rather than applied silently. */}
-      {(data.totals.unscoredRows ?? 0) > 0 && (
-        <p className="-mt-4 text-xs text-muted-foreground">
-          Avg score covers scored leads only —{" "}
-          <span className="font-mono">{data.totals.unscoredRows?.toLocaleString()}</span> unscored
-          row{data.totals.unscoredRows === 1 ? "" : "s"} excluded.
-        </p>
-      )}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <StatTile size="sm" label="Days" value={data.totals.days.toLocaleString()} tone="muted" />
+        <StatTile size="sm"
+          label="Campaigns"
+          value={data.totals.campaigns.toLocaleString()}
+          tone="muted"
+        />
+        <StatTile size="sm"
+          label="Calls / day"
+          value={data.totals.days > 0 ? avgPerDay.toFixed(0) : "—"}
+          tone="muted"
+        />
+        <StatTile size="sm"
+          label="Avg answer"
+          value={secsOrDash(data.totals.avgSecondsToAnswer)}
+          tone="muted"
+        />
+        <StatTile size="sm"
+          label="Avg talk"
+          value={secsOrDash(data.totals.avgTalkSeconds)}
+          tone="muted"
+        />
+      </div>
+
+      {/* "Abandoned" is of customers who PICKED UP, not of every dial — an
+          abandon rate over all dials is dominated by no-answers, which are not
+          abandons and are not the dialler's failure. Zero is also CREDITRISK's
+          unscored sentinel rather than a score, so it is excluded from the
+          average and the exclusion is stated. */}
+      <p className="-mt-2 text-xs text-muted-foreground">
+        Abandoned is the share of answered calls where no agent ever picked up (
+        {data.totals.abandoned.toLocaleString()} of {data.totals.connected.toLocaleString()}).
+        {data.totals.avgScore !== null && (
+          <>
+            {" "}
+            Average score {data.totals.avgScore.toFixed(1)}
+            {data.totals.unscoredCalls > 0 && (
+              <>
+                {" "}
+                across scored calls only —{" "}
+                <span className="font-mono">
+                  {data.totals.unscoredCalls.toLocaleString()}
+                </span>{" "}
+                unscored excluded
+              </>
+            )}
+            .
+          </>
+        )}
+      </p>
 
       {/* Leads over time / by half-hour */}
       {chartSeries.length > 0 && (
         <Card>
           <div className="mb-2">
             <SectionHeading>
-              {data.granularity === "halfHour" ? "Leads by half-hour" : "Leads over time"}
+              {data.granularity === "halfHour" ? "Calls by half-hour" : "Calls over time"}
             </SectionHeading>
             <p className="text-sm text-muted-foreground">
-              Sum of <span className="font-mono">LEADS</span>{" "}
+              Calls{" "}
               {data.granularity === "halfHour" ? (
                 <>
-                  per <span className="font-mono">TIME_BUCKET_30MIN</span> · {dateLabel}
+                  per half-hour of <span className="font-mono">CALL_START_TIME</span> ·{" "}
+                  {dateLabel}
                 </>
               ) : (
                 <>
-                  per <span className="font-mono">CALL_START_TIME</span> · {dateLabel}
+                  per <span className="font-mono">CALL_DATE</span> · {dateLabel}
                 </>
               )}
               {trimmed > 0 && (
@@ -6784,7 +6883,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
                 <Line
                   type="monotone"
                   dataKey="leads"
-                  name="Leads"
+                  name="Calls"
                   stroke="#10b981"
                   strokeWidth={2}
                   dot={{ r: 3 }}
@@ -6901,12 +7000,11 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           {scoreBandsUnavailable && (
             <Banner tone="info">
               <p>
-                The dialler view carries no score on these rows, so the grid below has a single
-                band. This is a missing column, not a finding about the leads.
+                None of these calls carry a score, so the grid below has a single band.
               </p>
               <p className="mt-1">
-                Their credit scores are in the panel further down, read from the lead history
-                instead.
+                Credit scores for the same customers are in the panel further down, read from
+                the lead history instead.
               </p>
             </Banner>
           )}
@@ -6914,64 +7012,44 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         </div>
       )}
 
-      {/* Call status breakdown */}
+      {/* Call status. CONNECTED sits beside the count on purpose: a status is
+          only interpretable once you can see how many of its calls the customer
+          actually answered, and nobody has recorded what these values mean. */}
       {data.byStatus.length > 0 && (
-        <div>
-          <div className="mb-2">
-            <SectionHeading>Leads by call status</SectionHeading>
-            <p className="text-sm text-muted-foreground">{dateLabel}</p>
-          </div>
-          <div className="overflow-hidden rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Call status</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.byStatus.map((r) => (
-                  <TableRow key={r.status}>
-                    <TableCell className="font-mono text-sm">{r.status}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {r.leads.toLocaleString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
+        <CallBreakdown
+          title="Calls by status"
+          label="Call status"
+          dateLabel={dateLabel}
+          mono
+          rows={data.byStatus.map((r) => ({
+            key: r.status,
+            calls: r.calls,
+            connected: r.connected,
+          }))}
+        />
       )}
 
-      {/* Per-campaign breakdown */}
+      {data.byHangup.length > 0 && (
+        <CallBreakdown
+          title="Calls by hangup reason"
+          label="Hangup reason"
+          dateLabel={dateLabel}
+          mono
+          rows={data.byHangup.map((r) => ({ key: r.reason, calls: r.calls }))}
+        />
+      )}
+
       {data.byCampaign.length > 1 && (
-        <div>
-          <div className="mb-2">
-            <SectionHeading>Leads per campaign</SectionHeading>
-            <p className="text-sm text-muted-foreground">{dateLabel}</p>
-          </div>
-          <div className="overflow-hidden rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Campaign name</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.byCampaign.map((r) => (
-                  <TableRow key={r.campaignName}>
-                    <TableCell className="text-sm">{r.campaignName}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {r.leads.toLocaleString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
+        <CallBreakdown
+          title="Calls per campaign"
+          label="Campaign name"
+          dateLabel={dateLabel}
+          rows={data.byCampaign.map((r) => ({
+            key: r.campaignName,
+            calls: r.calls,
+            connected: r.connected,
+          }))}
+        />
       )}
 
       {(data.scores || data.scoresError) && (
@@ -6982,10 +7060,9 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         />
       )}
 
-      {data.totals.rows === 0 && (
+      {data.totals.calls === 0 && (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-          No dialler activity for the selected campaign{data.campaignNames.length === 1 ? "" : "s"}{" "}
-          on {dateLabel}.
+          No calls for the selected campaigns on {dateLabel}.
         </div>
       )}
     </>
