@@ -6165,6 +6165,8 @@ type DiallerData = {
     connected: number
     agentConnected: number
     abandoned: number
+    /** Calls that are BOTH status-answered and agent-handled. */
+    answeredAndAgent: number
     connectRate: number | null
     agentRate: number | null
     /** Of those who PICKED UP, not of every dial. */
@@ -6577,12 +6579,15 @@ function CallBreakdown({
   dateLabel,
   rows,
   mono,
+  metric = "Answered",
 }: {
   title: string
   label: string
   dateLabel: string
   rows: { key: string; calls: number; connected?: number }[]
   mono?: boolean
+  /** What the second column counts. Named because it is not always "answered". */
+  metric?: string
 }) {
   const hasConnected = rows.some((r) => r.connected !== undefined)
   return (
@@ -6597,8 +6602,8 @@ function CallBreakdown({
             <TableRow>
               <TableHead>{label}</TableHead>
               <TableHead className="text-right">Calls</TableHead>
-              {hasConnected && <TableHead className="text-right">Answered</TableHead>}
-              {hasConnected && <TableHead className="text-right">Connect rate</TableHead>}
+              {hasConnected && <TableHead className="text-right">{metric}</TableHead>}
+              {hasConnected && <TableHead className="text-right">Share</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -6706,6 +6711,20 @@ function DiallerSummary({ data }: { data: DiallerData }) {
   const scoreBandsUnavailable =
     data.byScoreDate.length > 0 && data.byScoreDate.every((r) => r.scoreGroup === "(none)")
 
+  /**
+   * Do "answered" and "an agent picked up" describe the same calls at all?
+   *
+   * If agents demonstrably handled calls and NOT ONE of them carries the
+   * answered status, the two are disjoint — an agent-handled call is filed
+   * under some other status. Abandon is then 100% by construction, and connect
+   * rate is understated by every agent-handled call it excludes.
+   *
+   * Detected rather than assumed, because it is a property of the data's
+   * semantics and could change the day somebody fixes the feed.
+   */
+  const definitionsDisjoint =
+    data.totals.agentConnected > 0 && data.totals.answeredAndAgent === 0
+
   const trimmed = Math.max(0, data.byBucket.length - chartSeries.filter((r) => !r.projected).length)
 
   /**
@@ -6756,6 +6775,28 @@ function DiallerSummary({ data }: { data: DiallerData }) {
 
   return (
     <>
+      {definitionsDisjoint && (
+        <Banner tone="warning">
+          <p className="font-medium">
+            Connect rate and abandon rate cannot both be right on this data.
+          </p>
+          <p className="mt-1">
+            <span className="font-mono">
+              {data.totals.agentConnected.toLocaleString()}
+            </span>{" "}
+            calls reached an agent, but not one of them carries{" "}
+            <span className="font-mono">CALL_STATUS = &apos;ANSWERED&apos;</span> — so an
+            agent-handled call is filed under some other status. Abandon rate is therefore
+            100% by construction and is not shown, and connect rate excludes every
+            agent-handled call, so it is understated.
+          </p>
+          <p className="mt-1">
+            The <strong>Calls by status</strong> table below shows which statuses actually
+            reach an agent. Send those through and both definitions can be corrected.
+          </p>
+        </Banner>
+      )}
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
         <StatTile size="sm"
           label="Calls"
@@ -6783,13 +6824,24 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         />
         {/* The fraction sits ON the tile. A bare "Abandoned 5%" does not say
             5% OF WHAT, and the two candidates — of answered, or of every dial
-            — differ by roughly the connect rate. Showing the division removes
-            the question instead of answering it in a caption nobody reads. */}
+            — differ by roughly the connect rate.
+
+            AND IT REFUSES TO STATE A RATE IT CANNOT MEAN. When no call is both
+            status-answered and agent-handled, the two signals describe
+            disjoint sets: every answered call is "abandoned" by construction
+            and the tile reads a confident 100% that measures nothing. A
+            definitional failure shown as a number is worse than no number,
+            because only the number gets quoted. */}
         <StatTile size="sm"
           label="Abandon rate"
-          value={pctOrDash(data.totals.abandonRate)}
-          sub={`${data.totals.abandoned.toLocaleString()} of ${data.totals.connected.toLocaleString()} answered`}
-          tone={(data.totals.abandonRate ?? 0) > 0.05 ? "danger" : "muted"}
+          value={definitionsDisjoint ? "—" : pctOrDash(data.totals.abandonRate)}
+          sub={
+            definitionsDisjoint
+              ? "definitions do not overlap"
+              : `${data.totals.abandoned.toLocaleString()} of ${data.totals.connected.toLocaleString()} answered`
+          }
+          subClassName={definitionsDisjoint ? "text-amber-300" : undefined}
+          tone={definitionsDisjoint ? "muted" : (data.totals.abandonRate ?? 0) > 0.05 ? "danger" : "muted"}
         />
       </div>
 
@@ -7287,6 +7339,7 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           label="Call status"
           dateLabel={dateLabel}
           mono
+          metric="Reached an agent"
           rows={data.byStatus.map((r) => ({
             key: r.status,
             calls: r.calls,

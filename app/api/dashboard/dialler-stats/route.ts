@@ -55,6 +55,7 @@ const EMPTY_FIGURES = {
     connected: 0,
     agentConnected: 0,
     abandoned: 0,
+    answeredAndAgent: 0,
     connectRate: null as number | null,
     agentRate: null as number | null,
     abandonRate: null as number | null,
@@ -215,6 +216,11 @@ export async function GET(request: NextRequest) {
                   -- definition this data supports, and the one that matters
                   -- commercially.
                   COUNT_IF(${ANSWERED} AND NOT ${AGENT_CONNECTED}) AS ABANDONED,
+                  -- How many calls are BOTH status-answered and agent-handled.
+                  -- Zero here, while agents plainly handled calls, means the
+                  -- two signals describe DISJOINT SETS and the abandon rate is
+                  -- 100% by construction rather than by measurement.
+                  COUNT_IF(${ANSWERED} AND ${AGENT_CONNECTED}) AS ANSWERED_AND_AGENT,
                   -- Time-to-answer still comes from the timestamp: an answered
                   -- call with no answer time cannot contribute a duration, and
                   -- treating a missing one as zero would drag the average down.
@@ -246,7 +252,13 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT COALESCE(NULLIF(TRIM(CALL_STATUS), ''), '(none)') AS CALL_STATUS,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${ANSWERED}) AS CONNECTED
+                  -- REACHED AN AGENT, not "answered". Grouping by status and
+                  -- counting the ANSWERED status is circular: every row reads
+                  -- 100% or 0% and the table says nothing. The agent timestamp
+                  -- is an INDEPENDENT signal, so this column is what reveals
+                  -- which statuses correspond to a handled call — the question
+                  -- the undocumented values leave open.
+                  COUNT_IF(${AGENT_CONNECTED}) AS CONNECTED
              FROM calls GROUP BY 1 ORDER BY CALLS DESC NULLS LAST`,
           SF_OPTS
         ),
@@ -354,6 +366,7 @@ export async function GET(request: NextRequest) {
         connected,
         agentConnected,
         abandoned: num(t.ABANDONED),
+        answeredAndAgent: num(t.ANSWERED_AND_AGENT),
         connectRate: ratio(connected, calls),
         agentRate: ratio(agentConnected, calls),
         // Of the customers who PICKED UP — not of every call. An abandon rate
