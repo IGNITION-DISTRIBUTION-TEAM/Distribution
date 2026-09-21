@@ -6176,7 +6176,13 @@ type DiallerData = {
   }
   /** Score bands from the calls themselves — the fact carries SCORE/SCOREGROUP. */
   byScoreBand: { band: string; calls: number; connected: number; avgScore: number | null }[]
-  byBucket: { bucket: string; calls: number; connected: number; agents: number }[]
+  byBucket: {
+    bucket: string
+    calls: number
+    connected: number
+    abandoned: number
+    agents: number
+  }[]
   /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
   bucketProfile?: {
     buckets: { bucket: string; share: number }[]
@@ -6189,6 +6195,8 @@ type DiallerData = {
   historyFrom?: string | null
   byStatus: { status: string; calls: number; connected: number }[]
   byHangup: { reason: string; calls: number }[]
+  /** Answered calls that never reached an agent, by why the call ended. */
+  byAbandon: { reason: string; endedBy: string; calls: number; avgSeconds: number | null }[]
   byCampaign: { campaignName: string; calls: number; connected: number }[]
   byScoreDate: { scoreGroup: string; date: string; count: number }[]
 }
@@ -6712,6 +6720,27 @@ function DiallerSummary({ data }: { data: DiallerData }) {
    * Trimmed on the same rule as the volume chart so the two line up column for
    * column; a reader comparing them must not have to check the labels.
    */
+  /**
+   * Abandons over time, as a count and as a share of answered calls.
+   *
+   * THE RATE ALONE IS MISLEADING AT LOW VOLUME. One abandon in three answered
+   * calls is 33% and means nothing; the count beside it is what stops a quiet
+   * half-hour reading as a crisis. Both on one chart, on two axes, so neither
+   * can be quoted without the other.
+   */
+  const abandonSeries = useMemo(
+    () =>
+      trimEmptyEdges(
+        data.byBucket.map((b) => ({
+          bucket: b.bucket,
+          abandoned: b.abandoned,
+          abandonRate: b.connected > 0 ? (b.abandoned / b.connected) * 100 : null,
+        })),
+        (r) => r.abandoned === 0 && r.abandonRate === null
+      ),
+    [data.byBucket]
+  )
+
   const agentSeries = useMemo(
     () =>
       trimEmptyEdges(
@@ -7090,6 +7119,136 @@ function DiallerSummary({ data }: { data: DiallerData }) {
             figure above; they simply have no agent attached.
           </p>
         </Card>
+      )}
+
+      {abandonSeries.length > 1 && (
+        <Card>
+          <div className="mb-2">
+            <SectionHeading>Abandoned calls</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              Answered calls where no agent picked up, per{" "}
+              {data.granularity === "halfHour" ? "half-hour" : "day"} · {dateLabel}
+            </p>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={abandonSeries} margin={{ top: 10, right: 8, bottom: 0, left: -10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="bucket"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  tickFormatter={(v: string) =>
+                    data.granularity === "halfHour" ? v : v.slice(5)
+                  }
+                />
+                <YAxis
+                  yAxisId="count"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  yAxisId="rate"
+                  orientation="right"
+                  domain={[0, 100]}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  tickFormatter={(v: number) => `${v}%`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "0.5rem",
+                    fontSize: "0.875rem",
+                  }}
+                  formatter={(value, name) =>
+                    name === "Abandon rate"
+                      ? [`${Number(value).toFixed(1)}%`, name]
+                      : [Math.round(Number(value)).toLocaleString(), name]
+                  }
+                />
+                <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+                <Line
+                  yAxisId="count"
+                  type="monotone"
+                  dataKey="abandoned"
+                  name="Abandoned"
+                  stroke="#f43f5e"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                  connectNulls={false}
+                {...chartMotion}
+                />
+                <Line
+                  yAxisId="rate"
+                  type="monotone"
+                  dataKey="abandonRate"
+                  name="Abandon rate"
+                  stroke="#fbbf24"
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  connectNulls
+                {...chartMotion}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Rate is over answered calls in that bucket, so a quiet slot swings hard — read it
+            against the count, not on its own.
+          </p>
+        </Card>
+      )}
+
+      {data.byAbandon.length > 0 && (
+        <div>
+          <div className="mb-2">
+            <SectionHeading>Why calls were abandoned</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              The customer answered and no agent ever picked up · {dateLabel}
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Hangup reason</TableHead>
+                  <TableHead>Ended by</TableHead>
+                  <TableHead className="text-right">Calls</TableHead>
+                  <TableHead className="text-right">Share</TableHead>
+                  <TableHead className="text-right">Avg before hangup</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.byAbandon.map((r) => (
+                  <TableRow key={`${r.reason}-${r.endedBy}`}>
+                    <TableCell className="font-mono text-sm">{r.reason}</TableCell>
+                    <TableCell className="font-mono text-sm">{r.endedBy}</TableCell>
+                    <TableCell className="text-right font-mono">
+                      {r.calls.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {data.totals.abandoned > 0
+                        ? `${((r.calls / data.totals.abandoned) * 100).toFixed(1)}%`
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {secsOrDash(r.avgSeconds)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {/* The headline rate says HOW MANY. It cannot say whether the
+              customer rang off waiting or the dialler dropped them, and those
+              are different faults with different owners. */}
+          <p className="mt-1 text-xs text-muted-foreground">
+            HANGUP_BY separates the customer ringing off from the dialler dropping the call —
+            different faults, different owners. Avg before hangup is how long they waited.
+          </p>
+        </div>
       )}
 
       {/* Heatgrid SCOREGROUP × CALL_START_TIME */}

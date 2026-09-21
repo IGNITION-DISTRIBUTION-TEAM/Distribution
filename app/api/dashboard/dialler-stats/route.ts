@@ -66,9 +66,21 @@ const EMPTY_FIGURES = {
   bucketProfile: { buckets: [] as { bucket: string; share: number }[], days: 0, from: "", to: "" },
   dailyHistory: [] as { date: string; calls: number }[],
   historyFrom: null as string | null,
-  byBucket: [] as { bucket: string; calls: number; connected: number; agents: number }[],
+  byBucket: [] as {
+    bucket: string
+    calls: number
+    connected: number
+    abandoned: number
+    agents: number
+  }[],
   byStatus: [] as { status: string; calls: number; connected: number }[],
   byHangup: [] as { reason: string; calls: number }[],
+  byAbandon: [] as {
+    reason: string
+    endedBy: string
+    calls: number
+    avgSeconds: number | null
+  }[],
   byCampaign: [] as { campaignName: string; calls: number; connected: number }[],
   byScoreDate: [] as { scoreGroup: string; date: string; count: number }[],
   byScoreBand: [] as {
@@ -181,6 +193,7 @@ export async function GET(request: NextRequest) {
       byBucket,
       byStatus,
       byHangup,
+      byAbandon,
       byCampaign,
       byScoreDate,
       byScoreBand,
@@ -221,6 +234,7 @@ export async function GET(request: NextRequest) {
            SELECT ${bucketExpr} AS BUCKET,
                   COUNT(*) AS CALLS,
                   COUNT_IF(${ANSWERED}) AS CONNECTED,
+                  COUNT_IF(${ANSWERED} AND NOT ${AGENT_CONNECTED}) AS ABANDONED,
                   -- Distinct agents IN THAT BUCKET, not a share of the day's
                   -- total: the question is how many people were on the phones
                   -- at the time, which only a per-bucket distinct answers.
@@ -241,6 +255,21 @@ export async function GET(request: NextRequest) {
            SELECT COALESCE(NULLIF(TRIM(HANGUP_REASON), ''), '(none)') AS HANGUP_REASON,
                   COUNT(*) AS CALLS
              FROM calls GROUP BY 1 ORDER BY CALLS DESC NULLS LAST`,
+          SF_OPTS
+        ),
+        // THE ABANDONS THEMSELVES, by why the call ended. The headline rate
+        // says how many; it cannot say whether the customer rang off waiting or
+        // the dialler dropped them, and those are different faults with
+        // different owners. HANGUP_BY is carried alongside for the same reason.
+        executeSnowflakeQuery<Record<string, unknown>>(
+          `WITH ${base}
+           SELECT COALESCE(NULLIF(TRIM(HANGUP_REASON), ''), '(none)') AS REASON,
+                  COALESCE(NULLIF(TRIM(HANGUP_BY), ''), '(none)') AS ENDED_BY,
+                  COUNT(*) AS CALLS,
+                  AVG(IFF(SECS_TO_HANGUP > 0, SECS_TO_HANGUP, NULL)) AS AVG_SECONDS
+             FROM calls
+            WHERE ${ANSWERED} AND NOT ${AGENT_CONNECTED}
+            GROUP BY 1, 2 ORDER BY CALLS DESC NULLS LAST`,
           SF_OPTS
         ),
         executeSnowflakeQuery<Record<string, unknown>>(
@@ -337,11 +366,18 @@ export async function GET(request: NextRequest) {
         unscoredCalls: num(t.UNSCORED_CALLS),
       },
       byBucket: (
-        byBucket as { BUCKET: string; CALLS: unknown; CONNECTED: unknown; AGENTS: unknown }[]
+        byBucket as {
+          BUCKET: string
+          CALLS: unknown
+          CONNECTED: unknown
+          ABANDONED: unknown
+          AGENTS: unknown
+        }[]
       ).map((r) => ({
         bucket: r.BUCKET,
         calls: num(r.CALLS),
         connected: num(r.CONNECTED),
+        abandoned: num(r.ABANDONED),
         agents: num(r.AGENTS),
       })),
       byStatus: (byStatus as { CALL_STATUS: string; CALLS: unknown; CONNECTED: unknown }[]).map(
@@ -350,6 +386,19 @@ export async function GET(request: NextRequest) {
       byHangup: (byHangup as { HANGUP_REASON: string; CALLS: unknown }[]).map((r) => ({
         reason: r.HANGUP_REASON,
         calls: num(r.CALLS),
+      })),
+      byAbandon: (
+        byAbandon as {
+          REASON: string
+          ENDED_BY: string
+          CALLS: unknown
+          AVG_SECONDS: unknown
+        }[]
+      ).map((r) => ({
+        reason: r.REASON,
+        endedBy: r.ENDED_BY,
+        calls: num(r.CALLS),
+        avgSeconds: numFloat(r.AVG_SECONDS),
       })),
       byCampaign: (byCampaign as { CAMPAIGN_NAME: string; CALLS: unknown; CONNECTED: unknown }[]).map(
         (r) => ({ campaignName: r.CAMPAIGN_NAME, calls: num(r.CALLS), connected: num(r.CONNECTED) })

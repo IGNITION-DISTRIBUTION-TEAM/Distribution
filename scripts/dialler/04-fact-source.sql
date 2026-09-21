@@ -245,3 +245,76 @@ SELECT 'LEAD_STATUS', COALESCE(NULLIF(TRIM(LEAD_STATUS), ''), '(blank)'),
        COUNT(*), COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')
   FROM calls GROUP BY 1, 2
  ORDER BY COLUMN_NAME, CALLS DESC;
+
+
+/* -----------------------------------------------------------------------------
+   SECTION 8 — the abandons, and why
+
+   An abandon here is: the call was ANSWERED and no agent ever picked up. The
+   headline rate says how many; it cannot say whether the customer rang off
+   waiting or the dialler dropped them, and those are different faults with
+   different owners. HANGUP_REASON and HANGUP_BY separate them.
+
+   AVG_SECONDS_BEFORE_HANGUP is how long they held. If the bulk of abandons sit
+   under a couple of seconds they are mostly switch noise rather than people
+   giving up, and the regulatory definition (which counts only abandons after a
+   threshold) would report a much smaller number than this one does.
+-------------------------------------------------------------------------------- */
+
+WITH calls AS (
+    SELECT *
+      FROM DATAWAREHOUSE.CX_PRODUCTION.FACT_YAXXA_DIALLER
+     WHERE TENANT_ID = 1002
+       AND CAST(CALL_DATE AS DATE) BETWEEN '2026-09-01' AND '2026-09-21'
+       AND CAST(CAMP_ID AS VARCHAR) IN (
+             SELECT YAXXA_CAMPAIGNID
+               FROM DATAWAREHOUSE.LEADS_DISTRIBUTION.TSK_CAMPAIGN_DIALLER_MAP)
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CALL_ID ORDER BY LOAD_DATE DESC) = 1
+),
+abandoned AS (
+    SELECT *
+      FROM calls
+     WHERE UPPER(TRIM(CALL_STATUS)) = 'ANSWERED'
+       AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0)
+)
+SELECT COALESCE(NULLIF(TRIM(HANGUP_REASON), ''), '(none)')  AS REASON,
+       COALESCE(NULLIF(TRIM(HANGUP_BY), ''), '(none)')      AS ENDED_BY,
+       COUNT(*)                                             AS CALLS,
+       ROUND(100 * RATIO_TO_REPORT(COUNT(*)) OVER (), 1)    AS PCT_OF_ABANDONS,
+       AVG(NULLIF(GREATEST(DATEDIFF(second, CALL_START_TIME, CALL_HANGUP_TIME), 0), 0))
+                                                            AS AVG_SECONDS_BEFORE_HANGUP,
+       COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_HANGUP_TIME) <= 2)
+                                                            AS UNDER_2_SECONDS
+  FROM abandoned
+ GROUP BY 1, 2
+ ORDER BY CALLS DESC;
+
+
+/* -----------------------------------------------------------------------------
+   SECTION 8b — is the abandon count real, or a gap in CALL_AGENT_TIME?
+
+   "No agent" is read from a missing or non-positive CALL_AGENT_TIME. If a call
+   an agent genuinely handled can arrive without that timestamp, every one of
+   those is counted as an abandon and the rate is overstated.
+
+   AGENT_NAMED_BUT_NO_TIME is that failure. Anything above a rounding error
+   means the abandon figure needs a different test before it is quoted.
+-------------------------------------------------------------------------------- */
+
+WITH calls AS (
+    SELECT *
+      FROM DATAWAREHOUSE.CX_PRODUCTION.FACT_YAXXA_DIALLER
+     WHERE TENANT_ID = 1002
+       AND CAST(CALL_DATE AS DATE) >= DATEADD(DAY, -30, CURRENT_DATE())
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CALL_ID ORDER BY LOAD_DATE DESC) = 1
+)
+SELECT COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED')                    AS ANSWERED,
+       COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED'
+                AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0))
+                                                                          AS COUNTED_ABANDONED,
+       -- An agent is named on the row but no agent timestamp was written.
+       COUNT_IF(UPPER(TRIM(CALL_STATUS)) = 'ANSWERED'
+                AND NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0)
+                AND IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'), NULL, TRIM(AGENT_AD))
+                    IS NOT NULL)                                          AS AGENT_NAMED_BUT_NO_TIME
+  FROM calls;
