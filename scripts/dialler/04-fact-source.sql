@@ -147,6 +147,11 @@ WITH calls AS (
 )
 SELECT COUNT(*)                                        AS CALLS,
        COUNT(DISTINCT RSA_ID)                          AS CUSTOMERS,
+       -- SYSTEM is the dialler handling a call itself, not a person; blank is
+       -- nobody. Counting either inflates the head count and drags
+       -- calls-per-agent down across a worker who does not exist.
+       COUNT(DISTINCT IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'), NULL, TRIM(AGENT_AD)))
+                                                       AS AGENTS,
        COUNT(DISTINCT CAMP_ID)                         AS CAMPAIGNS,
        COUNT(DISTINCT CAST(CALL_DATE AS DATE))         AS DAYS,
        COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIME) > 0)                AS CONNECTED,
@@ -164,8 +169,47 @@ SELECT COUNT(*)                                        AS CALLS,
        AVG(IFF(DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0
                AND CALL_HANGUP_TIME > CALL_AGENT_TIME,
                DATEDIFF(second, CALL_AGENT_TIME, CALL_HANGUP_TIME), NULL))     AS AVG_TALK_SECS,
-       AVG(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0))                      AS AVG_SCORE
+       AVG(NULLIF(TRY_TO_NUMBER(TO_VARCHAR(SCORE)), 0))                      AS AVG_SCORE,
+       -- Workload per head is AGENT-HANDLED calls, not every dial: a no-answer
+       -- is the dialler's work, not an agent's.
+       ROUND(COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0)
+             / NULLIF(COUNT(DISTINCT IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'),
+                                         NULL, TRIM(AGENT_AD))), 0), 1)        AS HANDLED_PER_AGENT
   FROM calls;
+
+
+/* -----------------------------------------------------------------------------
+   SECTION 6b — is AGENT_AD populated, and on which calls?
+
+   Expected: null or blank wherever no agent picked up, set wherever one did.
+   If AGENTS_ON_UNHANDLED is large the column means something other than "the
+   agent who took this call", and the head count needs rethinking before anyone
+   quotes it.
+-------------------------------------------------------------------------------- */
+
+WITH calls AS (
+    SELECT *
+      FROM DATAWAREHOUSE.CX_PRODUCTION.FACT_YAXXA_DIALLER
+     WHERE TENANT_ID = 1002
+       AND CAST(CALL_DATE AS DATE) >= DATEADD(DAY, -30, CURRENT_DATE())
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CALL_ID ORDER BY LOAD_DATE DESC) = 1
+)
+SELECT COUNT(*)                                                          AS CALLS,
+       COUNT_IF(UPPER(TRIM(AGENT_AD)) = 'SYSTEM')                        AS SYSTEM_HANDLED,
+       COUNT_IF(NULLIF(TRIM(AGENT_AD), '') IS NULL)                      AS NO_AGENT_AD,
+       COUNT(DISTINCT IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'), NULL, TRIM(AGENT_AD)))
+                                                                         AS DISTINCT_AGENTS,
+       COUNT_IF(DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0
+                AND IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'),
+                        NULL, TRIM(AGENT_AD)) IS NULL)                   AS HANDLED_WITHOUT_AGENT,
+       COUNT_IF(NOT (DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME) > 0)
+                AND IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'),
+                        NULL, TRIM(AGENT_AD)) IS NOT NULL)               AS AGENTS_ON_UNHANDLED
+  FROM calls;
+-- HANDLED_WITHOUT_AGENT large means a call reached an agent but carries no
+-- name, so the head count understates. AGENTS_ON_UNHANDLED large means the
+-- column is not "who took this call" and the head count needs rethinking
+-- before anyone quotes it.
 
 
 /* -----------------------------------------------------------------------------

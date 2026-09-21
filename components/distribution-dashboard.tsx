@@ -6156,6 +6156,10 @@ type DiallerData = {
     /** One row per call, deduplicated by CALL_ID. */
     calls: number
     customers: number
+    /** Distinct AGENT_AD who handled a call in the window. */
+    agents: number
+    /** Agent-handled calls per head — not every dial. */
+    handledPerAgent: number | null
     campaigns: number
     days: number
     connected: number
@@ -6172,7 +6176,7 @@ type DiallerData = {
   }
   /** Score bands from the calls themselves — the fact carries SCORE/SCOREGROUP. */
   byScoreBand: { band: string; calls: number; connected: number; avgScore: number | null }[]
-  byBucket: { bucket: string; calls: number; connected: number }[]
+  byBucket: { bucket: string; calls: number; connected: number; agents: number }[]
   /** Half-hour-of-day shape from the four weeks before. Single-day view only. */
   bucketProfile?: {
     buckets: { bucket: string; share: number }[]
@@ -6696,6 +6700,31 @@ function DiallerSummary({ data }: { data: DiallerData }) {
 
   const trimmed = Math.max(0, data.byBucket.length - chartSeries.filter((r) => !r.projected).length)
 
+  /**
+   * Staffing against reachability, on the same x-axis as the volume chart.
+   *
+   * TWO AXES BECAUSE THE UNITS ARE NOT COMPARABLE — tens of agents against a
+   * percentage. Plotting them on one axis would flatten whichever lost, and the
+   * whole point is to read them against each other: where connect rate sags
+   * while the head count is flat, the problem is the list rather than staffing,
+   * and where both fall together it is not.
+   *
+   * Trimmed on the same rule as the volume chart so the two line up column for
+   * column; a reader comparing them must not have to check the labels.
+   */
+  const agentSeries = useMemo(
+    () =>
+      trimEmptyEdges(
+        data.byBucket.map((b) => ({
+          bucket: b.bucket,
+          agents: b.agents,
+          connectRate: b.calls > 0 ? (b.connected / b.calls) * 100 : null,
+        })),
+        (r) => r.agents === 0 && (r.connectRate ?? 0) === 0
+      ),
+    [data.byBucket]
+  )
+
   return (
     <>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
@@ -6728,7 +6757,12 @@ function DiallerSummary({ data }: { data: DiallerData }) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <StatTile size="sm"
+          label="Agents"
+          value={data.totals.agents.toLocaleString()}
+          tone="primary"
+        />
         <StatTile size="sm" label="Days" value={data.totals.days.toLocaleString()} tone="muted" />
         <StatTile size="sm"
           label="Campaigns"
@@ -6758,6 +6792,17 @@ function DiallerSummary({ data }: { data: DiallerData }) {
           unscored sentinel rather than a score, so it is excluded from the
           average and the exclusion is stated. */}
       <p className="-mt-2 text-xs text-muted-foreground">
+        {data.totals.agents > 0 && data.totals.handledPerAgent !== null && (
+          <>
+            <span className="font-mono">{data.totals.agents.toLocaleString()}</span> agents
+            handled{" "}
+            <span className="font-mono">
+              {Math.round(data.totals.handledPerAgent).toLocaleString()}
+            </span>{" "}
+            calls each on average — agent-handled calls only, since a call nobody picked up is
+            not an agent&rsquo;s work.{" "}
+          </>
+        )}
         Abandoned is the share of answered calls where no agent ever picked up (
         {data.totals.abandoned.toLocaleString()} of {data.totals.connected.toLocaleString()}).
         {data.totals.avgScore !== null && (
@@ -6956,6 +7001,92 @@ function DiallerSummary({ data }: { data: DiallerData }) {
               </p>
             </div>
           )}
+        </Card>
+      )}
+
+      {agentSeries.length > 1 && (
+        <Card>
+          <div className="mb-2">
+            <SectionHeading>Agents on the phones, and connect rate</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              Distinct <span className="font-mono">AGENT_AD</span> per{" "}
+              {data.granularity === "halfHour" ? "half-hour" : "day"}, against the share of
+              calls answered · {dateLabel}
+            </p>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={agentSeries} margin={{ top: 10, right: 8, bottom: 0, left: -10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="bucket"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  tickFormatter={(v: string) =>
+                    data.granularity === "halfHour" ? v : v.slice(5)
+                  }
+                />
+                <YAxis
+                  yAxisId="agents"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  yAxisId="rate"
+                  orientation="right"
+                  domain={[0, 100]}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  tickFormatter={(v: number) => `${v}%`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "0.5rem",
+                    fontSize: "0.875rem",
+                  }}
+                  formatter={(value, name) =>
+                    name === "Connect rate"
+                      ? [`${Number(value).toFixed(1)}%`, name]
+                      : [Math.round(Number(value)).toLocaleString(), name]
+                  }
+                />
+                <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+                <Line
+                  yAxisId="agents"
+                  type="monotone"
+                  dataKey="agents"
+                  name="Agents"
+                  stroke="#38bdf8"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                  connectNulls={false}
+                {...chartMotion}
+                />
+                <Line
+                  yAxisId="rate"
+                  type="monotone"
+                  dataKey="connectRate"
+                  name="Connect rate"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  connectNulls
+                {...chartMotion}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          {/* SYSTEM is the dialler handling a call itself. Counting it as a
+              colleague inflates the head count and drags calls-per-agent down
+              across a worker who does not exist — but the CALL still counts
+              everywhere else on this page. */}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Agents excludes <span className="font-mono">SYSTEM</span>, which is the dialler
+            handling a call rather than a person. Those calls still count in every volume
+            figure above; they simply have no agent attached.
+          </p>
         </Card>
       )}
 

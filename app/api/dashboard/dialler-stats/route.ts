@@ -3,6 +3,7 @@ import { requireDepartmentAccess } from "@/lib/admin-guard"
 import { executeSnowflakeQuery } from "@/lib/snowflake"
 import {
   AGENT_CONNECTED,
+  AGENT_ID,
   CALL_DAY,
   CONNECTED,
   FACT_SF_OPTS,
@@ -47,6 +48,8 @@ const EMPTY_FIGURES = {
   totals: {
     calls: 0,
     customers: 0,
+    agents: 0,
+    handledPerAgent: null as number | null,
     campaigns: 0,
     days: 0,
     connected: 0,
@@ -63,7 +66,7 @@ const EMPTY_FIGURES = {
   bucketProfile: { buckets: [] as { bucket: string; share: number }[], days: 0, from: "", to: "" },
   dailyHistory: [] as { date: string; calls: number }[],
   historyFrom: null as string | null,
-  byBucket: [] as { bucket: string; calls: number; connected: number }[],
+  byBucket: [] as { bucket: string; calls: number; connected: number; agents: number }[],
   byStatus: [] as { status: string; calls: number; connected: number }[],
   byHangup: [] as { reason: string; calls: number }[],
   byCampaign: [] as { campaignName: string; calls: number; connected: number }[],
@@ -188,6 +191,9 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT COUNT(*) AS CALLS,
                   COUNT(DISTINCT RSA_ID) AS CUSTOMERS,
+                  -- Head count of agents who handled a call in the window.
+                  -- AGENT_ID excludes SYSTEM and blank — see lib/dialler-fact.ts.
+                  COUNT(DISTINCT ${AGENT_ID}) AS AGENTS,
                   COUNT(DISTINCT CAMP_ID) AS CAMPAIGNS,
                   COUNT(DISTINCT CAST(CALL_DATE AS DATE)) AS DAYS,
                   COUNT_IF(${CONNECTED}) AS CONNECTED,
@@ -211,7 +217,11 @@ export async function GET(request: NextRequest) {
           `WITH ${base}
            SELECT ${bucketExpr} AS BUCKET,
                   COUNT(*) AS CALLS,
-                  COUNT_IF(${CONNECTED}) AS CONNECTED
+                  COUNT_IF(${CONNECTED}) AS CONNECTED,
+                  -- Distinct agents IN THAT BUCKET, not a share of the day's
+                  -- total: the question is how many people were on the phones
+                  -- at the time, which only a per-bucket distinct answers.
+                  COUNT(DISTINCT ${AGENT_ID}) AS AGENTS
              FROM calls GROUP BY 1 ORDER BY 1`,
           SF_OPTS
         ),
@@ -302,6 +312,11 @@ export async function GET(request: NextRequest) {
       totals: {
         calls,
         customers: num(t.CUSTOMERS),
+        agents: num(t.AGENTS),
+        // Workload per head is AGENT-HANDLED calls, not every dial. A no-answer
+        // is the dialler's work, not an agent's, and dividing all calls by head
+        // count would inflate it by whatever the connect rate happens to be.
+        handledPerAgent: ratio(agentConnected, num(t.AGENTS)),
         campaigns: num(t.CAMPAIGNS),
         days: num(t.DAYS),
         connected,
@@ -318,10 +333,13 @@ export async function GET(request: NextRequest) {
         avgScore: numFloat(t.AVG_SCORE),
         unscoredCalls: num(t.UNSCORED_CALLS),
       },
-      byBucket: (byBucket as { BUCKET: string; CALLS: unknown; CONNECTED: unknown }[]).map((r) => ({
+      byBucket: (
+        byBucket as { BUCKET: string; CALLS: unknown; CONNECTED: unknown; AGENTS: unknown }[]
+      ).map((r) => ({
         bucket: r.BUCKET,
         calls: num(r.CALLS),
         connected: num(r.CONNECTED),
+        agents: num(r.AGENTS),
       })),
       byStatus: (byStatus as { CALL_STATUS: string; CALLS: unknown; CONNECTED: unknown }[]).map(
         (r) => ({ status: r.CALL_STATUS, calls: num(r.CALLS), connected: num(r.CONNECTED) })

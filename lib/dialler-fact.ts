@@ -82,6 +82,23 @@ export const TIME_TO_ANSWER = `DATEDIFF(second, CALL_START_TIME, CALL_ANSWER_TIM
 export const TIME_TO_AGENT = `DATEDIFF(second, CALL_START_TIME, CALL_AGENT_TIME)`
 export const TIME_TO_HANGUP = `DATEDIFF(second, CALL_START_TIME, CALL_HANGUP_TIME)`
 
+/**
+ * The agent on a call, or NULL when there is not a person behind it.
+ *
+ * EXCLUDES 'SYSTEM'. That value is the dialler handling a call itself, not a
+ * human, and counting it as a head both inflates the head count by one and
+ * drags calls-per-agent down by spreading agent work across a worker who does
+ * not exist. Blank is excluded for the same reason — COUNT(DISTINCT) would
+ * otherwise report an empty string as a colleague.
+ *
+ * Matched on the UPPER-cased value, since nothing guarantees the feed spells
+ * it one way.
+ *
+ * NOTE THIS DOES NOT DROP THE CALL. A SYSTEM-handled call is still a call and
+ * still counts in every volume figure; it simply has no agent attached.
+ */
+export const AGENT_ID = `IFF(UPPER(TRIM(AGENT_AD)) IN ('', 'SYSTEM'), NULL, TRIM(AGENT_AD))`
+
 export const CONNECTED = `(SECS_TO_ANSWER IS NOT NULL AND SECS_TO_ANSWER > 0)`
 export const AGENT_CONNECTED = `(SECS_TO_AGENT IS NOT NULL AND SECS_TO_AGENT > 0)`
 
